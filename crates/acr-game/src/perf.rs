@@ -714,6 +714,9 @@ pub fn dir() -> Option<std::path::PathBuf> {
     if let Some(log) = std::env::var_os("ACR_LOG") {
         return PathBuf::from(log).parent().map(|d| d.join("perf"));
     }
+    #[cfg(target_os = "android")]
+    return crate::android::data_dir().map(|d| d.join("perf"));
+    #[cfg(not(target_os = "android"))]
     crate::native::data_dir().map(|d| d.join("perf"))
 }
 

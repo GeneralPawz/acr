@@ -7,6 +7,8 @@
 
 mod acr_missions;
 mod agony;
+#[cfg(target_os = "android")]
+mod android;
 mod animal_sounds;
 mod blank_map;
 mod canvas;
@@ -22,7 +24,7 @@ mod intro;
 mod mission;
 mod mission_ui;
 mod music;
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(any(target_arch = "wasm32", target_os = "android")))]
 pub mod native;
 mod perf;
 mod random_map;
@@ -42,7 +44,7 @@ use canvas::Canvas;
 use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalPosition;
 use winit::event::{ElementState, KeyEvent, MouseButton, MouseScrollDelta, WindowEvent};
-use winit::event_loop::{ActiveEventLoop, EventLoop, EventLoopProxy};
+use winit::event_loop::{ActiveEventLoop, EventLoopProxy};
 use winit::keyboard::{Key, ModifiersState, NamedKey};
 use winit::window::{Fullscreen, Window, WindowId};
 
@@ -711,7 +713,13 @@ impl Game {
 
 impl ApplicationHandler<Event> for Game {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        if self.window.is_some() {
+        if let Some(window) = &self.window {
+            // Android gives the window a new surface each time the app comes back.
+            if let Some(g) = &mut self.graphics
+                && let Err(e) = g.gpu.resume(window.clone())
+            {
+                log::error!("cannot recreate the surface: {e}");
+            }
             return;
         }
         #[cfg(not(target_arch = "wasm32"))]
@@ -758,6 +766,12 @@ impl ApplicationHandler<Event> for Game {
         #[cfg(not(target_arch = "wasm32"))]
         if !driven {
             self.audio.start();
+        }
+    }
+
+    fn suspended(&mut self, _event_loop: &ActiveEventLoop) {
+        if let Some(g) = &mut self.graphics {
+            g.gpu.suspend();
         }
     }
 
@@ -1089,8 +1103,9 @@ fn cp1252(text: &str) -> Option<u8> {
     }
 }
 
-fn event_loop() -> Result<EventLoop<Event>, String> {
-    EventLoop::<Event>::with_user_event().build().map_err(|e| e.to_string())
+#[cfg(not(target_os = "android"))]
+fn event_loop() -> Result<winit::event_loop::EventLoop<Event>, String> {
+    winit::event_loop::EventLoop::<Event>::with_user_event().build().map_err(|e| e.to_string())
 }
 
 #[cfg(test)]

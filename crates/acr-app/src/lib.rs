@@ -57,6 +57,10 @@ pub struct Gpu {
     /// The adapter's name, driver and backend (the performance recorder's snapshots; the
     /// graphics preset `auto` picks by its type).
     pub info: wgpu::AdapterInfo,
+    /// Kept to recreate the surface when Android gives the window a new one.
+    instance: wgpu::Instance,
+    /// The window's surface is gone (Android, while the app is in the background).
+    suspended: bool,
 }
 
 impl Gpu {
@@ -65,7 +69,7 @@ impl Gpu {
         // probing OpenGL on Windows creates a hidden legacy GL context, which other programs
         // see as the desktop composition switching off (PowerToys crashed on it). OpenGL stays
         // the fallback when no primary adapter exists; `WGPU_BACKEND` still overrides both.
-        let (_instance, surface, adapter) = match Self::adapter(window.clone(), cfg!(not(target_arch = "wasm32"))).await
+        let (instance, surface, adapter) = match Self::adapter(window.clone(), cfg!(not(target_arch = "wasm32"))).await
         {
             Ok(found) => found,
             Err(e) if cfg!(not(target_arch = "wasm32")) => {
@@ -122,7 +126,7 @@ impl Gpu {
         surface.configure(&device, &config);
         let info = adapter.get_info();
         log::info!("adapter: {} ({:?}, {:?})", info.name, info.device_type, info.backend);
-        Ok(Self { surface, device, queue, config, info })
+        Ok(Self { surface, device, queue, config, info, instance, suspended: false })
     }
 
     /// An instance, the window's surface and an adapter for it; `primary` limits the search
@@ -147,7 +151,27 @@ impl Gpu {
     pub fn resize(&mut self, width: u32, height: u32) {
         self.config.width = width.max(1);
         self.config.height = height.max(1);
+        if !self.suspended {
+            self.surface.configure(&self.device, &self.config);
+        }
+    }
+
+    /// Stops drawing: the window's surface is about to go away (Android, app in the
+    /// background).
+    pub fn suspend(&mut self) {
+        self.suspended = true;
+    }
+
+    /// A new surface for `window` after [`Gpu::suspend`], on the same device, so every
+    /// texture and pipeline stays valid.
+    pub fn resume(&mut self, window: Arc<Window>) -> Result<(), String> {
+        let size = window.inner_size();
+        self.surface = self.instance.create_surface(window).map_err(|e| e.to_string())?;
+        self.config.width = size.width.max(1);
+        self.config.height = size.height.max(1);
         self.surface.configure(&self.device, &self.config);
+        self.suspended = false;
+        Ok(())
     }
 
     pub fn size(&self) -> [f32; 2] {
@@ -156,6 +180,9 @@ impl Gpu {
 
     /// The next frame to draw into, or `None` if this frame should be skipped.
     pub fn next_frame(&mut self) -> Option<wgpu::SurfaceTexture> {
+        if self.suspended {
+            return None;
+        }
         match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(f) | wgpu::CurrentSurfaceTexture::Suboptimal(f) => Some(f),
             wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
