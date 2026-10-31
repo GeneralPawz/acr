@@ -915,3 +915,42 @@ fn a_wing_does_not_pick_the_dragoons_flank_as_a_line() {
     let best = super::cavalry::best(&r.w, &v, from, false, None);
     assert_eq!(best, Some(1), "the unguarded guns, not the dragoons");
 }
+
+#[test]
+fn two_clones_give_the_same_orders_and_the_same_world() {
+    let mut r = rig();
+    let line = formed(r.mus, &mut r, 0, (1500, 4000), 0, "LINE12");
+    let pikes = formed(r.pike, &mut r, 0, (1200, 4000), 0, "LINE12");
+    let guns = crowd(&mut r.w, r.gun, 0, (1700, 3800), 2, (2, 80), 0);
+    let wing = formed(r.dragoon, &mut r, 0, (1200, 3300), 0, "LINE12");
+    let foe = formed(r.mus, &mut r, 1, (3200, 4000), 128, "LINE12");
+    let foe_guns = crowd(&mut r.w, r.gun, 1, (3000, 4150), 2, (2, 80), 128);
+    let foe_wing = formed(r.horse, &mut r, 1, (3400, 4700), 128, "LINE12");
+    let armies = [
+        army(
+            0,
+            0,
+            vec![
+                body(Duty::Line, &line),
+                body(Duty::Melee, &pikes),
+                body(Duty::Guns, &guns),
+                body(Duty::Cavalry, &wing),
+            ],
+        ),
+        army(1, 128, vec![body(Duty::Line, &foe), body(Duty::Guns, &foe_guns), body(Duty::Cavalry, &foe_wing)]),
+    ];
+    let mut cm_a = Commander::new(&r.w, armies, [Control::Ai; 2]);
+    let (mut cm_b, mut w_b) = (cm_a.clone(), r.w.clone());
+    let mut w_a = r.w;
+    let (mut seen_a, mut seen_b) = (Vec::new(), Vec::new());
+    for _ in 0..600 {
+        let (a, b) = (cm_a.orders(&w_a), cm_b.orders(&w_b));
+        w_a.step(&a);
+        w_b.step(&b);
+        seen_a.push(format!("{a:?}"));
+        seen_b.push(format!("{b:?}"));
+    }
+    assert!(seen_a.iter().any(|s| s != "[]"), "the controller gave orders");
+    assert_eq!(seen_a, seen_b);
+    assert_eq!(w_a.state_hash(), w_b.state_hash());
+}
