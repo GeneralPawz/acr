@@ -46,7 +46,7 @@ struct Placed {
 /// Remembers the url, size and offset of each sprite, which cost a decode to find out.
 #[derive(Default)]
 pub struct Resolver {
-    placed: HashMap<Sprite, Option<Placed>>,
+    placed: HashMap<(Sprite, u32), Option<Placed>>,
     /// The version of each dynamic image the UI can fetch (`image/<name>/<version>`).
     pub image_versions: HashMap<&'static str, u32>,
 }
@@ -69,8 +69,10 @@ fn atlas_text(text: &[u8]) -> bool {
 }
 
 impl Resolver {
-    fn place(&mut self, lib: &Library, fonts: &Fonts, sprite: &Sprite) -> Result<Option<Placed>, Failure> {
-        if let Some(placed) = self.placed.get(sprite) {
+    /// `sprite` placed; game frames are fetched enlarged `scale` times (sizes and offsets stay the
+    /// original's: the UI draws the larger image into the same box).
+    fn place(&mut self, lib: &Library, fonts: &Fonts, sprite: &Sprite, scale: u32) -> Result<Option<Placed>, Failure> {
+        if let Some(placed) = self.placed.get(&(sprite.clone(), scale)) {
             return Ok(placed.clone());
         }
         let (image, url) = match sprite {
@@ -83,11 +85,11 @@ impl Resolver {
             ),
             Sprite::GameFrame { gp, frame, player } => (
                 assets::frame_image(lib, FramePalette::Sprite, *player, gp, *frame)?.map(Some),
-                assets::frame_url(FramePalette::Sprite, *player, gp, *frame),
+                assets::scaled_url(&assets::frame_url(FramePalette::Sprite, *player, gp, *frame), scale),
             ),
             Sprite::GameFrameRemap { gp, frame, player, table, row } => (
                 assets::remap_image(lib, *player, gp, *frame, table, *row)?.map(Some),
-                assets::remap_url(*player, gp, *frame, table, *row),
+                assets::scaled_url(&assets::remap_url(*player, gp, *frame, table, *row), scale),
             ),
             Sprite::Text { font, text } => {
                 (assets::text_image(lib, fonts, 1, *font, 0, text)?, assets::text_url(1, *font, 0, text))
@@ -106,7 +108,7 @@ impl Resolver {
         if self.placed.len() >= KEEP {
             self.placed.clear();
         }
-        self.placed.insert(sprite.clone(), placed.clone());
+        self.placed.insert((sprite.clone(), scale), placed.clone());
         Ok(placed)
     }
 
@@ -124,6 +126,18 @@ impl Resolver {
 
     /// The parts for `draws`, in order.
     pub fn parts(&mut self, lib: &Library, fonts: &Fonts, draws: &[Draw]) -> Result<Vec<Part>, Failure> {
+        self.parts_scaled(lib, fonts, draws, 1)
+    }
+
+    /// [`Self::parts`] with the game frames among `draws` enlarged `scale` times by the pixel-art
+    /// scaler (`scale/<n>/..`; the touch skin's portraits).
+    pub fn parts_scaled(
+        &mut self,
+        lib: &Library,
+        fonts: &Fonts,
+        draws: &[Draw],
+        scale: u32,
+    ) -> Result<Vec<Part>, Failure> {
         let mut parts = Vec::with_capacity(draws.len());
         for d in draws {
             let clip = clip4(d.clip);
@@ -145,7 +159,7 @@ impl Resolver {
                     continue;
                 }
                 _ => {
-                    if let Some(p) = self.place(lib, fonts, &d.sprite)? {
+                    if let Some(p) = self.place(lib, fonts, &d.sprite, scale)? {
                         let [x, y] = [d.x + p.offset[0], d.y + p.offset[1]];
                         parts.push(Part::Sprite { url: p.url, x, y, w: p.size[0], h: p.size[1], alpha: d.alpha, clip });
                     }
@@ -165,7 +179,7 @@ impl Resolver {
                     fade,
                     clip,
                 });
-            } else if let Some(p) = self.place(lib, fonts, &d.sprite)? {
+            } else if let Some(p) = self.place(lib, fonts, &d.sprite, scale)? {
                 let [x, y] = [d.x + p.offset[0], d.y + p.offset[1]];
                 parts.push(Part::Sprite { url: p.url, x, y, w: p.size[0], h: p.size[1], alpha: d.alpha, clip });
             }
@@ -178,7 +192,7 @@ impl Resolver {
         let Some(draw) = ui.cursor_draw() else { return Ok(None) };
         let (lib, fonts) = ui.assets();
         Ok(self
-            .place(lib, fonts, &draw.sprite)?
+            .place(lib, fonts, &draw.sprite, 1)?
             .map(|p| CursorView { url: p.url, hotspot: [-(draw.x + p.offset[0]), -(draw.y + p.offset[1])] }))
     }
 }
@@ -394,9 +408,9 @@ mod tests {
         let ui = Ui::new(&[]);
         let (lib, fonts) = ui.assets();
         let mut resolver = Resolver::default();
-        assert!(resolver.place(lib, fonts, &Sprite::Bitmap(String::new())).unwrap().is_none());
+        assert!(resolver.place(lib, fonts, &Sprite::Bitmap(String::new()), 1).unwrap().is_none());
         assert!(matches!(
-            resolver.place(lib, fonts, &Sprite::Bitmap("NO\\SUCH.BMP".into())),
+            resolver.place(lib, fonts, &Sprite::Bitmap("NO\\SUCH.BMP".into()), 1),
             Err(Failure::Asset(AssetError::NotFound(_)))
         ));
     }
