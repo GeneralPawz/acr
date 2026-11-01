@@ -4,4 +4,4 @@ export const SCREENS: readonly string[] = ['MainMenu', 'PlayerName', 'Options', 
 
 /** Parts of the in-game interface (`webui::HUD_PARTS`) the UI draws itself, over the game canvas. A part
  * joins when its parity check passes (docs/webui.md). The cursor is the CSS cursor of every mode. */
-export const HUD: readonly string[] = ['TopBar', 'DropDown', 'Hints'];
+export const HUD: readonly string[] = ['TopBar', 'DropDown', 'Hints', 'Messages'];

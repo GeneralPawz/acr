@@ -1,6 +1,6 @@
 {
   "name": "svelte_hud",
-  "description": "The classic skin draws the HUD parts of #326 (docs/webui.md 'The HUD'): the resource values follow a purchase and only they are resent, a hint shows at a resource value and at an icon, the 'M' drop-down opens as a group and its first row opens the game menu",
+  "description": "The classic skin draws the HUD parts of #326 (docs/webui.md 'The HUD'): the resource values follow a purchase and only they are resent, the 'M' drop-down opens as a group and its first row opens the game menu, a hint shows at a resource value, and the mission message for a queued unit shows",
   "args": ["--ui", "classic"],
   "steps": [
     {"cmd": "start", "random": {"nation": 1, "seed": 5}},
@@ -25,8 +25,10 @@
     {"cmd": "click", "label": "Hellebardier", "expect": {"path": "target.label", "contains": "Hellebardier"}},
     {"cmd": "view", "expect": [
       {"path": "view.hud.groups.1.parts.3.text", "ne": "${food}"},
-      {"path": "view.hud.groups.2.name", "eq": "hint"}
-    ], "note": "food was paid; the mouse is over the unit's icon (its hint)"},
+      {"path": "view.hud.groups.2.name", "eq": "hint"},
+      {"path": "view.hud.groups.3.name", "eq": "messages"},
+      {"path": "view.hud.groups.3.parts.1.text", "contains": "BAUERN"}
+    ], "note": "food was paid; the mouse is over the unit's icon (its hint) and the hint line for the queued unit shows"},
     {"cmd": "click", "pos": [275, 17], "note": "the M button"},
     {"cmd": "view", "expect": [
       {"path": "view.hud.groups.2.name", "eq": "drop_down"},
