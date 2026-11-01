@@ -7,8 +7,11 @@
   const { model } = ui();
   let dpr = $state(window.devicePixelRatio || 1);
 
-  // The DOM shows a menu screen only when the game says it leaves the screen to the UI.
-  const shown = $derived(model.mode === 'menus' && model.screen !== null && !model.screen.engine_drawn);
+  // The DOM shows a menu screen only when the game says it leaves the screen to the UI; the
+  // loading screen stays while the game loads.
+  const shown = $derived(
+    (model.mode === 'menus' || model.mode === 'loading') && model.screen !== null && !model.screen.engine_drawn,
+  );
 
   onMount(() => {
     const update = () => {
