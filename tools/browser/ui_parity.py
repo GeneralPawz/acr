@@ -33,7 +33,8 @@ sound_volume=0
 music_volume=0
 """
 
-# How to bring a screen up from the main menu: labels to click, in order. The screens the UI
+# How to bring a screen up from the main menu: labels to click, in order (an [x, y] pair clicks
+# that canvas position, e.g. to open a combo box). The screens the UI
 # claims later add their routes with their issues.
 ROUTES = {
     "MainMenu": [],
@@ -43,11 +44,13 @@ ROUTES = {
     "SingleMission": ["Einzelspieler", "Einzelmission", "OK"],
     "Placeholder": ["Mehrspieler", "Internetspiel"],
     "LoadGame": ["Laden"],
+    "RandomMap": ["Einzelspieler", "Zufallskarte", "OK"],
+    "RandomMapCombo": ["Einzelspieler", "Zufallskarte", "OK", [840, 199]],
     "CampaignMissions": ["Einzelspieler", "Kampagne", "OK", "Mission spielen!"],
 }
 
 # Routes whose screen is another route's (`Screen::name`): the campaign's missions are a SingleMission.
-SCREEN_OF = {"CampaignMissions": "SingleMission"}
+SCREEN_OF = {"CampaignMissions": "SingleMission", "RandomMapCombo": "RandomMap"}
 
 CHROMIUM_ARGS = {
     "swiftshader": [
@@ -114,7 +117,7 @@ class Page:
     def show(self, screen, route):
         """Brings `screen` up and waits until it is built and the page is quiet."""
         for label in route:
-            self.drive({"cmd": "click", "label": label})
+            self.drive({"cmd": "click", "pos": label} if isinstance(label, list) else {"cmd": "click", "label": label})
             time.sleep(0.5)
         end = time.time() + self.timeout_s
         while time.time() < end:

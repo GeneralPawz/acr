@@ -1,11 +1,15 @@
 {
   "name": "menu_random_map",
-  "description": "Main menu -> Einzelspieler -> Zufallskarte -> start a random map game through the menus",
+  "description": "Main menu -> Einzelspieler -> Zufallskarte -> two players (the default computer opponent), another nation, the sea landscape -> start the random map game",
   "steps": [
     {"cmd": "ui", "expect": {"screen": "MainMenu"}},
     {"cmd": "click", "label": "Einzelspieler"},
     {"cmd": "click", "label": "Zufallskarte", "expect": {"screen": "PlayerName"}},
     {"cmd": "click", "label": "OK", "expect": {"screen": "RandomMap"}},
+    {"cmd": "click", "label": "Spanien", "note": "opens the player's nation combo box"},
+    {"cmd": "click", "label": "England", "exact": true, "expect": {"screen": "RandomMap"}},
+    {"cmd": "click", "label": "Mediterran", "note": "opens the landscape combo box"},
+    {"cmd": "click", "label": "Meer", "exact": true, "expect": {"screen": "RandomMap"}},
     {"cmd": "click", "label": "Mission spielen!", "note": "settles until the generated map is loaded"},
     {"cmd": "wait", "until": {"in_game": true}, "timeout": 20000},
     {"cmd": "state", "expect": [

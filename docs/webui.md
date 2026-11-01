@@ -7,7 +7,7 @@ and their rules in [docs/ui.md](ui.md) stay as they are, the headless driver and
 run on them, and the Svelte app draws a view model Rust publishes and sends raw input back.
 
 What exists now (#317, #322, browser part): the protocol, the bridge, the classic skin, the main menu,
-the player name, the options, the campaigns, the single missions, the load dialog of the main menu, the loading screen and the connection screen of multiplayer (`Placeholder`). Every other screen is still drawn by the engine, under the UI's input overlay.
+the player name, the options, the campaigns, the single missions, the load dialog of the main menu, the random map setup, the loading screen and the connection screen of multiplayer (`Placeholder`). Every other screen is still drawn by the engine, under the UI's input overlay.
 
 ## Parts
 
@@ -48,7 +48,7 @@ and clippy never need Bun.
   publishes after each frame's advance (`WebUi::publish`): only changed topics (`mode`, `loading`,
   `stage`, `screen`, `cursor`), at most one message a frame, `rev` growing by one. A gap makes the UI
   send `resync`; the answer carries every topic. Scope `ui.bridge` of the profiler.
-- **Claiming:** the registry (`ui/src/screens/registry.ts`: `MainMenu`, `PlayerName`, `Options`, `Campaigns`, `SingleMission`, `LoadGame`, `Placeholder`, `Loading`) is announced in `ready`.
+- **Claiming:** the registry (`ui/src/screens/registry.ts`: `MainMenu`, `PlayerName`, `Options`, `Campaigns`, `SingleMission`, `LoadGame`, `RandomMap`, `Placeholder`, `Loading`) is announced in `ready`.
   `Ui::set_external` makes the engine skip exactly the screens the UI claims, and the cursor, but only
   while `view::screen` can describe the screen completely; otherwise the screen goes on being drawn by
   the engine (`engine_drawn: true`), never half.
@@ -79,7 +79,7 @@ undecodable), never placeholders.
 
 A screen joins the registry when `cargo xtask ui-diff` of its screenshots, `ui=engine` against
 `ui=svelte` at 1024x768, device pixel ratio 1, shows at least 99.5% of the pixels within +-8 per
-channel. Main menu, player name and options: 100.000%, layout 0 px (#317, #322). Campaigns, single missions and the campaign's missions (the same `SingleMission` screen, route `CampaignMissions`, ACR's Lake Erie row included): 100.000%, layout 0 px (#323). `LoadGame` (from the main menu): 100.000%, layout 0 px; its widgets' rects are the part inside their clip window, as the driver's tree reports them. `Placeholder`: 100.000%, layout 0 px. `Loading` is claimed without a browser parity run: it lasts under a second in the browser and the page's driver answers nothing meanwhile, so it cannot be caught for a screenshot; it is a single picture, resolved like the backgrounds above, and the UI keeps it on screen in mode `loading`, where the engine's replay progress ("Laden 40%") became the widget `Loading/progress` (`Ui::progress_draw`).
+channel. Main menu, player name and options: 100.000%, layout 0 px (#317, #322). Campaigns, single missions and the campaign's missions (the same `SingleMission` screen, route `CampaignMissions`, ACR's Lake Erie row included): 100.000%, layout 0 px (#323). `LoadGame` (from the main menu): 100.000%, layout 0 px; its widgets' rects are the part inside their clip window, as the driver's tree reports them. `RandomMap` (players, nations, colours, teams, the scrolled option rows with ACR's Meer landscape, start; also with the landscape combo box open, route `RandomMapCombo`): 100.000%, layout 0 px over 64 widgets (#324). `Placeholder`: 100.000%, layout 0 px. `Loading` is claimed without a browser parity run: it lasts under a second in the browser and the page's driver answers nothing meanwhile, so it cannot be caught for a screenshot; it is a single picture, resolved like the backgrounds above, and the UI keeps it on screen in mode `loading`, where the engine's replay progress ("Laden 40%") became the widget `Loading/progress` (`Ui::progress_draw`).
 
 Typing goes as raw keys: the engine's input box takes the key's text as CP1252 (`typed` in
 `webui/keys.rs`, `cp1252` in `lib.rs`), so `ÄÖü€` is stored as the original stores it. A real `<input>`
