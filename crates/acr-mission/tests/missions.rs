@@ -213,3 +213,29 @@ fn iroquois_units_wait_for_their_enable_research() {
         assert!(units.contains(&t), "{name}ENABLE does not enable {name}");
     }
 }
+
+/// The mission disables the forge (`EnableUnit(false)`), and the original's `RefreshAbility`
+/// keeps it off at every recount; with the finished buildings its `[ACCESSCONTROL]` needs
+/// (positions of the phone save) the recount used to enable it one tick in eight (#437).
+#[test]
+fn columbus_1_keeps_the_forge_off() {
+    let Some(mut vfs) = game() else { return };
+    let (mut world, mut scripts) = load(&mut vfs, "#columb1@");
+    run(&mut world, &mut scripts, 40);
+    let find = |w: &World, n: &str| w.catalog.find(n).expect(n);
+    let forge = find(&world, "SpnKuz(SP)");
+    for (name, x, y) in [
+        ("SpnDo1(SP)", 5370, 9764),
+        ("SpnMel(SP)", 5193, 10352),
+        ("SpnSkl(SP)", 5158, 9652),
+        ("EngKre(SP)", 5888, 10276),
+    ] {
+        let kind = find(&world, name);
+        world.spawn(kind, 0, acr_sim::Pos::from_pixels(x, y), 0);
+    }
+    for _ in 0..16 {
+        run(&mut world, &mut scripts, 1);
+        assert!(!world.players[0].enabled[usize::from(forge.0)], "forge enabled at tick {}", world.tick.0);
+    }
+    assert!(world.players[0].ready_count.iter().any(|&n| n > 0));
+}

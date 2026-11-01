@@ -286,16 +286,8 @@ fn initial_upgrade_new(api: &mut Api, c: &mut Call) -> Result<u32> {
     Ok(0)
 }
 
-/// Flags of the build menus: `(nation, kind, index) -> state` (+1 enable, −1 disable).
-fn set_flag(api: &mut Api, n: u8, upgrade: bool, index: u16, state: i8) {
-    let key = (n, upgrade, index);
-    if state == 0 {
-        api.st.availability.remove(&key);
-    } else {
-        api.st.availability.insert(key, state);
-    }
-}
-
+/// `DisableUpgrade` (0x55c335) and `SetUpgradeEnableStatus` (0x55c437): the manual bits of the
+/// upgrade (0x40 hidden, 0x80 offered); `RefreshAbility` leaves them alone.
 fn upgrade_flag(api: &mut Api, c: &mut Call, state: Option<i32>) -> Result<u32> {
     let n = api.assign(c.u8(0)?);
     if n >= 8 {
@@ -305,9 +297,14 @@ fn upgrade_flag(api: &mut Api, c: &mut Call, state: Option<i32>) -> Result<u32> 
         api.st.error("DisableUpgrade : Incorrect parameter <Upgrade>");
         return Ok(0);
     };
-    let s = state.map_or(-1, |s| s.signum()) as i8;
-    set_flag(api, n, true, u, s);
-    crate::aicity::apply_availability(api.st, api.world);
+    let Some(s) = api.upgrade_state(n, u) else { return Ok(0) };
+    match state {
+        None => s.manual_disable = true,
+        Some(v) => {
+            s.manual_enable = v > 0;
+            s.manual_disable = v < 0;
+        }
+    }
     Ok(0)
 }
 
@@ -320,33 +317,45 @@ fn set_upgrade_enable_status(api: &mut Api, c: &mut Call) -> Result<u32> {
     upgrade_flag(api, c, Some(s))
 }
 
-fn unit_flag(api: &mut Api, c: &mut Call, state: i32) -> Result<u32> {
-    let n = api.assign(c.u8(0)?);
-    if n >= 8 {
-        return Ok(0);
+/// `void EnableUnit(byte nation, GAMEOBJ* type, bool state)` (0x55c5bb): `ManualDisable` is
+/// `!state`; enabling also sets `Enabled` at once. `RefreshAbility` keeps the flag.
+fn enable_unit(api: &mut Api, c: &mut Call) -> Result<u32> {
+    let state = c.bool(2)?;
+    let Some((p, t)) = unit_player(api, c, "EnableUnit")? else { return Ok(0) };
+    if let Some(f) = p.manual_disable.get_mut(t) {
+        *f = !state;
     }
-    let Some(t) = api.type_arg(c, 1, "EnableUnit")? else { return Ok(0) };
-    set_flag(api, n, false, t.0, state.signum() as i8);
-    // `EnableUnit(true)` also sets `Enabled` at once (unmet tech conditions turn it off again).
-    if state == 0
-        && c.name() == "EnableUnit"
-        && let Some(e) = api.world.players[usize::from(n)].enabled.get_mut(usize::from(t.0))
-    {
+    if state && let Some(e) = p.enabled.get_mut(t) {
         *e = true;
     }
-    crate::aicity::apply_availability(api.st, api.world);
     Ok(0)
 }
 
-/// `void EnableUnit(byte nation, GAMEOBJ* type, bool state)`.
-fn enable_unit(api: &mut Api, c: &mut Call) -> Result<u32> {
-    let s = if c.bool(2)? { 0 } else { -1 };
-    unit_flag(api, c, s)
+/// `void SetUnitEnableState(byte nation, GAMEOBJ* type, int state)` (0x55c4f9): >0 sets
+/// `ManualEnable`, <0 `ManualDisable`, 0 clears both; `Enabled` is left to the next recount.
+fn set_unit_enable_state(api: &mut Api, c: &mut Call) -> Result<u32> {
+    let state = c.i32(2)?;
+    let Some((p, t)) = unit_player(api, c, "SetUnitEnableState")? else { return Ok(0) };
+    if let Some(f) = p.manual_enable.get_mut(t) {
+        *f = state > 0;
+    }
+    if let Some(f) = p.manual_disable.get_mut(t) {
+        *f = state < 0;
+    }
+    Ok(0)
 }
 
-fn set_unit_enable_state(api: &mut Api, c: &mut Call) -> Result<u32> {
-    let s = c.i32(2)?;
-    unit_flag(api, c, s)
+fn unit_player<'a>(
+    api: &'a mut Api,
+    c: &mut Call,
+    who: &str,
+) -> Result<Option<(&'a mut acr_sim::world::Player, usize)>> {
+    let n = api.assign(c.u8(0)?);
+    if n >= 8 {
+        return Ok(None);
+    }
+    let Some(t) = api.type_arg(c, 1, who)? else { return Ok(None) };
+    Ok(api.world.players.get_mut(usize::from(n)).map(|p| (p, usize::from(t.0))))
 }
 
 /// Fills a collector group with the matching current objects.
@@ -773,6 +782,58 @@ mod tests {
         let mut api =
             Api { st, world, commands: &mut commands, events: &mut events, caller: Caller::Mission, vm: 0, dip: None };
         (function(name).expect("known").handler)(&mut api, &mut Call { raw: &mut raw }).expect("call")
+    }
+
+    /// Calls a unit-flag function for nation 0 and type 0 (handle at 0x1_d000), arguments
+    /// `(0, handle, state)`.
+    fn unit_flag(name: &str, world: &mut World, state: i32) {
+        let mut st = ScriptState::new(ScriptSetup::default(), MissionTexts::default());
+        let mut mem = Memory::new();
+        mem.map(0x1_0000, 0x1_0000);
+        mem.write_u16(0x1_d000, 0).expect("index");
+        mem.write_u32(0x1_d004, super::super::call::magic::UNIT_TYPE).expect("magic");
+        for (i, a) in [0, 0x1_d000, state as u32].into_iter().enumerate() {
+            mem.write_u32(STACK + 4 + 4 * i as u32, a).expect("stack");
+        }
+        let mut cpu = Cpu::new();
+        cpu.regs[usize::from(acr_script::x86::decode::reg::ESP)] = STACK;
+        let mut heap = Heap::new(0x2_0000, 0x3_0000);
+        let mut raw = HostCall { dll: "test", name, cpu: &mut cpu, mem: &mut mem, heap: &mut heap };
+        let (mut commands, mut events) = (Vec::new(), Vec::new());
+        let mut api = Api {
+            st: &mut st,
+            world,
+            commands: &mut commands,
+            events: &mut events,
+            caller: Caller::Mission,
+            vm: 0,
+            dip: None,
+        };
+        (function(name).expect("known").handler)(&mut api, &mut Call { raw: &mut raw }).expect("call");
+    }
+
+    #[test]
+    fn unit_flags_follow_the_original() {
+        let mut c = Catalog::new();
+        c.add(object("Hut"));
+        let f = Formations::new(&Default::default(), &Default::default());
+        let mut w = World::new(Arc::new(MapGrid::open(1)), Arc::new(c), Arc::new(f));
+        // EnableUnit(false): ManualDisable only; Enabled waits for the recount.
+        w.players[0].enabled[0] = true;
+        unit_flag("EnableUnit", &mut w, 0);
+        assert!(w.players[0].manual_disable[0] && w.players[0].enabled[0]);
+        // EnableUnit(true): clears it and enables at once.
+        w.players[0].enabled[0] = false;
+        unit_flag("EnableUnit", &mut w, 1);
+        assert!(!w.players[0].manual_disable[0] && w.players[0].enabled[0]);
+        // SetUnitEnableState: >0 ManualEnable, <0 ManualDisable, 0 clears both.
+        unit_flag("SetUnitEnableState", &mut w, 1);
+        assert!(w.players[0].manual_enable[0] && !w.players[0].manual_disable[0]);
+        unit_flag("SetUnitEnableState", &mut w, -1);
+        assert!(!w.players[0].manual_enable[0] && w.players[0].manual_disable[0]);
+        unit_flag("SetUnitEnableState", &mut w, 0);
+        assert!(!w.players[0].manual_enable[0] && !w.players[0].manual_disable[0]);
+        assert!(w.players[0].enabled[0], "Enabled untouched");
     }
 
     #[test]

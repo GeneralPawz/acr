@@ -233,8 +233,6 @@ pub struct ScriptState {
     pub production: Vec<Production>,
     /// Units already looked at for productions.
     pub seen_units: usize,
-    /// Build-menu overrides `(nation, is upgrade, index) -> +1 enabled / -1 disabled`.
-    pub availability: BTreeMap<(u8, bool, u16), i8>,
     /// The AI cities (projects of the computer players).
     pub cities: [crate::aicity::City; 8],
     /// Unit indices mirrored into each machine (`GetOBJ`), refreshed around AI calls.
@@ -294,7 +292,6 @@ impl ScriptState {
             topo: None,
             production: Vec::new(),
             seen_units: 0,
-            availability: BTreeMap::new(),
             cities: Default::default(),
             mirrors: BTreeMap::new(),
             files: BTreeMap::new(),

@@ -174,11 +174,23 @@ pub struct UpgradeState {
     pub done: bool,
     /// Being researched somewhere.
     pub doing: bool,
+    /// `NewUpgrade+0x3c` bit 0x40, set by `DisableUpgrade` and `SetUpgradeEnableStatus(<0)`:
+    /// the command panel hides the upgrade unless `manual_enable` is set.
+    pub manual_disable: bool,
+    /// Bit 0x80, set by `SetUpgradeEnableStatus(>0)`: the panel offers the upgrade.
+    pub manual_enable: bool,
 }
 
 impl UpgradeState {
     pub fn new(u: &UpgradeDef) -> Self {
-        Self { enabled: u.start_enabled, permanent: u.start_enabled, done: false, doing: false }
+        Self {
+            enabled: u.start_enabled,
+            permanent: u.start_enabled,
+            done: false,
+            doing: false,
+            manual_disable: false,
+            manual_enable: false,
+        }
     }
 }
 
@@ -357,8 +369,10 @@ impl Tech {
 /// `City::RefreshAbility` (0x42ffed): first every `[ACCESSCONTROL]` target is disabled,
 /// then each whose required objects exist (finished) and upgrades are done is enabled again
 /// (a type only if it is `CondEnabled` or a building, an upgrade only if it is
-/// `PermanentEnabled` and not done). Last, `[UNITLOCK]` types are disabled while the player
-/// has enough objects of the lock type and otherwise follow `CondEnabled`.
+/// `PermanentEnabled` and not done). Last, over every type (0x430265): `ManualDisable`
+/// switches it off, otherwise `[UNITLOCK]` types are disabled while the player has enough
+/// objects of the lock type and otherwise follow `CondEnabled`; `ManualEnable` then
+/// switches it on.
 pub fn refresh_ability(w: &mut crate::World, player: u8) {
     let catalog = w.catalog.clone();
     let tech = &catalog.tech;
@@ -395,11 +409,16 @@ pub fn refresh_ability(w: &mut crate::World, player: u8) {
         }
     }
     for (i, tt) in tech.types.iter().enumerate() {
-        if let Some((lock, n)) = tt.lock {
-            let t = TypeId(i as u16);
+        let t = TypeId(i as u16);
+        if get(&p.manual_disable, t) {
+            set(&mut p.enabled, t, false);
+        } else if let Some((lock, n)) = tt.lock {
             let count = p.type_count.get(usize::from(lock.0)).copied().unwrap_or(0);
             let on = count < n && get(&p.cond_enabled, t);
             set(&mut p.enabled, t, on);
+        }
+        if get(&p.manual_enable, t) {
+            set(&mut p.enabled, t, true);
         }
     }
 }

@@ -120,9 +120,10 @@ fn with_hit_locations_the_ball_ploughs_through_five_men_losing_energy() {
 #[test]
 fn the_rule_off_keeps_the_original_hash() {
     let (w, _, _) = file_shot(Rules::default());
-    // Pinned on the original rules (before #256): update it when the original rules change,
+    // Pinned on the original rules (before #256): update it when the original rules change or
+    // the hashed player state gains a field (#437),
     // never for the optional rule.
-    assert_eq!(w.state_hash(), 0x6bbc_90f6_d730_18e6, "hash {:#x}", w.state_hash());
+    assert_eq!(w.state_hash(), 0xf3e0_dfa9_bff8_f1a6, "hash {:#x}", w.state_hash());
 }
 
 /// An aimed ball (`NUCL2P`: 340 within 35 px, no `DAMAGEHEIGHT`) fired down a file of men 20

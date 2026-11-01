@@ -221,8 +221,9 @@ address it reproduces.
   the census counts fewer than `max` (`City+0xeb73`), `rando() < PERCONV[probability]` and
   `costPercent >= percent`; with game option 2 at 1 it refuses artillery and towers.
   Upgrade handles, `UpgIsDone`, `InitialUpgrade` and the enable functions work on the tech
-  tree's per-player states; the scripts' manual enable/disable flags are reapplied after
-  every census.
+  tree's per-player states. The manual flags (`ManualDisable`/`ManualEnable`, type record
+  byte +7 bits 0/1; upgrade bits 0x40/0x80) live in the player and `RefreshAbility` honours
+  them at every recount (docs/simulation.md, tech tree).
   After the call the city carries the accepted projects out (0x432871): units are queued in
   their producer (paying the price; with a `UnitsCollector` the unit joins it when born),
   buildings go to acr-sim's `aiplace` (see "AI building placement" in `simulation.md`). One

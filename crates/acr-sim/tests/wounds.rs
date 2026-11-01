@@ -75,8 +75,9 @@ fn off_by_default_the_fight_is_the_original_one() {
     // The hash of this fight without the optional rule (measured on main at 71552fd, then
     // with the original's look along the line before a shot, PredictShot, then without its
     // friendly-fire look, #194).
-    // Update it when the original rules change, never for the optional rule.
-    assert_eq!(w.state_hash(), 0x91d6_a8c1_1ead_2450);
+    // Update it when the original rules change or the hashed player state gains a field
+    // (#437), never for the optional rule.
+    assert_eq!(w.state_hash(), 0x4289_426b_25f7_1e80);
     assert!(w.units.iter().all(|u| u.body == Default::default()));
     assert!(w.hits.iter().all(|h| h.region.is_none()));
 }

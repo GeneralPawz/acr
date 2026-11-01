@@ -1,0 +1,22 @@
+{
+  "name": "columbus_forge_steady",
+  "description": "Columbus 1 disables the Schmiede with EnableUnit(false); with the buildings its access control needs, the build panel never offers it, however many recounts pass (#437)",
+  "steps": [
+    {"cmd": "click", "label": "Einzelspieler"},
+    {"cmd": "click", "label": "Kampagne"},
+    {"cmd": "click", "label": "OK", "expect": {"screen": "Campaigns"}},
+    {"cmd": "click", "label": "Mission spielen!", "expect": {"screen": "SingleMission"}},
+    {"cmd": "click", "label": "Mission spielen!"},
+    {"cmd": "wait", "ticks": 20},
+    {"cmd": "spawn", "type": "SpnDo1(SP)", "owner": 0, "x": 5370, "y": 9764, "dir": 0},
+    {"cmd": "spawn", "type": "SpnMel(SP)", "owner": 0, "x": 5193, "y": 10352, "dir": 0},
+    {"cmd": "spawn", "type": "SpnSkl(SP)", "owner": 0, "x": 5158, "y": 9652, "dir": 0},
+    {"cmd": "spawn", "type": "EngKre(SP)", "owner": 0, "x": 5888, "y": 10276, "dir": 0},
+    {"cmd": "wait", "ticks": 20},
+    {"cmd": "drag", "around": {"owner": 0, "type": "Kri"}},
+    {"cmd": "wait", "ticks": 2},
+    {"cmd": "click", "id": "hud/0", "note": "the peasants alone: their build grid"},
+    {"cmd": "move", "label": "Lagerhaus"},
+    {"cmd": "click", "label": "Schmiede", "timeout": 16, "expect": {"ok": false}, "note": "never offered, not even for one tick in eight"}
+  ]
+}

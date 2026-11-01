@@ -1758,6 +1758,17 @@ Implemented in `economy.rs`. The sources are `City::Census` (0x42e658), the upke
     a type only if `CondEnabled` or a building, an upgrade only if `PermanentEnabled` and
     not yet done. `[UNITLOCK] ID n LOCK` disables `ID` while the player has `n` objects of
     `LOCK` (steamships: 3), otherwise it follows `CondEnabled`.
+  - **Manual flags.** The last loop of `RefreshAbility` (0x430265..0x430394, every type
+    record, `Nation+0x15+4i`): byte +7 bit 0 (`ManualDisable`) forces `Enabled` (+4 bit 1)
+    off, otherwise the `[UNITLOCK]` rule runs; bit 1 (`ManualEnable`) then forces it on.
+    `EnableUnit` (0x55c5bb) sets `ManualDisable = !state` and `Enabled` at once when
+    enabling; `SetUnitEnableState` (0x55c4f9): >0 sets `ManualEnable`, <0 `ManualDisable`,
+    0 clears both, `Enabled` untouched (so it takes effect at the next recount, at most 8
+    ticks). They are `Player::manual_disable`/`manual_enable`. Upgrades (`NewUpgrade+0x3c`):
+    `DisableUpgrade` (0x55c335) sets 0x40, `SetUpgradeEnableStatus` (0x55c437) >0 sets 0x80,
+    <0 sets 0x40, 0 clears both; `RefreshAbility` ignores them, the command panel
+    (0x609614) offers an upgrade with 0x80, hides one with 0x40, else follows `Enabled`
+    (`UpgradeState::manual_enable`/`manual_disable`, `upgrade::available`).
   - `[STAGEDEPENDENT] ID mask` (GeneralObject+0xad, NewUpgrade+0x4d): the producing building
     must have done every stage in the mask (state 2 in its five 3-bit fields OB+0xaa,
     raised by `UPSTAGEn` upgrades).
