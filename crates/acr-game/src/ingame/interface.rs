@@ -20,6 +20,7 @@ use crate::hud::minimap::{self, Dot, Minimap};
 use crate::hud::produce::Nations;
 use crate::hud::{self, Hud, HudCommand, HudEvent, Icon, Stats, View, color, line, nearest};
 use crate::ui::Ctx;
+use crate::ui::dialog::Reject;
 use crate::ui::draw::{Draw, GAME_PALETTE, Rect};
 use crate::ui::settings::Settings;
 
@@ -154,6 +155,15 @@ struct Marker {
     frame: u8,
 }
 
+/// What the touch skin asks of the HUD ([`InGame::hud_event`]).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum HudIntent<'a> {
+    /// An icon of the command grid (`hud/<slot>`) or the army list (`army/<slot>`).
+    Icon { id: &'a str, right: bool },
+    /// A point of the minimap, `uv` from its top-left corner.
+    Minimap { uv: [f32; 2], right: bool },
+}
+
 /// Interface state of the game screen.
 pub struct State {
     pub hud: Hud,
@@ -184,6 +194,9 @@ pub struct State {
     /// Touch mode (#331): a finger is the pointer, so placing a building uses a blinking
     /// outline moved by taps (#439) and a long press on a production icon is endless (#438).
     pub(super) touch: bool,
+    /// The HUD hit-tests window pixels (the default). Off: the touch skin draws the HUD and
+    /// sends its clicks as [`InGame::hud_event`]s, and a pixel never reaches the HUD.
+    pub(super) hud_input: bool,
     /// The outline's window position while placing in touch mode; `None`: the window's middle.
     pub(super) touch_outline: Option<[f32; 2]>,
     /// The last tap while placing (touch clock, window position), for the double tap.
@@ -275,6 +288,7 @@ impl Default for State {
             pages: HashMap::new(),
             started: web_time::Instant::now(),
             touch: false,
+            hud_input: true,
             touch_outline: None,
             touch_tap: None,
             touch_grab: None,
@@ -2552,6 +2566,90 @@ impl InGame {
         self.left_click(ctx, pressed)
     }
 
+    /// A click of the touch skin on the interface without a pixel: the same command or
+    /// camera move the press ends in (`hud_input` may be off). Nothing happens when it is
+    /// refused.
+    pub fn hud_event(&mut self, intent: HudIntent) -> Result<GameMouse, Reject> {
+        let window = self.window_size();
+        match intent {
+            HudIntent::Icon { id, right } => {
+                let event = Hud::icon_click(&self.interface.view, id, right)?;
+                if right {
+                    self.hud_right_event(&event);
+                    return Ok(GameMouse::None);
+                }
+                Ok(self.hud_left_event(event, [window[0] / 2.0, window[1] / 2.0]).unwrap_or(GameMouse::None))
+            }
+            HudIntent::Minimap { uv, right } => {
+                let px = self.interface.hud.minimap_pixel(&self.interface.view, uv)?;
+                if right {
+                    self.hud_right_event(&HudEvent::Order(px));
+                } else {
+                    self.centre_on_minimap(px, window);
+                }
+                Ok(GameMouse::None)
+            }
+        }
+    }
+
+    /// Whether pixels reach the HUD ([`HudIntent`]s are the other way in).
+    pub fn set_hud_input(&mut self, on: bool) {
+        self.interface.hud_input = on;
+    }
+
+    /// What the game does with the interface's answer to a left press at window point `at`;
+    /// `None` when the interface did not take it and the map gets it.
+    fn hud_left_event(&mut self, event: HudEvent, at: [f32; 2]) -> Option<GameMouse> {
+        match event {
+            HudEvent::None => return None,
+            HudEvent::Camera(px) => {
+                let window = self.window_size();
+                self.centre_on_minimap(px, window);
+            }
+            HudEvent::Command(c) => self.hud_command(c),
+            HudEvent::GameMenu => return Some(GameMouse::Menu),
+            HudEvent::Restart => return Some(GameMouse::Restart),
+            HudEvent::History => return Some(GameMouse::History),
+            HudEvent::Surrender => self.mission.surrender(),
+            HudEvent::TogglePause => self.set_paused(!self.paused()),
+            HudEvent::Escape => return Some(GameMouse::Escape),
+            HudEvent::Zoom => self.toggle_zoom(at),
+            HudEvent::UnitPanelStep(step) => self.step_unit_panel(step),
+            HudEvent::Used if self.interface.hud.game_panel.tab == 4 => {
+                // The diplomacy tab opens DipServer's panel (`PopupDipDialog` 0x5c3a20).
+                self.interface.hud.game_panel.tab = 0;
+                self.interface.hud.panel = hud::Panel::None;
+                self.dip_toggle();
+            }
+            _ => {}
+        }
+        Some(GameMouse::None)
+    }
+
+    /// The part of a right press the interface answers with a command or a minimap order;
+    /// true if it did.
+    fn hud_right_event(&mut self, event: &HudEvent) -> bool {
+        let player = self.own();
+        match event {
+            HudEvent::Order(px) if !self.selected.is_empty() => {
+                let (x, y) = self.minimap_world(*px);
+                self.commands.push(Command::Move { player, units: self.selected.clone(), x, y });
+                self.unit_sound(self.selected[0], "ORDER_SOUND");
+            }
+            // Touch: a long press on a production icon is the Ctrl+click, an endless order (#438).
+            HudEvent::Command(HudCommand::Unproduce(kind)) if self.interface.touch => {
+                let mods = self.interface.mods;
+                self.interface.mods |= ModifiersState::CONTROL;
+                self.hud_command(HudCommand::Produce(*kind));
+                self.interface.mods = mods;
+            }
+            // An icon's right-click command (`UnProduce` 0x4d6e08, cancelling an upgrade).
+            HudEvent::Command(c) => self.hud_command(c.clone()),
+            _ => return false,
+        }
+        true
+    }
+
     /// The left button as the original handles it.
     fn left_click(&mut self, ctx: &Ctx, pressed: bool) -> GameMouse {
         let Some(at) = self.cursor else { return GameMouse::None };
@@ -2559,49 +2657,12 @@ impl InGame {
         if pressed && self.drag_from.is_none() && self.dip_press(ctx, p) {
             return GameMouse::None;
         }
-        if pressed && self.drag_from.is_none() {
+        if pressed && self.drag_from.is_none() && self.interface.hud_input {
             let view = std::mem::take(&mut self.interface.view);
             let event = self.interface.hud.press(ctx, &view, p);
             self.interface.view = view;
-            match event {
-                HudEvent::None => {}
-                HudEvent::Camera(px) => {
-                    let window = self.window_size();
-                    self.centre_on_minimap(px, window);
-                    return GameMouse::None;
-                }
-                HudEvent::Command(c) => {
-                    self.hud_command(c);
-                    return GameMouse::None;
-                }
-                HudEvent::GameMenu => return GameMouse::Menu,
-                HudEvent::Restart => return GameMouse::Restart,
-                HudEvent::History => return GameMouse::History,
-                HudEvent::Surrender => {
-                    self.mission.surrender();
-                    return GameMouse::None;
-                }
-                HudEvent::TogglePause => {
-                    self.set_paused(!self.paused());
-                    return GameMouse::None;
-                }
-                HudEvent::Escape => return GameMouse::Escape,
-                HudEvent::Zoom => {
-                    self.toggle_zoom(at);
-                    return GameMouse::None;
-                }
-                HudEvent::UnitPanelStep(step) => {
-                    self.step_unit_panel(step);
-                    return GameMouse::None;
-                }
-                HudEvent::Used if self.interface.hud.game_panel.tab == 4 => {
-                    // The diplomacy tab opens DipServer's panel (`PopupDipDialog` 0x5c3a20).
-                    self.interface.hud.game_panel.tab = 0;
-                    self.interface.hud.panel = hud::Panel::None;
-                    self.dip_toggle();
-                    return GameMouse::None;
-                }
-                _ => return GameMouse::None,
+            if let Some(result) = self.hud_left_event(event, at) {
+                return result;
             }
         }
         if pressed && self.drag_from.is_none() && self.map_click(at) {
@@ -2827,7 +2888,7 @@ impl InGame {
             self.selected = self.pick(from, at);
             self.add_with_shift(self.interface.select_before.clone());
         }
-        if self.drag_from.is_none() {
+        if self.drag_from.is_none() && self.interface.hud_input {
             let view = std::mem::take(&mut self.interface.view);
             let event = self.interface.hud.drag(&view, p);
             self.interface.view = view;
@@ -2851,25 +2912,19 @@ impl InGame {
         }
         let Some(at) = self.cursor else { return };
         let p = self.canvas_point(at);
-        let view = std::mem::take(&mut self.interface.view);
-        let event = self.interface.hud.right_press(ctx, &view, p);
-        self.interface.view = view;
+        let event = if self.interface.hud_input {
+            let view = std::mem::take(&mut self.interface.view);
+            let event = self.interface.hud.right_press(ctx, &view, p);
+            self.interface.view = view;
+            event
+        } else {
+            HudEvent::None
+        };
+        if self.hud_right_event(&event) {
+            return;
+        }
         let player = self.own();
         match event {
-            HudEvent::Order(px) if !self.selected.is_empty() => {
-                let (x, y) = self.minimap_world(px);
-                self.commands.push(Command::Move { player, units: self.selected.clone(), x, y });
-                self.unit_sound(self.selected[0], "ORDER_SOUND");
-            }
-            // Touch: a long press on a production icon is the Ctrl+click, an endless order (#438).
-            HudEvent::Command(HudCommand::Unproduce(kind)) if self.interface.touch => {
-                let mods = self.interface.mods;
-                self.interface.mods |= ModifiersState::CONTROL;
-                self.hud_command(HudCommand::Produce(kind));
-                self.interface.mods = mods;
-            }
-            // An icon's right-click command (`UnProduce` 0x4d6e08, cancelling an upgrade).
-            HudEvent::Command(c) => self.hud_command(c),
             HudEvent::None if self.interface.attack_ground_mode => self.attack_ground_at(at),
             HudEvent::None if self.cancel_mode() => {}
             HudEvent::None => {

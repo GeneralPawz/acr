@@ -94,6 +94,7 @@ impl Screen for PlayerName {
         m.text(ctx, 446, 528, "INTF_PLAYER_CP", font::F18Y3, Align::Left);
         self.input = m.d.add_input_box(594, 524, &profile.name, 16, [308, 40], font::F18Y3, font::F18W);
         m.d.input_box_mut(self.input).focus = true;
+        m.d.set_key(self.input, "name");
         for (i, name) in profile.names.iter().enumerate() {
             let [normal, selected] = STYLES[i % 3];
             let frames = [normal, selected, selected, normal, selected, selected];
@@ -101,6 +102,7 @@ impl Screen for PlayerName {
             let row = m.d.add_universal(ctx.lib, 446, 255 + 26 * i as i32, 467, name, TEXTBOX, frames, fonts, Some(0));
             m.d.widgets[row].rect.y1 -= 2;
             m.d.choose(row, i as i32);
+            m.d.set_key(row, format!("profile_{i}"));
             if *name == profile.name {
                 m.d.universal_mut(row).state = 1;
             }
@@ -112,6 +114,7 @@ impl Screen for PlayerName {
             let b = m.d.add_gp_text_button(ctx.lib, x, 577, ctx.texts.get(id), BUTTONS, 0, font::F18Y5, font::F18Y5);
             m.d.choose(b, param);
             m.d.set_hint(b, ctx.texts.get(hint));
+            m.d.set_key(b, if param == OK { "ok" } else { "cancel" });
             if let Kind::GpTextButton(t) = &mut m.d.widgets[b].kind {
                 t.font_dy -= 1;
             }

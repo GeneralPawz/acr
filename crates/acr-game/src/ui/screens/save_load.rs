@@ -85,6 +85,13 @@ struct Lists {
     bar: WidgetId,
 }
 
+/// Names a list pair and its scroll bar: `<prefix>`, `<prefix>_dates` and `<prefix>_scroll`.
+fn key_lists(m: &mut Menu, lists: &Lists, prefix: &str) {
+    m.d.set_key(lists.names, prefix);
+    m.d.set_key(lists.dates, format!("{prefix}_dates"));
+    m.d.set_key(lists.bar, format!("{prefix}_scroll"));
+}
+
 /// Adds a list pair: names (with the row highlight) and dates (none).
 #[allow(clippy::too_many_arguments)]
 fn add_lists(
@@ -183,6 +190,8 @@ impl LoadGame {
         let clip = Some(super::super::draw::Rect::inclusive(0, 0, 709, 767));
         self.lists = add_lists(m, ctx, (446, 282), 714, 8, LOADGAME, 0, bar, clip);
         let records = add_lists(m, ctx, (446, 282), 714, 8, LOADGAME, 0, rec_bar, clip);
+        key_lists(m, &self.lists, "saves");
+        key_lists(m, &records, "records");
         set_visible(m, records, false);
         m.d.list_mut(self.lists.names).focus = true;
         // Page tabs: `Interf2\Buttons` frames 4 (normal) and 5 (selected or hovered).
@@ -192,11 +201,14 @@ impl LoadGame {
         for (k, (x, id)) in [(506, "INTF_LOAD_P0"), (506 + 165 + 21, "INTF_LOAD_P1")].into_iter().enumerate() {
             tabs[k] = m.d.add_universal(ctx.lib, x, 244, 165, ctx.texts.get(id), BUTTONS, frames, fonts, Some(0));
         }
+        m.d.set_key(tabs[0], "tab_saves");
+        m.d.set_key(tabs[1], "tab_records");
         m.d.universal_mut(tabs[0]).state = 1;
         self.records = Some((records, tabs[0], tabs[1]));
         for (x, id, param) in [(472, "INTF_LOAD", OK), (704, "INTF_CANCEL", CANCEL)] {
             let b = m.d.add_gp_text_button(ctx.lib, x, 577, ctx.texts.get(id), BUTTONS, 0, font::F18Y5, font::F18Y5);
             m.d.choose(b, param);
+            m.d.set_key(b, if param == OK { "ok" } else { "cancel" });
             if let Kind::GpTextButton(t) = &mut m.d.widgets[b].kind {
                 t.font_dy -= 1;
             }
@@ -218,6 +230,7 @@ impl LoadGame {
         m.d.add_gp_picture(ctx.lib, fx, fy, G_LOAD_GAME, 5);
         let bar = m.d.add_scroll_bar(ctx.lib, fx + 515, fy + 70, 255, 1, 0, GSCROLL, 0);
         self.lists = add_lists(m, ctx, (fx + 63, fy + 81), fx + 63 + 268, 9, G_LOAD_GAME, 6, bar, None);
+        key_lists(m, &self.lists, "saves");
         self.ok = game_buttons(m, ctx, (fx, fy), "INTF_LOAD");
         m.text(ctx, fx + 295, fy + 36, "INTF_LOAD_TITLE1", font::F16Y5, Align::Center);
         m.text(ctx, fx + 120, fy + 353, "INTF_LOAD_CG", font::F18Y3, Align::Center);
@@ -249,6 +262,7 @@ fn game_buttons(m: &mut Menu, ctx: &Ctx, (fx, fy): (i32, i32), text: &str) -> Wi
             font::F18Y5,
         );
         m.d.choose(b, param);
+        m.d.set_key(b, if param == OK { "ok" } else { "cancel" });
         if let Kind::GpTextButton(t) = &mut m.d.widgets[b].kind {
             t.font_dy += 4;
         }
@@ -374,12 +388,14 @@ impl Screen for SaveGameDialog {
         m.d.add_gp_picture(ctx.lib, fx, fy, G_LOAD_GAME, 5);
         let bar = m.d.add_scroll_bar(ctx.lib, fx + 515, fy + 70, 255, 1, 0, GSCROLL, 0);
         self.lists = add_lists(m, ctx, (fx + 63, fy + 81), fx + 63 + 268, 9, G_LOAD_GAME, 6, bar, None);
+        key_lists(m, &self.lists, "saves");
         self.ok = game_buttons(m, ctx, (fx, fy), "INTF_SAVE");
         m.text(ctx, fx + 295, fy + 36, "INTF_LOAD_TITLE1", font::F16Y5, Align::Center);
         m.text(ctx, fx + 62, fy + 353, "INTF_LOAD_CG", font::F18Y3, Align::Left);
         let last = ctx.profile.borrow().last_save.clone();
         self.input = m.d.add_input_box(fx + 210, fy + 349, &last, NAME_CAPACITY, [302, 24], font::F18Y3, font::F18W);
         m.d.input_box_mut(self.input).focus = true;
+        m.d.set_key(self.input, "name");
         let saves = entries(ctx);
         fill(m, self.lists, &saves);
         // Nothing is selected at first (0x5d9949).

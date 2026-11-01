@@ -102,34 +102,35 @@ impl Screen for MainMenu {
             self.moving.push(m.d.add_gp_picture(ctx.lib, i * 255, 210, MAP, i as usize + 1));
         }
         let fonts = [font::G60W, font::G60Y5, font::G60Y5];
-        let mut entries = |m: &mut Menu, x: i32, y: i32, list: &[(&str, i32)]| {
-            for (i, (id, param)) in list.iter().enumerate() {
+        let mut entries = |m: &mut Menu, x: i32, y: i32, list: &[(&str, i32, &str)]| {
+            for (i, (id, param, key)) in list.iter().enumerate() {
                 let w = m.entry(ctx, x, y + STEP * i as i32, ctx.texts.get(id), fonts, Align::Center, *param);
+                m.d.set_key(w, *key);
                 m.d.widgets[w].hover_sound = true;
                 self.moving.push(w);
             }
         };
         let main = [
-            ("INTF_MAIN_0", item::SINGLE),
-            ("INTF_MAIN_1", item::MULTI),
-            ("INTF_MAIN_2", item::LOAD),
-            ("INTF_MAIN_3", item::OPTIONS),
-            ("INTF_MAIN_4", item::EDITOR),
-            ("INTF_MAIN_5", item::EXIT),
+            ("INTF_MAIN_0", item::SINGLE, "single"),
+            ("INTF_MAIN_1", item::MULTI, "multi"),
+            ("INTF_MAIN_2", item::LOAD, "load"),
+            ("INTF_MAIN_3", item::OPTIONS, "options"),
+            ("INTF_MAIN_4", item::EDITOR, "editor"),
+            ("INTF_MAIN_5", item::EXIT, "exit"),
         ];
         entries(m, X, Y, &main);
         let multi = [
-            ("INTF_PROT_B3", item::SUB_3),
-            ("INTF_MAIN_M0", item::SUB_1),
-            ("INTF_MAIN_M1", item::SUB_2),
-            ("INTF_MAIN_B", item::BACK),
+            ("INTF_PROT_B3", item::SUB_3, "multi_3"),
+            ("INTF_MAIN_M0", item::SUB_1, "multi_1"),
+            ("INTF_MAIN_M1", item::SUB_2, "multi_2"),
+            ("INTF_MAIN_B", item::BACK, "multi_back"),
         ];
         entries(m, X + MULTI.0 + 10, Y + MULTI.1 + 38, &multi);
         let single = [
-            ("INTF_MAIN_S0", item::SUB_1),
-            ("INTF_MAIN_S1", item::SUB_2),
-            ("INTF_MAIN_S2", item::SUB_3),
-            ("INTF_MAIN_B", item::BACK),
+            ("INTF_MAIN_S0", item::SUB_1, "campaigns"),
+            ("INTF_MAIN_S1", item::SUB_2, "single_mission"),
+            ("INTF_MAIN_S2", item::SUB_3, "random_map"),
+            ("INTF_MAIN_B", item::BACK, "single_back"),
         ];
         entries(m, X + SINGLE.0 - 20, Y + SINGLE.1 + 38, &single);
         m.d.set_clip(None);
@@ -165,7 +166,7 @@ impl Screen for MainMenu {
     }
 
     fn input(&mut self, _ctx: &Ctx, input: Input) -> Nav {
-        let chosen = self.menu.input(input);
+        let chosen = self.menu.input(input.clone());
         // Clicks during a slide are dropped: the original resets `ItemChoose` when the
         // submenu loop starts.
         let Some(page) = self.page else { return Nav::Stay };

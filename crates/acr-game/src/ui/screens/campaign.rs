@@ -73,13 +73,15 @@ impl Screen for Campaigns {
         m.text(ctx, 512, 334, "INTF_CAMPAIGN_W0", font::F16Y5, Align::Center);
         let bar = m.d.add_scroll_bar(ctx.lib, 705, 377 - 13, 156, 100, 0, VSCROLL, 0);
         self.list = m.d.add_list_box(ctx.lib, 311, 377, 5, LISTBOX, 6, 26, font::F18W, font::F18Y3, Some(bar));
+        m.d.set_key(bar, "campaigns_scroll");
+        m.d.set_key(self.list, "campaigns");
         let list = m.d.list_mut(self.list);
         list.focus = true;
         list.dy = -3;
         list.dx -= 1 + 16;
         list.items = self.campaigns.iter().map(|c| c.name.clone()).collect();
         list.cur = self.start.min(list.items.len().saturating_sub(1));
-        for campaign in &self.campaigns {
+        for (i, campaign) in self.campaigns.iter().enumerate() {
             let bar = m.d.add_scroll_bar(ctx.lib, 755, 338, 290, 1, 0, VSCROLL, 0);
             let text = ctx.lib.bytes(&campaign.description).map(|b| b.to_vec()).unwrap_or_default();
             let viewer = m.d.add_text_viewer(ctx.lib, ctx.fonts, 311, 542, [400, 90], &text, font::F16Y3);
@@ -91,13 +93,17 @@ impl Screen for Campaigns {
                 m.d.widgets[w].visible = false;
                 m.d.widgets[w].enabled = false;
             }
+            m.d.set_key(viewer, format!("description_{i}"));
+            m.d.set_key(bar, format!("description_{i}_scroll"));
             self.texts.push((viewer, bar));
         }
         let start = m.d.add_gp_button(ctx.lib, 899, 706, GAMEBUTTONS, 0, 1);
         m.d.choose(start, OK);
+        m.d.set_key(start, "start");
         m.d.set_hint(start, ctx.texts.get("MISS_RUN"));
         let cancel = m.d.add_gp_button(ctx.lib, 959, 706, GAMEBUTTONS, 3, 4);
         m.d.choose(cancel, CANCEL);
+        m.d.set_key(cancel, "cancel");
         m.d.set_hint(cancel, ctx.texts.get("SOCANCEL"));
         self.select();
     }

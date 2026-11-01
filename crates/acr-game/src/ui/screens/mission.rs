@@ -98,12 +98,15 @@ impl Screen for MessageWindow {
         if self.window == Window::Question {
             let b = d.add_gp_text_button(lib, x0 + 75, y0 + 521, ok, BUTTON2, 3, font::F18Y5, font::F18Y5);
             d.choose(b, OK);
+            d.set_key(b, "ok");
             let no = ctx.texts.get("@MSNO");
             let b = d.add_gp_text_button(lib, x0 + 307, y0 + 521, no, BUTTON2, 3, font::F18Y5, font::F18Y5);
             d.choose(b, CANCEL);
+            d.set_key(b, "cancel");
         } else {
             let b = d.add_gp_text_button(lib, x0 + 191, y0 + 520, ok, BUTTON2, 3, font::F18Y5, font::F18Y5);
             d.choose(b, OK);
+            d.set_key(b, "ok");
         }
     }
 
@@ -172,6 +175,8 @@ fn page_layout(
     let height = 495 - top;
     let sb = d.add_scroll_bar(lib, x0 + 520 - sw, y0 + top, height, 1, 0, VSCROLL2, 0);
     let tv = d.add_text_viewer(lib, ctx.fonts, x0 + 55, y0 + top, [520 - sw - 5 - 55, height], text, font::F18Y3);
+    d.set_key(tv, "text");
+    d.set_key(sb, "text_scroll");
     let viewer = d.viewer_mut(tv);
     viewer.scroll = Some(sb);
     viewer.set_line_height(21, height);
@@ -237,12 +242,16 @@ impl Screen for HistoryWindow {
         let lib = ctx.lib;
         let d = &mut self.menu.d;
         // `addGP_TextButton(x, 520, text, Button2, 1, fon18y5, fon18y5)`, never disabled.
-        let buttons =
-            [(50, "@MSPREV", HISTORY_PREV), (217, "@MSCANCEL", HISTORY_CLOSE), (384, "@MSNEXT", HISTORY_NEXT)];
-        for (x, id, value) in buttons {
+        let buttons = [
+            (50, "@MSPREV", HISTORY_PREV, "prev"),
+            (217, "@MSCANCEL", HISTORY_CLOSE, "close"),
+            (384, "@MSNEXT", HISTORY_NEXT, "next"),
+        ];
+        for (x, id, value, key) in buttons {
             let text = ctx.texts.get(id);
             let b = d.add_gp_text_button(lib, x0 + x, y0 + 520, text, BUTTON2, 1, font::F18Y5, font::F18Y5);
             d.choose(b, value);
+            d.set_key(b, key);
         }
     }
 
@@ -355,6 +364,7 @@ impl Screen for ChoiceWindow {
         }
         let tv = d.add_text_viewer(lib, ctx.fonts, bx + tx, by + ty, [lx - 32 - picw, 1000], &self.text, ROM11_RED);
         d.widgets[tv].enabled = false;
+        d.set_key(tv, "text");
         let viewer = d.viewer_mut(tv);
         viewer.focus = false;
         let th = viewer.text_height();
@@ -363,6 +373,7 @@ impl Screen for ChoiceWindow {
         for (i, choice) in self.choices.iter().enumerate() {
             let x = bx + 32;
             let id = d.add_text_viewer(lib, ctx.fonts, x, by + y, [lx - 64, 300], choice, ROM11);
+            d.set_key(id, format!("choice_{i}"));
             let viewer = d.viewer_mut(id);
             viewer.focus = false;
             let h = viewer.text_height();

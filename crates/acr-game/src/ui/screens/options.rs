@@ -106,6 +106,7 @@ impl Screen for Options {
         for (bx, id, param) in [(472, "INTF_ACCEPT", OK), (704, "INTF_CANCEL", ABORT)] {
             let b = m.d.add_gp_text_button(ctx.lib, bx, 577, ctx.texts.get(id), BUTTONS, 0, font::F18Y5, font::F18Y5);
             m.d.choose(b, param);
+            m.d.set_key(b, if param == OK { "ok" } else { "cancel" });
             if let Kind::GpTextButton(t) = &mut m.d.widgets[b].kind {
                 t.font_dy -= 1;
             }
@@ -116,6 +117,9 @@ impl Screen for Options {
         self.music = slider(m, 402, 100, s.music_volume);
         self.scroll = slider(m, 484, 8, s.scroll_speed - 2);
         self.speed = slider(m, 510, 100, 100 - s.frame_time);
+        for (w, key) in [(self.sound, "sound"), (self.music, "music"), (self.scroll, "scroll"), (self.speed, "speed")] {
+            m.d.set_key(w, key);
+        }
         let combo = |m: &mut Menu, y: i32, lines: Vec<Vec<u8>>, cur: usize| {
             let c = m.d.add_combo_box(ctx.lib, 619, y, COMBO, 0, 9, font::F18W, font::F18Y3);
             let combo = m.d.combo_mut(c);
@@ -135,10 +139,20 @@ impl Screen for Options {
         // ACR: the control scheme (#129) beside the game options' heading.
         let controls = CONTROL_CHOICES.iter().map(|c| c.0.to_vec()).collect();
         self.controls = combo(m, 419, controls, s.control_choice());
+        for (w, key) in [
+            (self.resolution, "resolution"),
+            (self.game_mode, "game_mode"),
+            (self.music_mode, "music_mode"),
+            (self.controls, "controls"),
+        ] {
+            m.d.set_key(w, key);
+        }
         self.record = m.d.add_gp_button(ctx.lib, 619, 525, CHECKER, 1, 0);
         m.d.choose(self.record, RECORD);
+        m.d.set_key(self.record, "record");
         m.d.add_strip(ctx.lib, 649, 525, 267, TEXTBOX, [5, 6, 7, 8, 9]);
         self.record_file = m.d.add_input_box(659, 524, &s.record_file, 120, [248, 26], font::F18Y3, font::F18W);
+        m.d.set_key(self.record_file, "record_file");
         let record = self.settings.record;
         self.set_record(record);
     }

@@ -328,6 +328,11 @@ impl WebUi {
                 && (!screen.in_game || (self.transparent && OVER_GAME.contains(&screen.name.as_str()))))
     }
 
+    /// Tells the UI that the intent numbered `seq` was refused.
+    pub fn reject(&mut self, seq: u32, reason: String) {
+        (self.send)(&serde_json::to_string(&ToUi::Rejected { seq, reason }).expect("rejection serializes"));
+    }
+
     /// Tells the engine which screens to leave to the UI, and the UI what changed. Call after
     /// the frame's advance, before it is drawn.
     pub fn publish(
@@ -602,10 +607,27 @@ mod tests {
     }
 
     #[test]
+    fn a_refused_intent_is_answered_with_its_number_and_reason() {
+        let log = Rc::new(RefCell::new(Vec::<String>::new()));
+        let sink = log.clone();
+        let mut web = WebUi::new(
+            Box::new(move |m| sink.borrow_mut().push(m.to_owned())),
+            Host::Native,
+            vec![],
+            vec![],
+            [1024.0, 768.0],
+            1.0,
+        );
+        web.reject(12, "no such widget".into());
+        assert_eq!(log.borrow()[1], r#"{"t":"rejected","seq":12,"reason":"no such widget"}"#);
+    }
+
+    #[test]
     fn a_patch_refers_to_its_sprites_fonts_and_cursor() {
         use acr_ui_protocol::{CursorView, Part, WidgetKind};
         let widget = |parts| WidgetView {
             id: "S/0".into(),
+            key: None,
             kind: WidgetKind::Button,
             rect: [0; 4],
             enabled: true,

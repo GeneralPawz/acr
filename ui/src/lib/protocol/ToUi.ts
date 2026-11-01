@@ -5,4 +5,4 @@ import type { ViewPatch } from "./ViewPatch";
 /**
  * Rust to UI.
  */
-export type ToUi = { "t": "hello", protocol: number, host: Host, asset_base: string, } | { "t": "view" } & ViewPatch;
+export type ToUi = { "t": "hello", protocol: number, host: Host, asset_base: string, } | { "t": "view" } & ViewPatch | { "t": "rejected", seq: number, reason: string, };

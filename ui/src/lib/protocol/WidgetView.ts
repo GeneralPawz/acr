@@ -5,7 +5,12 @@ import type { WidgetKind } from "./WidgetKind";
 /**
  * One widget of a dialog. `id` is `<Screen>/<index>`, as in the test driver's widget tree.
  */
-export type WidgetView = { id: string, kind: WidgetKind, 
+export type WidgetView = { id: string, 
+/**
+ * A name that stays with the widget when the dialog is rebuilt (`Dialog::set_key`), for
+ * a skin that lays widgets out by role. Not every widget has one.
+ */
+key?: string, kind: WidgetKind, 
 /**
  * `[x, y, w, h]` of the area that reacts to the mouse, in canvas pixels.
  */

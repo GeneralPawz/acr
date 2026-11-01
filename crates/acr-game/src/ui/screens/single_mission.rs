@@ -223,6 +223,8 @@ impl Screen for SingleMission {
         let bar = m.d.add_scroll_bar(ctx.lib, 495, 136, 476, 1, 0, VSCROLL, 0);
         let rows = if self.campaign.is_some() { 10 } else { 17 };
         self.list = m.d.add_list_box(ctx.lib, 94, 156, rows, LISTBOX, 3, 26, font::F18W, font::F18Y3, Some(bar));
+        m.d.set_key(bar, "missions_scroll");
+        m.d.set_key(self.list, "missions");
         let list = m.d.list_mut(self.list);
         list.focus = true;
         list.dy = -3;
@@ -240,13 +242,14 @@ impl Screen for SingleMission {
             .map(|id| ctx.texts.get(id).to_vec())
             .collect();
         m.d.set_hint(self.difficulty, ctx.texts.get("DIFFICULT5"));
+        m.d.set_key(self.difficulty, "difficulty");
         let briefings = self
             .missions
             .iter()
             .map(|m| ctx.lib.bytes(m.briefing()).map(|b| b.to_vec()).unwrap_or_default())
             .chain(self.acr.iter().map(|m| m.briefing()))
             .collect::<Vec<_>>();
-        for text in briefings {
+        for (i, text) in briefings.into_iter().enumerate() {
             let (x, y, size) = TEXT;
             let viewer = m.d.add_text_viewer(ctx.lib, ctx.fonts, x, y, size, &text, font::F18Y3);
             m.d.viewer_mut(viewer).set_line_height(TEXT_LINE_H, size[1] - 1);
@@ -256,13 +259,17 @@ impl Screen for SingleMission {
                 m.d.widgets[w].visible = false;
                 m.d.widgets[w].enabled = false;
             }
+            m.d.set_key(viewer, format!("briefing_{i}"));
+            m.d.set_key(bar, format!("briefing_{i}_scroll"));
             self.texts.push((viewer, bar));
         }
         let start = m.d.add_gp_button(ctx.lib, 899, 706, GAMEBUTTONS, 0, 1);
         m.d.choose(start, OK);
+        m.d.set_key(start, "start");
         m.d.set_hint(start, ctx.texts.get("MISS_RUN"));
         let cancel = m.d.add_gp_button(ctx.lib, 959, 706, GAMEBUTTONS, 3, 4);
         m.d.choose(cancel, CANCEL);
+        m.d.set_key(cancel, "cancel");
         let (cancel_hint, title) =
             if self.campaign.is_some() { ("WAR_CANCEL", "INTF_CMISS_T0") } else { ("SOCANCEL", "INTF_SMISS_T0") };
         m.d.set_hint(cancel, ctx.texts.get(cancel_hint));

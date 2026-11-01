@@ -70,6 +70,8 @@ impl Menu {
                 self.d.wheel(notches);
                 Default::default()
             }
+            // Checked by `Ui::intent` before it gets here.
+            Input::Intent(intent) => self.d.apply(&intent).unwrap_or_default(),
         };
         self.sounds.extend(out.sounds);
         out.chosen
