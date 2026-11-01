@@ -170,7 +170,8 @@ strings (the numbers stay at 1024x768, where the scale is 1): `TopBarWide` (1920
 images for the strings (`text/`, the exact fallback) were tried and changed nothing (96.669% to 96.683%), so the glyph layout is
 not the cause: the pixels in the interior match and the engine's edge pixels are darker by 8 to 20 levels. The engine's image pass
 filters straight-alpha textures (`image.wgsl`, `ALPHA_BLENDING`, sRGB textures), the browser composites premultiplied images; the
-two cannot be made equal from the DOM, only by changing how the engine filters at a scale that is not whole. Not measured by pixels: a hint at `hud_scale` (no icon to hover in the blank field of the
+two cannot be made equal from the DOM, only by changing how the engine filters at a scale that is not whole (#464). Until then
+`WebUi::hud_claim` claims the HUD only at a whole canvas scale; at any other scale the engine keeps drawing it. Not measured by pixels: a hint at `hud_scale` (no icon to hover in the blank field of the
 page; `svelte_hud_scale` checks its group) and the cursor (a screenshot has no system cursor; the viewport's CSS cursor was
 read back).
 

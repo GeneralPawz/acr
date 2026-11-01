@@ -482,7 +482,8 @@ impl Game {
                     self.ui.open_dialog(window);
                 }
                 game.set_scale_factor(density);
-                game.set_hud_claim(self.webui.as_ref().map(|w| w.hud_claim()).unwrap_or_default());
+                let scale = Canvas::fit(size).scale;
+                game.set_hud_claim(self.webui.as_ref().map(|w| w.hud_claim(scale)).unwrap_or_default());
                 let (l, images, cursor) = game.interface(&self.ui.ctx(), size, game_dt);
                 layers = l;
                 // The "Zielhilfe" icon's switch is kept in `settings.txt` (`aim_guides`).

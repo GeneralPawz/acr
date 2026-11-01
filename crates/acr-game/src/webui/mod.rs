@@ -173,9 +173,13 @@ impl WebUi {
     }
 
     /// The parts of the interface the engine leaves to the UI: the ones the UI named, on a host
-    /// whose UI layer is transparent over the canvas (the driver's classic skin takes all).
-    pub fn hud_claim(&self) -> Claim {
-        let has = |part: &str| self.claim_all || (self.transparent && self.hud.iter().any(|p| p == part));
+    /// whose UI layer is transparent over the canvas, at a whole canvas `scale` (the driver's
+    /// classic skin takes all). At a fractional scale the engine's straight-alpha filtering
+    /// darkens sprite and text edges that the browser composites correctly, so the two differ on
+    /// every edge (#464); until that is fixed the engine keeps the HUD there.
+    pub fn hud_claim(&self, scale: f32) -> Claim {
+        let whole = scale.fract() == 0.0;
+        let has = |part: &str| self.claim_all || (self.transparent && whole && self.hud.iter().any(|p| p == part));
         Claim { top_bar: has("TopBar"), drop_down: has("DropDown"), hints: has("Hints"), messages: has("Messages") }
     }
 
@@ -619,12 +623,15 @@ mod tests {
     fn the_interface_is_the_uis_only_where_it_named_it_on_a_transparent_host() {
         let hud = || vec!["TopBar".to_owned(), "Hints".to_owned()];
         let web = WebUi::new(Box::new(|_| {}), Host::Web, vec![], hud(), [1.0; 2], 1.0);
-        assert_eq!(web.hud_claim(), Claim { top_bar: true, hints: true, ..Claim::default() });
+        assert_eq!(web.hud_claim(1.0), Claim { top_bar: true, hints: true, ..Claim::default() });
+        assert_eq!(web.hud_claim(2.0), Claim { top_bar: true, hints: true, ..Claim::default() });
+        // A fractional canvas scale (1920 x 1080: 1.40625) leaves the HUD to the engine (#464).
+        assert_eq!(web.hud_claim(1.40625), Claim::default());
         let native = WebUi::new(Box::new(|_| {}), Host::Native, vec![], hud(), [1.0; 2], 1.0);
-        assert_eq!(native.hud_claim(), Claim::default());
+        assert_eq!(native.hud_claim(1.0), Claim::default());
         let mut all = WebUi::new(Box::new(|_| {}), Host::Native, vec![], vec![], [1.0; 2], 1.0);
         all.claim_everything();
-        assert_eq!(all.hud_claim(), Claim::ALL);
+        assert_eq!(all.hud_claim(1.40625), Claim::ALL);
     }
 
     #[test]
