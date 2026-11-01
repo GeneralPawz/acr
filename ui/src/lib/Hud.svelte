@@ -31,7 +31,10 @@
         data-acr-hud-group={group.name}
         data-acr-hud-scale={group.scale}
         data-acr-hud-anchor={group.anchor.join(',')}
-        style:transform={group.scale === 1 ? undefined : `scale(${group.scale})`}
+        data-acr-hud-offset={group.offset.join(',')}
+        style:transform={group.scale === 1 && group.offset[0] === 0 && group.offset[1] === 0
+          ? undefined
+          : `translate(${group.offset[0]}px, ${group.offset[1]}px) scale(${group.scale})`}
         style:transform-origin="{group.anchor[0]}px {group.anchor[1]}px"
       >
         {#each group.parts as part, i (i)}

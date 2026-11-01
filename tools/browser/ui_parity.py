@@ -153,7 +153,8 @@ HUD_RECTS = """() => {
             // A group at hud_scale is stretched about its anchor.
             const k = Number(group.dataset.acrHudScale);
             const [ax, ay] = group.dataset.acrHudAnchor.split(',').map(Number);
-            [x, y, w, h] = [ax + (x - ax) * k, ay + (y - ay) * k, w * k, h * k];
+            const [ox, oy] = group.dataset.acrHudOffset.split(',').map(Number);
+            [x, y, w, h] = [ax + ox + (x - ax) * k, ay + oy + (y - ay) * k, w * k, h * k];
             const r = e.getBoundingClientRect();
             out[group.dataset.acrHudGroup + '/' + i] = {
                 dom: [r.x, r.y, r.width, r.height],

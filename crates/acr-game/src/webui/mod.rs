@@ -68,7 +68,34 @@ struct Sent {
     order: Vec<String>,
     /// The groups of the in-game interface, with the draws they were made from; `None` until the
     /// first patch of a connection (or a resync), which then carries the topic even if empty.
-    hud: Option<HashMap<String, (Vec<Draw>, HudGroup)>>,
+    hud: Option<HashMap<String, SentGroup>>,
+}
+
+/// A group of the interface as the UI has it: the draws it was made from (at its last full send),
+/// the shift since, and what was sent.
+struct SentGroup {
+    draws: Vec<Draw>,
+    offset: [i32; 2],
+    group: HudGroup,
+}
+
+/// The shift that takes `old` to `new`, if `new` is `old` moved as a whole (a tooltip that follows
+/// the mouse): the same sprites, sizes and opacity, every position and every clip window of its own
+/// moved alike (a clip that covers everything stays).
+fn shift(old: &[Draw], new: &[Draw]) -> Option<[i32; 2]> {
+    if old.len() != new.len() {
+        return None;
+    }
+    let (Some(a), Some(b)) = (old.first(), new.first()) else { return Some([0, 0]) };
+    let d = [b.x - a.x, b.y - a.y];
+    let same = old.iter().zip(new).all(|(o, n)| {
+        o.sprite == n.sprite
+            && o.size == n.size
+            && o.alpha == n.alpha
+            && [n.x - o.x, n.y - o.y] == d
+            && (o.clip == n.clip || o.clone().translated(d[0], d[1]).clip == n.clip)
+    });
+    same.then_some(d)
 }
 
 /// An asset request waiting for files.
@@ -296,29 +323,47 @@ impl WebUi {
         let mut patch = HudPatch::default();
         let mut updates = Vec::new();
         let mut names = Vec::with_capacity(groups.len());
+        let mut moves = Vec::new();
         for g in groups {
             names.push(g.name);
-            if sent.get(g.name).is_some_and(|(draws, _)| *draws == g.draws) {
+            if let Some(old) = sent.get(g.name).filter(|o| o.group.scale == g.zoom.scale)
+                && let Some(d) = shift(&old.draws, &g.draws)
+                && (g.zoom.scale == 1.0
+                    || (0..2).all(|i| (g.zoom.anchor[i] - old.group.anchor[i] - d[i] as f32).abs() < 1e-3))
+            {
+                if d != old.offset {
+                    moves.push((g.name, d));
+                }
                 continue;
             }
             let parts = self.resolver.parts(lib, fonts, &g.draws)?;
-            let group =
-                HudGroup { name: g.name.to_owned(), layer: g.layer, anchor: g.zoom.anchor, scale: g.zoom.scale, parts };
-            if sent.get(g.name).is_none_or(|(_, old)| *old != group) {
-                patch.groups.push(group.clone());
-            }
+            let group = HudGroup {
+                name: g.name.to_owned(),
+                layer: g.layer,
+                anchor: g.zoom.anchor,
+                scale: g.zoom.scale,
+                offset: [0, 0],
+                parts,
+            };
+            patch.groups.push(group.clone());
             updates.push((g.name, g.draws, group));
         }
         // Nothing is recorded unless every group could be made: a retry sends them all.
         for (name, draws, group) in updates {
-            sent.insert(name.to_owned(), (draws, group));
+            sent.insert(name.to_owned(), SentGroup { draws, offset: [0, 0], group });
+        }
+        for (name, offset) in moves {
+            if let Some(old) = sent.get_mut(name) {
+                old.offset = offset;
+                patch.moved.push(acr_ui_protocol::HudMove { name: name.to_owned(), offset });
+            }
         }
         patch.removed = sent.keys().filter(|k| !names.contains(&k.as_str())).cloned().collect();
         patch.removed.sort();
         for name in &patch.removed {
             sent.remove(name);
         }
-        Ok((first || !patch.groups.is_empty() || !patch.removed.is_empty()).then_some(patch))
+        Ok((first || !patch.groups.is_empty() || !patch.moved.is_empty() || !patch.removed.is_empty()).then_some(patch))
     }
 
     /// The screen topic if it changed since the last patch.
@@ -526,6 +571,47 @@ mod tests {
         assert_eq!((p.groups.len(), p.removed.as_slice()), (0, ["top_bar_text".to_owned()].as_slice()));
         web.resync();
         let p = web.hud_patch(&ui, vec![bar()]).unwrap().unwrap();
+        assert_eq!(p.groups.len(), 1);
+    }
+
+    #[test]
+    fn a_group_that_only_moved_goes_out_as_a_shift() {
+        use crate::hud::font;
+        use crate::hud::zoom::Zoom;
+        use crate::ui::draw::Rect;
+        let mut web = WebUi::new(Box::new(|_| {}), Host::Web, vec![], vec![], [1.0; 2], 1.0);
+        let ui = ui_with_menu();
+        // A tooltip at the mouse: a fill, a frame clipped to its box, a string; the box's clip window moves with it.
+        let hint = |m: i32, scale: f32| Claimed {
+            name: "hint",
+            layer: 3,
+            zoom: Zoom { anchor: [m as f32, 5.0], scale },
+            draws: vec![
+                Draw::fill([1, 2, 3, 255], Rect::new(m, 20, 9, 9)),
+                Draw::fill([4, 5, 6, 255], Rect::new(m, 20, 9, 1)).clipped(Rect::new(m, 0, 9, 99)),
+                Draw::game_text(font::YELLOW, b"EISEN", m + 2, 22),
+            ],
+        };
+        let p = web.hud_patch(&ui, vec![hint(10, 1.0)]).unwrap().unwrap();
+        assert_eq!((p.groups.len(), p.moved.len()), (1, 0));
+        let p = web.hud_patch(&ui, vec![hint(17, 1.0)]).unwrap().unwrap();
+        assert_eq!((p.groups.len(), p.moved.len()), (0, 1));
+        assert_eq!((p.moved[0].name.as_str(), p.moved[0].offset), ("hint", [7, 0]));
+        assert!(web.hud_patch(&ui, vec![hint(17, 1.0)]).unwrap().is_none());
+        // Back at the start: the shift is zero again, which the UI must be told.
+        let p = web.hud_patch(&ui, vec![hint(10, 1.0)]).unwrap().unwrap();
+        assert_eq!(p.moved[0].offset, [0, 0]);
+        // A different scale is a new group; an anchor that did not move with the draws too.
+        let p = web.hud_patch(&ui, vec![hint(10, 2.0)]).unwrap().unwrap();
+        assert_eq!(p.groups.len(), 1);
+        let mut off = hint(14, 2.0);
+        off.zoom.anchor = [99.0, 5.0];
+        let p = web.hud_patch(&ui, vec![off]).unwrap().unwrap();
+        assert_eq!(p.groups.len(), 1);
+        // Changed content is not a shift.
+        let mut other = hint(14, 2.0);
+        other.draws[2] = Draw::game_text(font::YELLOW, b"STEIN", 16, 22);
+        let p = web.hud_patch(&ui, vec![other]).unwrap().unwrap();
         assert_eq!(p.groups.len(), 1);
     }
 

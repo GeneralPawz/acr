@@ -215,8 +215,18 @@ pub enum Part {
 pub struct HudPatch {
     /// Groups that are new or changed.
     pub groups: Vec<HudGroup>,
+    /// Groups that only moved: the same parts, shifted to a new `offset` (a hint follows the mouse).
+    pub moved: Vec<HudMove>,
     /// Names of groups that are gone.
     pub removed: Vec<String>,
+}
+
+/// A group that moved without changing.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export, export_to = export_dir!()))]
+pub struct HudMove {
+    pub name: String,
+    pub offset: [i32; 2],
 }
 
 /// One layer of the in-game interface, in game canvas pixels.
@@ -229,6 +239,10 @@ pub struct HudGroup {
     /// `hud_scale`: the group is drawn `scale` times larger about `anchor` (1: as it is).
     pub anchor: [f32; 2],
     pub scale: f32,
+    /// The parts' shift in game canvas pixels (a [`HudMove`] changes it); the scale is about the
+    /// shifted anchor.
+    #[serde(default)]
+    pub offset: [i32; 2],
     pub parts: Vec<Part>,
 }
 

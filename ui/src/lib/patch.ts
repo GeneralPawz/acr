@@ -26,6 +26,10 @@ export function applyHud(current: readonly HudGroup[], patch: HudPatch): HudGrou
   const byName = new Map(current.map((g) => [g.name, g]));
   for (const name of patch.removed) byName.delete(name);
   for (const g of patch.groups) byName.set(g.name, g);
+  for (const m of patch.moved) {
+    const g = byName.get(m.name);
+    if (g) byName.set(m.name, { ...g, offset: m.offset });
+  }
   return [...byName.values()].sort((a, b) => a.layer - b.layer);
 }
 

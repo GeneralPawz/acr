@@ -142,6 +142,8 @@ side panels.
 - **Topic:** `ViewPatch.hud` (`HudPatch { groups, removed }`): a group (`HudGroup { name, layer, anchor, scale, parts }`)
   is a layer of `Part`s in game canvas pixels (`Stage::game`), replaced as a whole and stacked by `layer`;
   `scale` about `anchor` is `hud_scale` (the hint is stretched about the mouse as `Hud::draw_hint` lays it out).
+  A group that only moved (the same draws shifted, as a tooltip follows the mouse) goes out as a `HudMove` with the new `offset`
+  (`WebUi::hud_patch`, `shift`), not as its parts again.
   Rust produces them: `Hud::draw` returns `Section`s (`Layer`), the game leaves the claimed ones out of its layers
   (`hud::Claim`, `InGame::set_hud_claim`, `Claimed` groups via `InGame::take_claimed`) and `WebUi::hud_patch`
   resolves them to parts after the frame's advance. The UI draws them in `Hud.svelte` over the canvas and under any dialog.
@@ -162,16 +164,19 @@ side panels.
 
 Parity (`ui_parity.py`, the blank grass field, the mouse waits mid-screen; pixels over the part's area `HUD_AREAS`, layout
 from every sprite's and fill's published rect against the page's (`data-acr-part-rect`), at 1024x768, device pixel ratio 1):
-`TopBar` 100.000%, `DropDown` 100.000%, `Hints` 100.000% (the area starts below the cursor, which only the engine draws in a screenshot), `Messages` 100.000% (the leader chords' hint line), layout 0 px. At a window whose scale is not whole the
-engine's linear filter and the page's differ at glyph edges (the page lays a string out glyph by glyph, the engine scales the
-whole string): `TopBarWide` (1920x1080, scale 1.40625) 96.669%, `TopBarCentered` 96.654%, `TopBarTouch` (1584x720, scale 0.9375) 99.495%,
-`TopBarTouchOpen` 98.102%, so those are measured, not within 99.5%. Not measured by pixels: a hint at `hud_scale` (no icon to hover in the blank field of the
+`TopBar` 100.000%, `DropDown` 100.000%, `Hints` 100.000% (the area starts below the cursor, which only the engine draws in a screenshot), `Messages` 100.000% (the leader chords' hint line), layout 0 px. At a window whose scale is not whole the page cannot match the engine at the edges of sprites and
+strings (the numbers stay at 1024x768, where the scale is 1): `TopBarWide` (1920x1080, scale 1.40625) 96.683%, `TopBarCentered` 96.648%,
+`TopBarTouch` (1584x720, scale 0.9375) 99.495%, `TopBarTouchOpen` 98.114%, so those are measured, not within 99.5%. Whole-string
+images for the strings (`text/`, the exact fallback) were tried and changed nothing (96.669% to 96.683%), so the glyph layout is
+not the cause: the pixels in the interior match and the engine's edge pixels are darker by 8 to 20 levels. The engine's image pass
+filters straight-alpha textures (`image.wgsl`, `ALPHA_BLENDING`, sRGB textures), the browser composites premultiplied images; the
+two cannot be made equal from the DOM, only by changing how the engine filters at a scale that is not whole. Not measured by pixels: a hint at `hud_scale` (no icon to hover in the blank field of the
 page; `svelte_hud_scale` checks its group) and the cursor (a screenshot has no system cursor; the viewport's CSS cursor was
 read back).
 
 Patch size and rate (`tools/browser/ui_patches.py`, swiftshader, 1024x768, blank field, six seconds each): idle 0.3 patches
-a second, 227 bytes a second; the mouse sweeping over the resource values (a hint that moves with it) 20 patches a second of
-1.8 KB, 34 KB/s; over the map 1 patch (61 bytes); the drop-down open with the mouse over its rows 3 patches a second of
+a second, 227 bytes a second; the mouse sweeping over the resource values (a hint that moves with it) 20 patches a second, median 96 bytes
+(a shift; 1.8 KB when the hint changes), 4.5 KB/s (34 KB/s before shifts); over the map 1 patch (61 bytes); the drop-down open with the mouse over its rows 3 patches a second of
 5.6 KB (the whole group on each hover change), 17 KB/s. The page's frame intervals stay at the 16.7 ms vsync (median) in every phase;
 the resource values of a game that gathers resend the 700 bytes of `top_bar_text` when one changes.
 
