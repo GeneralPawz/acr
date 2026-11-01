@@ -121,6 +121,7 @@ code the press ends in (`Dialog::press_plain`, `choose_param`, `reveal`, the HUD
 | same, a slider | `set_value { value }` | `Dialog::set_value`: the drag to `value` (`0..=max`) |
 | same, an input box | `set_text { text }` | `Dialog::set_text`: focus and the text as if typed into the emptied box (CP1252, printable, at most `capacity - 1`) |
 | `hud/<slot>`, `army/<slot>` | `click { button, mods }` | `InGame::hud_event`: the command of the icon, left or right (`Hud::icon_click`); `mods` are held for this click (Ctrl: an endless order) |
+| `editor/...` | `click { button }` | `InGame::editor_intent` (`ViewPatch.editor`, `EditorView`, `editor/touch.rs`): the test editor's drawer. Rust sends every id with the view; the effect is `Editor::apply` of the act a click on the classic window's item sends. Right: a long press on a colour (its team, in the Teams mode) or on a unit cell (its level list). Refused as the classic window refuses: an id the view does not offer (`NoWidget`), a control of the other view or of another list (`Hidden`), a number out of range (`Range`), `editor/stop` with nothing armed (`Disabled`). `editor/close` closes the level list, `editor/stop` ends placing |
 | `minimap` | `minimap_at { uv, button }` | `InGame::hud_event`: left centres the camera, right orders the selection to the point (`Hud::minimap_pixel`) |
 
 **Back** (`FromUi::Back { seq }`, the touch skin's header arrow): presses the top screen's own back or cancel widget as
@@ -145,8 +146,9 @@ names its buttons, lists, combo boxes, sliders, input boxes and text viewers; th
 none. Keys are unique within a screen.
 
 `InGame.interface.hud_input` (default on; `InGame::set_hud_input`): off, a window pixel never reaches the HUD
-(press, right press, minimap drag), so the HUD takes `hud_event`s only. The top bar's drop-down, the unit and
-game panels and the test editor's window have no intent yet; they stay pixel-driven.
+(press, right press, minimap drag), so the HUD takes `hud_event`s only. The top bar's drop-down and the unit and
+game panels have no intent yet; they stay pixel-driven. The test editor's window takes no pixel then either (it is not
+drawn; a map tap where it stood places, `InGame::editor_left`), its drawer is the `editor/...` intents.
 
 Driver, `--ui touch`: connected like `--ui classic`, `hud_input` off in a running game, and a left click
 (`click`, `move` excepted) on a target the tree names goes in as an intent: a row `Screen/3#5` as `select_row`, an
@@ -158,6 +160,9 @@ lists, sliders and scroll bars by their centre, the editor's icons, double click
 command (`intent N refused: ...`). Scenarios whose steps click the HUD by pixel
 (`mission_history`: the M button; `touch_*`: the engine's own touch controls) pin `--ui engine` in their `args`;
 the first `--ui` wins over the runner's.
+
+A scenario with `"touch": false` (the `editor_*` ones, which click the classic window's pixels) does not get `--ui touch`
+from the runner and runs with the engine's UI; `touch_editor` covers the drawer's intents.
 
 `cargo xtask e2e --ui touch` passes every scenario the way the default and `--ui classic` do; `touch_intents`
 checks the intents themselves.

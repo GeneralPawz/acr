@@ -1,6 +1,7 @@
 {
   "name": "editor_terrain",
   "description": "The editor's Gelaende list (#430): Anheben lifts the ground, Wasser floods it and locks it for land units, a ship is put on the painted water, Erde paints a texture and Land dries the water again.",
+  "touch": false,
   "steps": [
     {"cmd": "start", "blank": {"editor": true}},
     {"cmd": "wait", "ticks": 5},

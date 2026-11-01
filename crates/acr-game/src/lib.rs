@@ -238,6 +238,10 @@ impl Game {
             Mode::InGame(g) if g.ready() => g.take_touch_view(),
             _ => None,
         });
+        web.set_editor_view(match &mut self.mode {
+            Mode::InGame(g) if g.ready() => g.take_editor_view(),
+            _ => None,
+        });
         web.publish(&mut self.ui, mode, loading, size, hud);
         // The webview covers the window exactly while the UI draws the screen; the movies and
         // the game are the engine's.
@@ -1446,6 +1450,9 @@ impl Game {
         let hud = match (id, action) {
             ("minimap", Action::MinimapAt { uv, button }) => {
                 Some(ingame::HudIntent::Minimap { uv: *uv, right: *button == Button::Right })
+            }
+            (_, Action::Click { button, .. }) if id.starts_with("editor/") => {
+                Some(ingame::HudIntent::Editor { id, right: *button == Button::Right })
             }
             (_, Action::Click { button: Button::Left, .. }) if id.starts_with("bar/") => {
                 Some(ingame::HudIntent::Bar { id })

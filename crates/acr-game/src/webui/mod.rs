@@ -26,14 +26,16 @@ pub mod web;
 use std::collections::HashMap;
 
 use acr_ui_protocol::{
-    Host, HudGroup, HudPatch, IconRole, IconView, Mode, PROTOCOL, ResourceView, ScreenPatch, Skin, SkinSetting, Stage,
-    ToUi, TouchHud, ViewPatch, WidgetView, WidgetsPatch,
+    EditorButton, EditorCell, EditorControl, EditorGroup, EditorSwatch, EditorView, Host, HudGroup, HudPatch, IconRole,
+    IconView, Mode, PROTOCOL, ResourceView, ScreenPatch, Skin, SkinSetting, Stage, ToUi, TouchHud, ViewPatch,
+    WidgetView, WidgetsPatch,
 };
 pub use assets::{AssetBody, AssetError, AssetReply};
 
 use crate::canvas::Canvas;
 use crate::hud::touch_skin::{PORTRAIT_SCALE, Role, TouchIcon, TouchView};
 use crate::hud::{Claim, Claimed};
+use crate::ingame::{CELL, TouchButton, TouchControl, TouchEditor};
 use crate::ui::draw::Draw;
 use crate::ui::{External, Ui};
 
@@ -105,6 +107,8 @@ struct Sent {
     hud: Option<HashMap<String, SentGroup>>,
     /// The touch skin's pieces as last sent, before they were resolved.
     touch: Option<TouchView>,
+    /// The test editor's drawer as last sent (`Some(None)`: sent as "no editor").
+    editor: Option<Option<TouchEditor>>,
 }
 
 /// A group of the interface as the UI has it: the draws it was made from (at its last full send),
@@ -200,6 +204,8 @@ pub struct WebUi {
     skin: Skin,
     /// The touch skin's pieces of the frame being published ([`WebUi::set_touch_view`]).
     touch_view: Option<TouchView>,
+    /// The test editor's drawer of the frame being published ([`WebUi::set_editor_view`]).
+    editor_view: Option<Option<TouchEditor>>,
 }
 
 impl WebUi {
@@ -239,6 +245,7 @@ impl WebUi {
             mods: Default::default(),
             skin: Skin::Classic,
             touch_view: None,
+            editor_view: None,
         }
     }
 
@@ -247,6 +254,7 @@ impl WebUi {
         if self.skin != skin {
             self.skin = skin;
             self.sent.touch = None;
+            self.sent.editor = None;
             self.sent.hud = None;
         }
     }
@@ -259,6 +267,12 @@ impl WebUi {
     /// The pieces the touch skin lays out this frame (`None`: not a running game).
     pub fn set_touch_view(&mut self, view: Option<TouchView>) {
         self.touch_view = view;
+    }
+
+    /// The test editor's drawer this frame (`None`: not a running game; `Some(None)`: a game
+    /// that is not an editor game).
+    pub fn set_editor_view(&mut self, view: Option<Option<TouchEditor>>) {
+        self.editor_view = view;
     }
 
     /// Whether the UI draws the current screen, as of the last [`WebUi::publish`].
@@ -476,6 +490,20 @@ impl WebUi {
             }
         }
 
+        match self.editor_patch(ui) {
+            Ok(Some(editor)) => {
+                patch.editor = Some(editor.map(Box::new));
+                changed = true;
+            }
+            Ok(None) | Err(view::Failure::Pending) => {}
+            Err(e) => {
+                log::error!("webui: the editor drawer: {e:?}");
+                if matches!(e, view::Failure::Asset(_)) {
+                    self.error = Some(format!("{e:?}"));
+                }
+            }
+        }
+
         if changed {
             self.rev += 1;
             (self.send)(&serde_json::to_string(&ToUi::View(Box::new(patch))).expect("view serializes"));
@@ -529,6 +557,83 @@ impl WebUi {
         // Recorded only once everything could be made: a retry sends it all.
         self.sent.touch = Some(view);
         Ok(Some(touch))
+    }
+
+    /// The editor drawer's topic if it changed since the last patch: the view, or `None` for
+    /// "no editor". Compared before it is resolved, which is the costly step.
+    fn editor_patch(&mut self, ui: &Ui) -> Result<Option<Option<EditorView>>, view::Failure> {
+        let Some(view) = self.editor_view.take().filter(|_| self.touch()) else { return Ok(None) };
+        if self.sent.editor.as_ref() == Some(&view) {
+            return Ok(None);
+        }
+        let Some(editor) = &view else {
+            self.sent.editor = Some(None);
+            return Ok(Some(None));
+        };
+        let (lib, fonts) = ui.assets();
+        let text = |bytes: &[u8]| acr_formats::CodePage::Cp1252.decode(bytes);
+        let button = |b: &TouchButton| EditorButton { id: b.id.clone(), text: text(&b.text), on: b.on };
+        let resolver = &mut self.resolver;
+        let mut groups = Vec::new();
+        for g in &editor.groups {
+            let mut cells = Vec::new();
+            for c in &g.cells {
+                cells.push(EditorCell {
+                    id: c.id.clone(),
+                    name: text(&c.name),
+                    size: [CELL, CELL],
+                    parts: resolver.parts(lib, fonts, &c.draws)?,
+                    on: c.on,
+                    levels: c.levels,
+                });
+            }
+            groups.push(EditorGroup { header: g.header.clone(), cells });
+        }
+        let mut controls = Vec::new();
+        for c in &editor.controls {
+            controls.push(match c {
+                TouchControl::Stepper { less, more, text: t } => {
+                    EditorControl::Stepper { less: less.clone(), more: more.clone(), text: text(t) }
+                }
+                TouchControl::Button { id, text: t, on } => {
+                    EditorControl::Button { id: id.clone(), text: text(t), on: *on }
+                }
+                TouchControl::Icon { id, text: t, on, draws } => EditorControl::Icon {
+                    id: id.clone(),
+                    text: text(t),
+                    on: *on,
+                    size: [CELL, CELL],
+                    parts: resolver.parts(lib, fonts, draws)?,
+                },
+                TouchControl::Line { text: t } => EditorControl::Line { text: text(t) },
+            });
+        }
+        let out = EditorView {
+            title: text(&editor.title),
+            toggle: button(&editor.toggle),
+            battle: editor.battle,
+            status: text(&editor.status),
+            armed: editor.armed.as_deref().map(text),
+            swatches: editor
+                .swatches
+                .iter()
+                .map(|s| EditorSwatch {
+                    id: s.id.clone(),
+                    label: s.label.clone(),
+                    colour: s.colour,
+                    team: s.team,
+                    on: s.on,
+                    teams: s.teams,
+                })
+                .collect(),
+            entries: editor.entries.iter().map(button).collect(),
+            army: editor.army.iter().map(button).collect(),
+            groups,
+            levels: editor.levels.iter().map(button).collect(),
+            controls,
+        };
+        self.sent.editor = Some(view);
+        Ok(Some(Some(out)))
     }
 
     /// The interface topic: the groups whose draws changed, and the ones that are gone. Draws are
@@ -671,6 +776,15 @@ pub fn referenced(patch: &ViewPatch) -> Vec<String> {
     if let Some(touch) = &patch.touch {
         touch.resources.iter().flat_map(|r| &r.parts).for_each(&mut part);
         touch.icons.iter().chain(&touch.army).flat_map(|i| &i.parts).for_each(&mut part);
+    }
+    if let Some(Some(editor)) = &patch.editor {
+        editor.groups.iter().flat_map(|g| &g.cells).flat_map(|c| &c.parts).for_each(&mut part);
+        editor
+            .controls
+            .iter()
+            .filter_map(|c| if let EditorControl::Icon { parts, .. } = c { Some(parts) } else { None })
+            .flatten()
+            .for_each(&mut part);
     }
     if let Some(Some(cursor)) = &patch.cursor {
         out.push(cursor.url.clone());
@@ -977,6 +1091,35 @@ mod tests {
         };
         let patch = ViewPatch { rev: 1, touch: Some(Box::new(touch)), ..Default::default() };
         assert_eq!(referenced(&patch), vec!["frame/game/0/RESPANEL.GP/0", "scale/4/frame/game/0/ICONS.GP/7"]);
+    }
+
+    #[test]
+    fn a_patch_refers_to_the_editor_drawers_assets() {
+        use acr_ui_protocol::Part;
+        let sprite = |url: &str| Part::Sprite { url: url.into(), x: 0, y: 0, w: 1, h: 1, alpha: 1.0, clip: None };
+        let cell = EditorCell {
+            id: "editor/unit/A(EN)".into(),
+            name: "A".into(),
+            size: [41, 41],
+            parts: vec![sprite("frame/game/0/ICONS.GP/7")],
+            on: false,
+            levels: true,
+        };
+        let fight = EditorControl::Icon {
+            id: "editor/battle/fight".into(),
+            text: "Kampf".into(),
+            on: false,
+            size: [41, 41],
+            parts: vec![sprite("frame/game/0/ICONS.GP/9")],
+        };
+        let view = EditorView {
+            groups: vec![EditorGroup { header: "Infanterie".into(), cells: vec![cell] }],
+            controls: vec![fight, EditorControl::Line { text: "x".into() }],
+            ..EditorView::default()
+        };
+        let patch = ViewPatch { rev: 1, editor: Some(Some(Box::new(view))), ..Default::default() };
+        assert_eq!(referenced(&patch), vec!["frame/game/0/ICONS.GP/7", "frame/game/0/ICONS.GP/9"]);
+        assert!(referenced(&ViewPatch { editor: Some(None), ..Default::default() }).is_empty());
     }
 
     #[test]

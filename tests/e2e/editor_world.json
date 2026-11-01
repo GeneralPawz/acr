@@ -1,6 +1,7 @@
 {
   "name": "editor_world",
   "description": "The test editor's Marine and Gebaeude lists (#406): a finished town hall is put on grass (a second one on the same spot is refused), a land unit is refused on the sea and a ship put there.",
+  "touch": false,
   "steps": [
     {"cmd": "start", "blank": {"editor": true}},
     {"cmd": "wait", "ticks": 5},

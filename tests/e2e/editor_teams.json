@@ -1,6 +1,7 @@
 {
   "name": "editor_teams",
   "description": "The test editor's Kampf teams (#405): a right click on a colour's swatch cycles its team number (shown on the swatch). Players 1 and 2 are put in team 1 and player 3 stays in team 3; 1 and 2 stand next to each other and do not fight for hundreds of ticks, then player 3 (team 3) is placed next to them and fights the pair: both sides lose men.",
+  "touch": false,
   "steps": [
     {"cmd": "start", "blank": {"editor": true}},
     {"cmd": "wait", "ticks": 5},

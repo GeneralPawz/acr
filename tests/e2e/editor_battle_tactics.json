@@ -1,6 +1,7 @@
 {
   "name": "editor_battle_tactics",
   "description": "A whole predefined battle under the battle controller on the real data (#404): England against Frankreich in the 18th century, Mittel, both sides on KI (Seite 1 Steuerung switched from Spieler), Aufstellen, the swords. The guns stay where they were placed (drift at most 24 px at 300 and at 2500 ticks), both lines halt at their muskets' range and fire (halts), the dragoons ride round the flanks and charge, the lines meet them in squares, and after 2500 ticks both armies' line infantry has casualties.",
+  "touch": false,
   "steps": [
     {"cmd": "start", "blank": {"editor": true}},
     {"cmd": "wait", "ticks": 5},

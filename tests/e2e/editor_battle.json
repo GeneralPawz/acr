@@ -1,6 +1,7 @@
 {
   "name": "editor_battle",
   "description": "The test editor's battle view (#404): the title row's Schlacht button switches to it, England and Frankreich in the 18th century (the nations and the century are stepped away and back with the arrows), Mittel, Aufstellen puts 360 line infantry, 80 dragoons, 15 trappers and 4 guns of England for player 1 and the French equivalents for player 2 facing each other across the middle of the map; nothing fights until the swords button (Kampf) is clicked. Then the battle controller commands the armies (Seite 1 the player, so only its guns; Seite 2 the Ki) and, with the guns firing, both sides have casualties after some hundred ticks. A second Aufstellen replaces the armies (full strength again) and ends the controller.",
+  "touch": false,
   "steps": [
     {"cmd": "start", "blank": {"editor": true}},
     {"cmd": "wait", "ticks": 5},

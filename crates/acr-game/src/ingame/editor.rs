@@ -13,6 +13,7 @@
 pub(crate) mod input;
 mod levels;
 pub mod sides;
+pub mod touch;
 mod world;
 
 use std::cell::{Cell, RefCell};
@@ -29,7 +30,7 @@ use acr_sim::{EntityId, TypeId, World};
 
 use crate::hud::{self, SCREEN, panels};
 use crate::ui::Ctx;
-use crate::ui::dialog::{Dialog, Kind};
+use crate::ui::dialog::{Dialog, Kind, Reject};
 use crate::ui::draw::{Draw, GAME_PALETTE, Rect};
 use crate::ui::fonts::FontId;
 use crate::ui::screens::font as menu_font;
@@ -61,7 +62,7 @@ const HEADER_CORNERS: [i32; 8] = [17, 18, -1, -1, 12, 14, 23, -1];
 const PAPER_FILL: usize = 28;
 /// Icon cells: 41 × 41 on a 44 pixel pitch, five to a row from x = 6 (0x5bb9d7); a category
 /// header takes 20 pixels, the first one starts at y = 80 (0x5bb8c2).
-const CELL: i32 = 41;
+pub const CELL: i32 = 41;
 const PITCH: i32 = 44;
 const COLUMNS: usize = 5;
 const FIRST_ROW: i32 = 80;
@@ -191,6 +192,10 @@ pub enum Act {
     AutoReload,
     Control,
     Hide,
+    /// Closes the level drop-down and the army menu (the touch drawer's scrim).
+    Close,
+    /// Stops placing: nothing is picked and no army is armed.
+    Stop,
     /// Takes hold of the title row's handle or the corner grip ([`frame`]).
     Grab(Grab),
 }
@@ -744,35 +749,7 @@ impl Editor {
                         continue;
                     }
                     let hot = self.pick == Some(pick);
-                    match pick {
-                        Pick::Unit(kind) => {
-                            let (frame, name) = ((view.icon)(kind), (view.names)(kind));
-                            let label = String::from_utf8_lossy(&name).into_owned();
-                            out.push(item(rect, name, &label, hot, Some(Act::Pick(pick)), Look::Icon { frame }));
-                        }
-                        Pick::Nature(group, index) => {
-                            let (name, label) = nature_label(world, group, index);
-                            let sprite = (view.sprite)(group, index);
-                            let look = match &sprite {
-                                Some((_, ox, oy)) => Look::Sprite { frame: usize::from(index), ox: *ox, oy: *oy },
-                                None => Look::Icon { frame: None },
-                            };
-                            let mut cell = item(rect, name.into_bytes(), &label, hot, Some(Act::Pick(pick)), look);
-                            cell.gp = sprite.map(|(gp, ..)| gp);
-                            out.push(cell);
-                        }
-                        Pick::Ground(tool) => {
-                            let name = ground_name(tool);
-                            let look = match tool {
-                                GroundTool::Texture(t) => match (view.texture_colour)(t) {
-                                    Some(colour) => Look::Texture { colour },
-                                    None => Look::Icon { frame: None },
-                                },
-                                _ => Look::Icon { frame: None },
-                            };
-                            out.push(item(rect, name.as_bytes().to_vec(), name, hot, Some(Act::Pick(pick)), look));
-                        }
-                    }
+                    out.push(Self::cell_item(world, view, pick, rect, hot));
                 }
             }
         }
@@ -861,11 +838,7 @@ impl Editor {
         line(&mut out, &mut y, format!("Ich steuere: {me}").into_bytes(), "Ich steuere", false, Some(Act::Control));
         if let Some(pick) = self.pick {
             let mut text = b"Typ: ".to_vec();
-            match pick {
-                Pick::Unit(kind) => text.extend((view.names)(kind)),
-                Pick::Nature(group, index) => text.extend(nature_label(world, group, index).1.into_bytes()),
-                Pick::Ground(tool) => text.extend(ground_name(tool).as_bytes()),
-            }
+            text.extend(Self::pick_name(world, view, pick));
             text.truncate(chars);
             line(&mut out, &mut y, text, "", false, None);
         }
@@ -893,16 +866,74 @@ impl Editor {
         out
     }
 
+    /// The cell of a list that picks `pick`, at `rect`.
+    fn cell_item(world: &World, view: &View, pick: Pick, rect: Rect, hot: bool) -> Item {
+        let act = Some(Act::Pick(pick));
+        let item = |text: Vec<u8>, name: &str, look: Look| Item {
+            rect,
+            text,
+            name: name.to_owned(),
+            hot,
+            act,
+            look,
+            gp: None,
+        };
+        match pick {
+            Pick::Unit(kind) => {
+                let (frame, name) = ((view.icon)(kind), (view.names)(kind));
+                let label = String::from_utf8_lossy(&name).into_owned();
+                item(name, &label, Look::Icon { frame })
+            }
+            Pick::Nature(group, index) => {
+                let (name, label) = nature_label(world, group, index);
+                let sprite = (view.sprite)(group, index);
+                let look = match &sprite {
+                    Some((_, ox, oy)) => Look::Sprite { frame: usize::from(index), ox: *ox, oy: *oy },
+                    None => Look::Icon { frame: None },
+                };
+                let mut cell = item(name.into_bytes(), &label, look);
+                cell.gp = sprite.map(|(gp, ..)| gp);
+                cell
+            }
+            Pick::Ground(tool) => {
+                let name = ground_name(tool);
+                let look = match tool {
+                    GroundTool::Texture(t) => match (view.texture_colour)(t) {
+                        Some(colour) => Look::Texture { colour },
+                        None => Look::Icon { frame: None },
+                    },
+                    _ => Look::Icon { frame: None },
+                };
+                item(name.as_bytes().to_vec(), name, look)
+            }
+        }
+    }
+
+    /// The name of what a pick places, as the "Typ" line shows it.
+    fn pick_name(world: &World, view: &View, pick: Pick) -> Vec<u8> {
+        match pick {
+            Pick::Unit(kind) => (view.names)(kind),
+            Pick::Nature(group, index) => nature_label(world, group, index).1.into_bytes(),
+            Pick::Ground(tool) => ground_name(tool).as_bytes().to_vec(),
+        }
+    }
+
     /// The Ausbau line: the picked type's level, its name and the upgrades applied.
     fn level_line(&self, world: &World, view: &View) -> Vec<u8> {
+        let mut text = self.level_text(world, view);
+        // The upgrade texts are long: the line is cut to the window.
+        text.truncate(self.frame.chars());
+        text
+    }
+
+    /// The Ausbau line whole: the count comes first.
+    fn level_text(&self, world: &World, view: &View) -> Vec<u8> {
         let names = self.unit().map_or_else(
             || vec![levels::BASIS.as_bytes().to_vec()],
             |kind| levels::names(world, kind, view.upgrade_name),
         );
-        // The upgrade texts are long: the count comes first, the line is cut to the window.
         let mut text = format!("Ausbau {}/{}: ", self.level, names.len() - 1).into_bytes();
         text.extend(names.get(self.level).map_or(&[][..], Vec::as_slice));
-        text.truncate(self.frame.chars());
         text
     }
 
@@ -1150,6 +1181,12 @@ impl Editor {
                 out.input = Some(Input::Sides { mode: self.sides, teams });
             }
             Act::Hide => self.frame = self.frame.toggled(),
+            // The menus are already dropped above.
+            Act::Close => {}
+            Act::Stop => {
+                self.pick = None;
+                self.army.armed = None;
+            }
             Act::Grab(_) => {}
         }
         out
@@ -1408,7 +1445,18 @@ impl super::InGame {
 
     /// The window's items for the current state, or none outside the editor.
     fn editor_items(&self, ctx: &Ctx) -> Vec<Item> {
-        let (Some(e), Some(world)) = (&self.editor, &self.world) else { return Vec::new() };
+        self.with_editor_view(ctx, |e, world, view| e.layout(world, view, self.local_player())).unwrap_or_default()
+    }
+
+    /// The drawer of the touch skin (`touch.rs`), or none outside the editor.
+    pub(super) fn editor_touch_view(&self, ctx: &Ctx) -> Option<touch::TouchEditor> {
+        self.with_editor_view(ctx, |e, world, view| e.touch_view(ctx, world, view, self.local_player()))?
+    }
+
+    /// Runs `f` on the editor, the world and the view of the game's names, icons and texts;
+    /// none outside the editor.
+    fn with_editor_view<R>(&self, ctx: &Ctx, f: impl FnOnce(&Editor, &World, &View) -> R) -> Option<R> {
+        let (Some(e), Some(world)) = (&self.editor, &self.world) else { return None };
         self.editor_icons_ready(ctx, e, world);
         let names = |k: TypeId| {
             let t = world.catalog.get(k);
@@ -1442,10 +1490,14 @@ impl super::InGame {
             texture_colour: &texture_colour,
             title: ctx.texts.get("ED_HDR01").to_vec(),
         };
-        e.layout(world, &view, self.local_player())
+        Some(f(e, world, &view))
     }
 
     pub(super) fn editor_overlay(&self, ctx: &Ctx, out: &mut Vec<Draw>) {
+        // The touch skin draws the drawer itself ([`Editor::touch_view`]).
+        if self.interface.claim.touch {
+            return;
+        }
         if let Some(e) = &self.editor {
             Editor::draws(&self.editor_items(ctx), ctx, e.frame.content(), out);
         }
@@ -1486,6 +1538,35 @@ impl super::InGame {
             self.editor_input(input);
         }
         out.local
+    }
+
+    /// What follows a click on the window: a new local player, and the camera if "Aufstellen"
+    /// asked for it.
+    fn after_editor_act(&mut self, next: Option<u8>) {
+        if let Some(next) = next {
+            self.setup.local_player = usize::from(next);
+            self.selected.clear();
+        }
+        let Some(e) = self.editor.as_mut() else { return };
+        e.swallow_release = true;
+        if let Some((x, y)) = e.camera_to.take() {
+            self.set_camera(x, y, 0.0, None, None);
+        }
+    }
+
+    /// A click or long press of the touch drawer on `id` (`touch.rs`), refused as the classic
+    /// window would refuse it.
+    pub(super) fn editor_intent(&mut self, id: &str, right: bool) -> Result<(), Reject> {
+        let (Some(e), Some(world)) = (&mut self.editor, &self.world) else { return Err(Reject::NoWidget) };
+        match e.intent(world, id, right)? {
+            touch::Target::Act(act) => {
+                let local = self.local_player();
+                let next = self.editor_act(act, local);
+                self.after_editor_act(next);
+            }
+            touch::Target::Levels(kind) => e.open_levels(kind, Rect::new(0, 0, CELL, CELL)),
+        }
+        Ok(())
     }
 
     /// Applies an editor input between two ticks and logs it with the tick, for savegames.
@@ -1589,7 +1670,8 @@ impl super::InGame {
         }
         let Some(at) = self.cursor else { return false };
         let p = self.canvas_point(at);
-        let items = self.editor_items(ctx);
+        // With the pixels off (the touch skin) the window takes none of them.
+        let items = if self.interface.hud_input { self.editor_items(ctx) } else { Vec::new() };
         let content = self.editor.as_ref().map_or(Rect::SCREEN, |e| e.frame.content());
         // A press outside the level drop-down closes it; one on the map does no more.
         let on_menu = items.iter().any(|i| i.look == Look::DropRow && i.rect.contains(p));
@@ -1605,18 +1687,8 @@ impl super::InGame {
                 self.editor.as_mut().expect("editor").grab(grab, false, p);
             }
             let local = self.local_player();
-            if let Some(act) = act
-                && let Some(next) = self.editor_act(act, local)
-            {
-                self.setup.local_player = usize::from(next);
-                self.selected.clear();
-            }
-            let e = self.editor.as_mut().expect("editor");
-            e.swallow_release = true;
-            let camera = e.camera_to.take();
-            if let Some((x, y)) = camera {
-                self.set_camera(x, y, 0.0, None, None);
-            }
+            let next = act.and_then(|act| self.editor_act(act, local));
+            self.after_editor_act(next);
             return true;
         }
         let armed = self.editor.as_ref().is_some_and(|e| e.pick.is_some() || e.army.armed.is_some());
@@ -1650,13 +1722,14 @@ impl super::InGame {
         let (dx, dy) = e.frame.shift();
         let content = e.frame.content();
         let combo = COMBO_BOX.offset(dx, dy);
-        let over_combo = self.cursor.is_some_and(|c| combo.contains(self.canvas_point(c)));
+        let pixels = self.interface.hud_input;
+        let over_combo = pixels && self.cursor.is_some_and(|c| combo.contains(self.canvas_point(c)));
         let local = self.local_player();
         if over_combo && self.editor.as_ref().is_some_and(|e| !e.frame.folded) {
             self.editor_act(Act::Army(presets::Act::Toggle), local);
             return true;
         }
-        let hit = self.cursor.map(|at| self.canvas_point(at)).and_then(|p| {
+        let hit = self.cursor.filter(|_| pixels).map(|at| self.canvas_point(at)).and_then(|p| {
             let items = self.editor_items(ctx);
             items.into_iter().rev().find(|i| i.act.is_some() && i.hit_rect(content).contains(p))
         });
@@ -1692,8 +1765,7 @@ impl super::InGame {
             return true;
         }
         if e.pick.is_some() || e.army.armed.is_some() {
-            e.pick = None;
-            e.army.armed = None;
+            self.editor_act(Act::Stop, local);
             return true;
         }
         false
@@ -1701,6 +1773,9 @@ impl super::InGame {
 
     /// The wheel over the window scrolls its icons.
     pub fn editor_wheel(&mut self, ctx: &Ctx, lines: f32) -> bool {
+        if !self.interface.hud_input {
+            return false;
+        }
         let Some(at) = self.cursor else { return false };
         let p = self.canvas_point(at);
         if !Editor::bounds(&self.editor_items(ctx)).contains(p) {

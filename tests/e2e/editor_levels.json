@@ -1,6 +1,7 @@
 {
   "name": "editor_levels",
   "description": "The test editor's training levels (#402): a right click on a unit icon opens a drop-down (Basis, then one line per upgrade of the type, named by the upgrade's text); a choice picks the unit at that level. Player 1 places a Füsilier at Basis, player 2 at the level of 'Spezialmusketen' (every upgrade of the nation file up to it), Escape and a click outside close the drop-down, and a right click on the map still stops placing.",
+  "touch": false,
   "steps": [
     {"cmd": "start", "blank": {"editor": true}},
     {"cmd": "wait", "ticks": 5},

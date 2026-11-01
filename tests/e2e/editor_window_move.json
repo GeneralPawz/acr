@@ -1,6 +1,7 @@
 {
   "name": "editor_window_move",
   "description": "The test editor's window is movable, minimisable and resizable (ACR's own): the handle in the title row moves both boxes, the \"_\" button folds it to the title row, the corner grip widens it to more icon columns, and a loaded editor game opens it where it was left (the place is the editor_window setting).",
+  "touch": false,
   "steps": [
     {"cmd": "start", "blank": {"editor": true}},
     {"cmd": "wait", "ticks": 5},
