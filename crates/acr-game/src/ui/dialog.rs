@@ -271,6 +271,9 @@ pub struct Widget {
     pub hover_sound: bool,
     /// A scroll bar that moves this widget up by its position (`ParentSB`, +0x5b).
     pub scroll_owner: Option<WidgetId>,
+    /// A name that stays with the widget however the screen is laid out (`Dialog::set_key`),
+    /// for the touch skin.
+    pub key: Option<String>,
     pub kind: Kind,
 }
 
@@ -339,6 +342,7 @@ impl Dialog {
             hint: None,
             hover_sound: false,
             scroll_owner: None,
+            key: None,
             kind,
         });
         self.widgets.len() - 1
@@ -692,6 +696,13 @@ impl Dialog {
         self.widgets[id].param = Some(param);
     }
 
+    /// Names a widget for the touch skin; keys are unique within a screen.
+    pub fn set_key(&mut self, id: WidgetId, key: impl Into<String>) {
+        let key = key.into();
+        debug_assert!(self.widgets.iter().all(|w| w.key.as_deref() != Some(&key)), "key {key} is used twice");
+        self.widgets[id].key = Some(key);
+    }
+
     pub fn set_hint(&mut self, id: WidgetId, hint: &[u8]) {
         self.widgets[id].hint = Some(hint.to_vec());
     }
@@ -926,10 +937,7 @@ impl Dialog {
                 return out;
             }
             if !self.widgets[id].rect.contains(p) {
-                if let Kind::ComboBox(c) = &mut self.widgets[id].kind {
-                    c.open = false;
-                }
-                self.modal = None;
+                self.close_dropdown();
             }
         }
         let now = self.now;
@@ -937,11 +945,11 @@ impl Dialog {
             if !(Self::hit(&self.widgets[i], self.local(i, p)) && self.widgets[i].clip.contains(p)) {
                 continue;
             }
-            if let Some(param) = self.widgets[i].param {
-                let sound = if param == OK { self.ok_sound.unwrap_or(sound::CLICK) } else { sound::CLICK };
-                out.sounds.push(sound.to_owned());
-                out.chosen = Some(param);
+            if self.choose_param(i, &mut out) {
                 return out;
+            }
+            if self.press_plain(i) {
+                break;
             }
             let w = &mut self.widgets[i];
             let consumed = match &mut w.kind {
@@ -986,43 +994,6 @@ impl Dialog {
                         s.drag = Some((p[0], s.pos));
                     }
                     on_thumb
-                }
-                Kind::ComboBox(c) => {
-                    if !c.lines.is_empty() {
-                        c.open = !c.open;
-                        c.light = c.cur;
-                        self.modal = c.open.then_some(i);
-                    }
-                    true
-                }
-                Kind::TextViewer(t) => {
-                    t.focus = true;
-                    true
-                }
-                Kind::Universal(u) => {
-                    let group = u.group;
-                    u.state = match (group, u.state) {
-                        (Some(_), 0) => 1,
-                        (Some(_), 1) => 2,
-                        (Some(_), _) => 1,
-                        (None, 0) => 1,
-                        (None, _) => 0,
-                    };
-                    if let Some(g) = group {
-                        for (j, other) in self.widgets.iter_mut().enumerate() {
-                            if let Kind::Universal(o) = &mut other.kind
-                                && j != i
-                                && o.group == Some(g)
-                            {
-                                o.state = 0;
-                            }
-                        }
-                    }
-                    true
-                }
-                Kind::InputBox(b) => {
-                    b.focus = true;
-                    true
                 }
                 _ => false,
             };
@@ -1084,13 +1055,7 @@ impl Dialog {
                         _ => return out,
                     };
                     l.cur = (l.cur as i32 + delta).clamp(0, l.items.len() as i32 - 1) as usize;
-                    if l.cur < l.first {
-                        l.first = l.cur;
-                    }
-                    if l.cur >= l.first + l.rows {
-                        l.first = l.cur + 1 - l.rows;
-                    }
-                    scroll_to = l.scroll.map(|sb| (sb, l.first as i32));
+                    scroll_to = reveal(l);
                     handled = true;
                 }
                 Kind::InputBox(b) if b.focus => {
@@ -1152,6 +1117,214 @@ impl Dialog {
             };
         }
         out
+    }
+
+    /// Closes the open drop-down without choosing (a click elsewhere).
+    fn close_dropdown(&mut self) {
+        if let Some(id) = self.modal.take()
+            && let Kind::ComboBox(c) = &mut self.widgets[id].kind
+        {
+            c.open = false;
+        }
+    }
+
+    /// A click on a widget with a `param` reports it with the click sound; true if it had one.
+    fn choose_param(&mut self, i: usize, out: &mut Outcome) -> bool {
+        let Some(param) = self.widgets[i].param else { return false };
+        let sound = if param == OK { self.ok_sound.unwrap_or(sound::CLICK) } else { sound::CLICK };
+        out.sounds.push(sound.to_owned());
+        out.chosen = Some(param);
+        true
+    }
+
+    /// What a click does to a widget whatever the point: opens or closes a combo box, selects
+    /// a radio button or toggles a check, focuses a text viewer or input box. False for the
+    /// other kinds, whose click depends on the point (lists, scroll bars, sliders).
+    fn press_plain(&mut self, i: usize) -> bool {
+        match &mut self.widgets[i].kind {
+            Kind::ComboBox(c) => {
+                if !c.lines.is_empty() {
+                    c.open = !c.open;
+                    c.light = c.cur;
+                    self.modal = c.open.then_some(i);
+                }
+            }
+            Kind::TextViewer(t) => t.focus = true,
+            Kind::Universal(u) => {
+                let group = u.group;
+                u.state = match (group, u.state) {
+                    (Some(_), 0) => 1,
+                    (Some(_), 1) => 2,
+                    (Some(_), _) => 1,
+                    (None, 0) => 1,
+                    (None, _) => 0,
+                };
+                if let Some(g) = group {
+                    for (j, other) in self.widgets.iter_mut().enumerate() {
+                        if let Kind::Universal(o) = &mut other.kind
+                            && j != i
+                            && o.group == Some(g)
+                        {
+                            o.state = 0;
+                        }
+                    }
+                }
+            }
+            Kind::InputBox(b) => b.focus = true,
+            _ => return false,
+        }
+        true
+    }
+
+    /// Whether `intent` can be applied now, without applying it.
+    pub fn check(&self, intent: &Intent) -> Result<(), Reject> {
+        let id = match intent {
+            Intent::Activate(id)
+            | Intent::SelectRow(id, _)
+            | Intent::SelectOption(id, _)
+            | Intent::SetValue(id, _)
+            | Intent::SetText(id, _) => *id,
+        };
+        let w = self.widgets.get(id).ok_or(Reject::NoWidget)?;
+        if !w.enabled {
+            return Err(Reject::Disabled);
+        }
+        if !w.visible || self.shown_rect(id).intersect(&w.clip).is_empty() {
+            return Err(Reject::Hidden);
+        }
+        match (intent, &w.kind) {
+            (Intent::Activate(_), kind) => {
+                let plain =
+                    matches!(kind, Kind::ComboBox(_) | Kind::TextViewer(_) | Kind::Universal(_) | Kind::InputBox(_));
+                if w.param.is_none() && !plain {
+                    return Err(Reject::Kind("a button, a combo box, an input box or a text viewer"));
+                }
+            }
+            (Intent::SelectRow(_, row), Kind::ListBox(l)) if *row >= l.items.len() => return Err(Reject::Range),
+            (Intent::SelectRow(..), Kind::ListBox(_)) => {}
+            (Intent::SelectRow(..), _) => return Err(Reject::Kind("a list")),
+            (Intent::SelectOption(_, option), Kind::ComboBox(c)) if *option >= c.lines.len() => {
+                return Err(Reject::Range);
+            }
+            (Intent::SelectOption(..), Kind::ComboBox(_)) => {}
+            (Intent::SelectOption(..), _) => return Err(Reject::Kind("a combo box")),
+            (Intent::SetValue(_, v), Kind::Slider(s)) if !(0..=s.max).contains(v) => {
+                return Err(Reject::Range);
+            }
+            (Intent::SetValue(..), Kind::Slider(_)) => {}
+            (Intent::SetValue(..), _) => return Err(Reject::Kind("a slider")),
+            (Intent::SetText(_, text), Kind::InputBox(b)) => {
+                if text.len() >= b.capacity || text.iter().any(|&c| c < 0x20) {
+                    return Err(Reject::Text);
+                }
+            }
+            (Intent::SetText(..), _) => return Err(Reject::Kind("an input box")),
+        }
+        Ok(())
+    }
+
+    /// Applies an intent of the touch skin: the effect of the original input on the widget,
+    /// or a [`Reject`] with nothing changed.
+    pub fn apply(&mut self, intent: &Intent) -> Result<Outcome, Reject> {
+        self.check(intent)?;
+        let mut out = Outcome::default();
+        match intent {
+            Intent::Activate(id) => self.do_activate(*id, &mut out),
+            Intent::SelectRow(id, row) => self.do_select_row(*id, *row, &mut out),
+            Intent::SelectOption(id, option) => self.do_select_option(*id, *option, &mut out),
+            Intent::SetValue(id, value) => {
+                self.close_modal_unless(*id);
+                if let Kind::Slider(s) = &mut self.widgets[*id].kind {
+                    s.pos = *value;
+                }
+            }
+            Intent::SetText(id, text) => {
+                self.close_modal_unless(*id);
+                if let Kind::InputBox(b) = &mut self.widgets[*id].kind {
+                    b.focus = true;
+                    b.set_text(text);
+                }
+            }
+        }
+        Ok(out)
+    }
+
+    /// A click on widget `id` (the press at its centre): a button, picture or text reports
+    /// its `param`; a combo box opens or closes; a radio button or check changes state; an
+    /// input box or text viewer takes the focus. An open drop-down elsewhere closes first.
+    pub fn activate(&mut self, id: WidgetId) -> Result<Outcome, Reject> {
+        self.apply(&Intent::Activate(id))
+    }
+
+    /// A click on row `row` (an index into all rows, shown or not) of list `id`; a row out of
+    /// view scrolls into view as the keys do.
+    pub fn select_row(&mut self, id: WidgetId, row: usize) -> Result<Outcome, Reject> {
+        self.apply(&Intent::SelectRow(id, row))
+    }
+
+    /// Entry `option` of combo box `id`: opening it and clicking the row.
+    pub fn select_option(&mut self, id: WidgetId, option: usize) -> Result<Outcome, Reject> {
+        self.apply(&Intent::SelectOption(id, option))
+    }
+
+    /// Slider `id` dragged to `value` (`0..=max`).
+    pub fn set_value(&mut self, id: WidgetId, value: i32) -> Result<Outcome, Reject> {
+        self.apply(&Intent::SetValue(id, value))
+    }
+
+    /// Input box `id` focused and holding `text` (CP1252), as if it was typed into the empty
+    /// box: printable characters, and at most `capacity - 1` of them.
+    pub fn set_text(&mut self, id: WidgetId, text: &[u8]) -> Result<Outcome, Reject> {
+        self.apply(&Intent::SetText(id, text.to_vec()))
+    }
+
+    fn do_activate(&mut self, id: WidgetId, out: &mut Outcome) {
+        // The press on the open drop-down's own box takes its lit row and closes it.
+        if self.modal == Some(id) {
+            if let Kind::ComboBox(c) = &mut self.widgets[id].kind {
+                c.cur = c.light;
+            }
+            self.close_dropdown();
+            return;
+        }
+        self.close_modal_unless(id);
+        if !self.choose_param(id, out) {
+            self.press_plain(id);
+        }
+    }
+
+    fn do_select_row(&mut self, id: WidgetId, row: usize, out: &mut Outcome) {
+        self.close_modal_unless(id);
+        if !self.choose_param(id, out)
+            && let Kind::ListBox(l) = &mut self.widgets[id].kind
+        {
+            l.cur = row;
+            if let Some((sb, first)) = reveal(l)
+                && let Kind::ScrollBar(bar) = &mut self.widgets[sb].kind
+            {
+                bar.pos = first * UNITS_PER_ROW;
+            }
+        }
+        self.sync_scrolls();
+    }
+
+    fn do_select_option(&mut self, id: WidgetId, option: usize, out: &mut Outcome) {
+        self.close_modal_unless(id);
+        if !self.choose_param(id, out)
+            && let Kind::ComboBox(c) = &mut self.widgets[id].kind
+        {
+            c.cur = option;
+            c.light = option;
+            c.open = false;
+            self.modal = None;
+        }
+    }
+
+    /// An open drop-down other than `id` closes: the click lands elsewhere.
+    fn close_modal_unless(&mut self, id: WidgetId) {
+        if self.modal.is_some_and(|m| m != id) {
+            self.close_dropdown();
+        }
     }
 
     /// The hint of the hovered widget, if any (the last one wins).
@@ -1426,6 +1599,58 @@ fn slider_thumb(x: i32, y: i32, s: &Slider) -> (i32, i32) {
     }
 }
 
+/// Why the touch skin's intent could not be applied; nothing changed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Reject {
+    /// The screen is not the top one, not built yet, busy, or has no dialog.
+    Screen,
+    NoWidget,
+    Disabled,
+    /// Not shown, or outside its clip window.
+    Hidden,
+    /// The widget is not the kind the intent needs.
+    Kind(&'static str),
+    /// A row, option or value out of range.
+    Range,
+    /// Text with a control character or too long for the box.
+    Text,
+}
+
+impl std::fmt::Display for Reject {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Screen => f.write_str("the screen is not the top one, not ready or busy"),
+            Self::NoWidget => f.write_str("no such widget"),
+            Self::Disabled => f.write_str("the widget is disabled"),
+            Self::Hidden => f.write_str("the widget is not shown"),
+            Self::Kind(want) => write!(f, "the widget is not {want}"),
+            Self::Range => f.write_str("the row, option or value is out of range"),
+            Self::Text => f.write_str("the text has a control character or does not fit"),
+        }
+    }
+}
+
+/// What the touch skin can do to a widget without a pixel ([`Dialog::apply`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Intent {
+    Activate(WidgetId),
+    SelectRow(WidgetId, usize),
+    SelectOption(WidgetId, usize),
+    SetValue(WidgetId, i32),
+    SetText(WidgetId, Vec<u8>),
+}
+
+/// Scrolls a list so its current row shows; the scroll bar and its position in scroll units.
+fn reveal(l: &mut ListBox) -> Option<(WidgetId, i32)> {
+    if l.cur < l.first {
+        l.first = l.cur;
+    }
+    if l.cur >= l.first + l.rows {
+        l.first = l.cur + 1 - l.rows;
+    }
+    l.scroll.map(|sb| (sb, l.first as i32))
+}
+
 /// Splits text into lines narrower than `width` pixels (`TextViewer::GetNextLine` 0x476386).
 ///
 /// Words are separated by spaces; a line ends at CR (the following LF is skipped) or
@@ -1553,5 +1778,243 @@ mod tests {
         let joined: Vec<Draw> = per.into_iter().flatten().collect();
         assert_eq!(format!("{all:?}"), format!("{joined:?}"));
         assert!(d.dropdown_draws().is_empty());
+    }
+
+    // The touch skin's intents give the Outcome and the state the press-based path gives on
+    // the same widget. Without game files every frame is 0 x 0, so the widgets get their
+    // rectangles by hand.
+
+    fn lib() -> Library {
+        Library::new(&[])
+    }
+
+    fn font() -> FontId {
+        FontId("fon18w")
+    }
+
+    /// The widget's state as the tests compare it.
+    fn state(d: &Dialog) -> String {
+        let mut out = format!("modal {:?}", d.modal);
+        for w in &d.widgets {
+            out += &match &w.kind {
+                Kind::Universal(u) => format!(" U{}", u.state),
+                Kind::InputBox(b) => format!(" I{:?}/{}/{}", b.text, b.caret, b.focus),
+                Kind::TextViewer(t) => format!(" T{}", t.focus),
+                Kind::ComboBox(c) => format!(" C{}/{}/{}", c.cur, c.open, c.light),
+                Kind::ListBox(l) => format!(" L{}/{}", l.cur, l.first),
+                Kind::ScrollBar(b) => format!(" B{}", b.pos),
+                Kind::Slider(s) => format!(" S{}/{}", s.pos, s.drag.is_some()),
+                _ => " .".to_owned(),
+            };
+        }
+        out
+    }
+
+    fn centre(r: Rect) -> [f32; 2] {
+        [(r.x0 + r.x1) as f32 / 2.0, (r.y0 + r.y1) as f32 / 2.0]
+    }
+
+    /// Two radio buttons, a check, a plain button, an input box, a text viewer and a combo box.
+    fn buttons() -> Dialog {
+        let (lib, fonts) = (lib(), Fonts::default());
+        let mut d = Dialog::default();
+        let frames = [[0; 5]; 6];
+        for (k, group) in [Some(1), Some(1), None].into_iter().enumerate() {
+            let w = d.add_universal(&lib, 0, 30 * k as i32, 50, b"x", "A.GP", frames, [None; 3], group);
+            d.widgets[w].rect = Rect::new(0, 30 * k as i32, 50, 20);
+        }
+        let ok = d.add_area(Rect::new(0, 100, 50, 20));
+        d.choose(ok, OK);
+        let input = d.add_input_box(0, 130, b"ab", 8, [50, 20], font(), font());
+        d.widgets[input].rect = Rect::new(0, 130, 50, 20);
+        let viewer = d.add_text_viewer(&lib, &fonts, 0, 160, [50, 20], b"text", font());
+        d.widgets[viewer].rect = Rect::new(0, 160, 50, 20);
+        let c = d.add_combo_box(&lib, 100, 0, "A.GP", 0, 0, font(), font());
+        d.combo_mut(c).lines = vec![b"a".to_vec(), b"b".to_vec(), b"c".to_vec()];
+        d.combo_mut(c).cur = 1;
+        let combo = d.combo_mut(c);
+        (combo.width, combo.row_h, combo.head_h) = (60, 20, 10);
+        d.widgets[c].rect = Rect::new(100, 0, 60, 20);
+        d
+    }
+
+    #[test]
+    fn activate_is_a_press_on_the_widget() {
+        let count = buttons().widgets.len();
+        for id in 0..count {
+            let (mut pressed, mut activated) = (buttons(), buttons());
+            let by_press = pressed.press(centre(pressed.widgets[id].rect));
+            let by_intent = activated.activate(id).unwrap();
+            assert_eq!(by_press, by_intent, "widget {id}");
+            assert_eq!(state(&pressed), state(&activated), "widget {id}");
+        }
+        // Again: the second press toggles a check, re-selects a radio button, closes the box.
+        let (mut pressed, mut activated) = (buttons(), buttons());
+        for id in [1, 1, 2, 2, 6, 6, 0] {
+            pressed.press(centre(pressed.widgets[id].rect));
+            activated.activate(id).unwrap();
+            assert_eq!(state(&pressed), state(&activated), "widget {id}");
+        }
+        // The open drop-down closes when another widget is clicked, and the click goes on.
+        let (mut pressed, mut activated) = (buttons(), buttons());
+        pressed.press(centre(pressed.widgets[6].rect));
+        activated.activate(6).unwrap();
+        pressed.press([500.0, 500.0]);
+        let ok = pressed.press(centre(pressed.widgets[3].rect));
+        assert_eq!(ok.chosen, activated.activate(3).unwrap().chosen);
+        assert_eq!(state(&pressed), state(&activated));
+        assert_eq!(activated.modal, None);
+    }
+
+    #[test]
+    fn activate_refuses_what_a_click_does_not_reach() {
+        let mut d = buttons();
+        assert_eq!(d.activate(99), Err(Reject::NoWidget));
+        let bar = d.add_scroll_bar(&lib(), 0, 200, 50, 10, 0, "A.GP", 0);
+        d.widgets[bar].rect = Rect::new(0, 200, 10, 50);
+        assert!(matches!(d.activate(bar), Err(Reject::Kind(_))));
+        let plain = d.add_area(Rect::new(0, 0, 5, 5));
+        assert!(matches!(d.activate(plain), Err(Reject::Kind(_))));
+        let before = state(&d);
+        d.widgets[3].enabled = false;
+        assert_eq!(d.activate(3), Err(Reject::Disabled));
+        d.widgets[3].enabled = true;
+        d.widgets[3].visible = false;
+        assert_eq!(d.activate(3), Err(Reject::Hidden));
+        d.widgets[3].visible = true;
+        d.widgets[3].clip = Rect::new(0, 0, 10, 10);
+        assert_eq!(d.activate(3), Err(Reject::Hidden));
+        d.widgets[3].clip = Rect::ALL;
+        assert_eq!(before, state(&d));
+    }
+
+    /// A list of 10 rows, 3 shown, with its scroll bar.
+    fn list(param: Option<i32>) -> (Dialog, WidgetId) {
+        let lib = lib();
+        let mut d = Dialog::default();
+        let bar = d.add_scroll_bar(&lib, 200, 0, 78, 100, 0, "A.GP", 0);
+        d.widgets[bar].rect = Rect::new(200, 0, 10, 78);
+        let l = d.add_list_box(&lib, 0, 0, 3, "A.GP", 0, 26, font(), font(), Some(bar));
+        d.widgets[l].rect = Rect::new(0, 0, 100, 78);
+        d.list_mut(l).focus = true;
+        d.list_mut(l).items = (0..10).map(|i| vec![b'a' + i]).collect();
+        if let Some(p) = param {
+            d.choose(l, p);
+        }
+        d.sync_scrolls();
+        (d, l)
+    }
+
+    #[test]
+    fn select_row_is_a_press_on_the_row_and_scrolls_like_the_keys() {
+        for row in 0..3 {
+            let ((mut pressed, l), (mut selected, _)) = (list(None), list(None));
+            let by_press = pressed.press([10.0, 26.0 * row as f32 + 13.0]);
+            let by_intent = selected.select_row(l, row).unwrap();
+            assert_eq!(by_press, by_intent);
+            assert_eq!(state(&pressed), state(&selected), "row {row}");
+        }
+        // A row below the shown ones: the list scrolls to it, as the Down key does.
+        let ((mut keyed, l), (mut selected, _)) = (list(None), list(None));
+        for _ in 0..7 {
+            keyed.key(Key::Down);
+        }
+        selected.select_row(l, 7).unwrap();
+        assert_eq!(state(&keyed), state(&selected));
+        assert_eq!(selected.list(l).first, 5);
+        selected.select_row(l, 0).unwrap();
+        assert_eq!((selected.list(l).cur, selected.list(l).first), (0, 0));
+        // A list that reports a param reports it and keeps its row, as the press does.
+        let ((mut pressed, l), (mut selected, _)) = (list(Some(4)), list(Some(4)));
+        let by_press = pressed.press([10.0, 40.0]);
+        assert_eq!(by_press, selected.select_row(l, 1).unwrap());
+        assert_eq!(by_press.chosen, Some(4));
+        assert_eq!(state(&pressed), state(&selected));
+        let before = state(&selected);
+        assert_eq!(selected.select_row(l, 10), Err(Reject::Range));
+        assert!(matches!(selected.select_row(l + 5, 0), Err(Reject::NoWidget)));
+        assert!(matches!(selected.select_row(0, 0), Err(Reject::Kind(_))));
+        assert_eq!(before, state(&selected));
+    }
+
+    #[test]
+    fn select_option_is_the_click_on_the_box_then_on_its_row() {
+        for option in 0..3 {
+            let (mut pressed, mut selected) = (buttons(), buttons());
+            let mut by_press = pressed.press(centre(pressed.widgets[6].rect));
+            let (_, _, row) = pressed.dropdown_rows()[option];
+            let second = pressed.press(centre(row));
+            by_press.sounds.extend(second.sounds);
+            by_press.chosen = by_press.chosen.or(second.chosen);
+            let by_intent = selected.select_option(6, option).unwrap();
+            assert_eq!(by_press, by_intent);
+            assert_eq!(state(&pressed), state(&selected), "option {option}");
+        }
+        // Open already: the same end state. Another box open: it closes.
+        let (mut pressed, mut selected) = (buttons(), buttons());
+        pressed.press(centre(pressed.widgets[6].rect));
+        selected.activate(6).unwrap();
+        let (_, _, row) = pressed.dropdown_rows()[2];
+        pressed.press(centre(row));
+        selected.select_option(6, 2).unwrap();
+        assert_eq!(state(&pressed), state(&selected));
+        assert_eq!(selected.select_option(6, 3), Err(Reject::Range));
+        assert!(matches!(selected.select_option(3, 0), Err(Reject::Kind(_))));
+    }
+
+    #[test]
+    fn set_value_is_the_drag_to_the_position() {
+        let make = || {
+            let mut d = Dialog::default();
+            let s = d.add_slider(&lib(), 0, 0, 89, 0, "A.GP", 0, [100, 10]);
+            let Kind::Slider(slider) = &mut d.widgets[s].kind else { unreachable!() };
+            slider.thumb = [10, 10];
+            slider.offset = [0, 0];
+            (d, s)
+        };
+        for value in [0, 1, 40, 89] {
+            let ((mut dragged, s), (mut set, _)) = (make(), make());
+            let (tx, ty) = slider_thumb(0, 0, dragged.slider(s));
+            dragged.press([tx as f32 + 3.0, ty as f32 + 3.0]);
+            dragged.mouse_move([tx as f32 + 3.0 + value as f32, ty as f32 + 3.0]);
+            dragged.release();
+            let by_intent = set.set_value(s, value).unwrap();
+            assert_eq!(by_intent, Outcome::default());
+            assert_eq!(state(&dragged), state(&set), "value {value}");
+            assert_eq!(set.slider(s).pos, value);
+        }
+        let (mut d, s) = make();
+        assert_eq!(d.set_value(s, 90), Err(Reject::Range));
+        assert_eq!(d.set_value(s, -1), Err(Reject::Range));
+        assert!(matches!(d.set_value(s + 1, 0), Err(Reject::NoWidget)));
+        assert_eq!(d.slider(s).pos, 0);
+    }
+
+    #[test]
+    fn set_text_is_typing_into_the_emptied_box() {
+        let (mut typed, mut set) = (buttons(), buttons());
+        typed.press(centre(typed.widgets[4].rect));
+        for key in [Key::End, Key::Backspace, Key::Backspace, Key::Char(b'H'), Key::Char(b'i'), Key::Char(0xe4)] {
+            typed.key(key);
+        }
+        let by_intent = set.set_text(4, b"Hi\xe4").unwrap();
+        assert_eq!(by_intent, Outcome::default());
+        assert_eq!(state(&typed), state(&set));
+        // The capacity is 8: seven characters fit, as typing them gives.
+        set.set_text(4, b"1234567").unwrap();
+        assert_eq!(set.input_box(4).text, b"1234567");
+        let before = state(&set);
+        assert_eq!(set.set_text(4, b"12345678"), Err(Reject::Text));
+        assert_eq!(set.set_text(4, b"a\tb"), Err(Reject::Text));
+        assert!(matches!(set.set_text(3, b"a"), Err(Reject::Kind(_))));
+        assert_eq!(before, state(&set));
+    }
+
+    #[test]
+    fn keys_name_widgets_and_stay_unique() {
+        let mut d = buttons();
+        d.set_key(3, "ok");
+        assert_eq!(d.widgets[3].key.as_deref(), Some("ok"));
+        assert_eq!(d.widgets[0].key, None);
     }
 }

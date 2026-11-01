@@ -65,7 +65,7 @@ mod trample;
 mod water_view;
 use crate::animal_sounds::Cry;
 use crate::unit_sounds::{self, SoundEvent};
-pub use interface::{GameKey, GameMouse};
+pub use interface::{GameKey, GameMouse, HudIntent};
 
 /// A drag shorter than this (window pixels) is a click.
 pub(super) const CLICK_SLOP: f32 = 4.0;

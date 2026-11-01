@@ -1347,21 +1347,7 @@ impl Game {
                 }
                 _ => ingame::GameMouse::None,
             };
-            match result {
-                ingame::GameMouse::Menu => {
-                    self.ui.open_game_menu();
-                    self.load_requested();
-                }
-                ingame::GameMouse::Restart => self.restart_game(),
-                ingame::GameMouse::History => {
-                    if let Some(window) = game.history_window() {
-                        self.ui.open_dialog(window);
-                        self.load_requested();
-                    }
-                }
-                ingame::GameMouse::Escape => self.press_escape(event_loop),
-                ingame::GameMouse::None => {}
-            }
+            self.game_mouse(result, event_loop);
             return;
         }
         if button == MouseButton::Left {
@@ -1375,6 +1361,93 @@ impl Game {
                 self.ui_input(input, event_loop);
             }
         }
+    }
+
+    /// What the game asks of the app after a click on its interface.
+    fn game_mouse(&mut self, result: ingame::GameMouse, event_loop: &ActiveEventLoop) {
+        match result {
+            ingame::GameMouse::Menu => {
+                self.ui.open_game_menu();
+                self.load_requested();
+            }
+            ingame::GameMouse::Restart => self.restart_game(),
+            ingame::GameMouse::History => {
+                if let Mode::InGame(game) = &self.mode
+                    && let Some(window) = game.history_window()
+                {
+                    self.ui.open_dialog(window);
+                    self.load_requested();
+                }
+            }
+            ingame::GameMouse::Escape => self.press_escape(event_loop),
+            ingame::GameMouse::None => {}
+        }
+    }
+
+    /// The touch skin's widget input (`FromUi::Intent`): a HUD icon or the minimap over the
+    /// running game, else a widget of the top screen. The reason if it was refused.
+    fn ui_intent(
+        &mut self,
+        id: &str,
+        action: &acr_ui_protocol::Action,
+        event_loop: &ActiveEventLoop,
+    ) -> Result<(), String> {
+        use acr_ui_protocol::{Action, Button};
+        let hud = match (id, action) {
+            ("minimap", Action::MinimapAt { uv, button }) => {
+                Some(ingame::HudIntent::Minimap { uv: *uv, right: *button == Button::Right })
+            }
+            (_, Action::Click { button, .. }) if id.starts_with("hud/") || id.starts_with("army/") => {
+                Some(ingame::HudIntent::Icon { id, right: *button == Button::Right })
+            }
+            _ => None,
+        };
+        if let Some(intent) = hud {
+            let is_middle = matches!(
+                action,
+                Action::Click { button: Button::Middle, .. } | Action::MinimapAt { button: Button::Middle, .. }
+            );
+            if is_middle {
+                return Err("the interface takes left and right clicks".into());
+            }
+            let Mode::InGame(game) = &self.mode else { return Err("no game is running".into()) };
+            if !game.ready() || self.ui.dialog_open() {
+                return Err("the interface is not shown".into());
+            }
+            // The modifier keys held with the click, for this click only.
+            let held = self.webui.as_ref().map(|web| web.mods).unwrap_or_default();
+            if let Action::Click { mods, .. } = action {
+                self.modifiers_changed(webui::keys::modifiers(*mods));
+            }
+            let Mode::InGame(game) = &mut self.mode else { unreachable!() };
+            let result = game.hud_event(intent).map_err(|e| e.to_string());
+            self.modifiers_changed(webui::keys::modifiers(held));
+            self.game_mouse(result?, event_loop);
+            return Ok(());
+        }
+        if !(matches!(self.mode, Mode::Menus) || self.ui.dialog_open()) {
+            return Err(format!("{id}: no screen is shown"));
+        }
+        let (screen, index) = id.split_once('/').ok_or_else(|| format!("{id}: not a widget id"))?;
+        let widget: usize = index.parse().map_err(|_| format!("{id}: not a widget id"))?;
+        let intent = match action {
+            Action::Click { button: Button::Left, .. } => ui::dialog::Intent::Activate(widget),
+            Action::SelectRow { row } => ui::dialog::Intent::SelectRow(widget, *row as usize),
+            Action::SelectOption { option } => ui::dialog::Intent::SelectOption(widget, *option as usize),
+            Action::SetValue { value } => ui::dialog::Intent::SetValue(widget, *value),
+            Action::SetText { text } => {
+                let bytes = acr_formats::CodePage::Cp1252
+                    .encode(text)
+                    .ok_or("the text has a character the game cannot show")?;
+                ui::dialog::Intent::SetText(widget, bytes)
+            }
+            _ => return Err(format!("{id}: a widget does not take {action:?}")),
+        };
+        let action = self.ui.intent(screen, intent).map_err(|e| format!("{id}: {e}"))?;
+        self.apply(action, event_loop);
+        self.load_requested();
+        self.play_sounds();
+        Ok(())
     }
 
     /// The Escape key, pressed and released (the touch top bar's plaque, Android's back key).

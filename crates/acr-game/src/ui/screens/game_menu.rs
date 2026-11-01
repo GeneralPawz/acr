@@ -65,6 +65,7 @@ impl Screen for GameMenu {
                 font::F18Y3,
             );
             m.d.choose(b, param);
+            m.d.set_key(b, ["continue", "save", "load", "options", "leave"][i]);
             if param == LOAD
                 && let Kind::GpTextButton(t) = &mut m.d.widgets[b].kind
             {

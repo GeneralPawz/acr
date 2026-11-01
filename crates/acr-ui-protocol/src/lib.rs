@@ -50,6 +50,12 @@ pub enum ToUi {
         asset_base: String,
     },
     View(ViewPatch),
+    /// The game refused the [`FromUi::Intent`] numbered `seq`; nothing changed. `reason` is
+    /// for the log and the developer, not for the player.
+    Rejected {
+        seq: u32,
+        reason: String,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -147,6 +153,11 @@ pub enum WidgetsPatch {
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export, export_to = export_dir!()))]
 pub struct WidgetView {
     pub id: String,
+    /// A name that stays with the widget when the dialog is rebuilt (`Dialog::set_key`), for
+    /// a skin that lays widgets out by role. Not every widget has one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub key: Option<String>,
     pub kind: WidgetKind,
     /// `[x, y, w, h]` of the area that reacts to the mouse, in canvas pixels.
     pub rect: [i32; 4],
@@ -282,6 +293,36 @@ pub enum FromUi {
     Key { key: String, code: String, down: bool, repeat: bool, mods: Mods },
     /// The page lost the focus: held keys and buttons are released.
     Blur,
+    /// The touch skin asks for a widget's effect without a pixel: Rust checks it and answers
+    /// [`ToUi::Rejected`] with the same `seq` if it cannot be applied. `id` is a widget's id
+    /// (`<Screen>/<index>`), a HUD icon's (`hud/<slot>`, `army/<slot>`) or `minimap`.
+    Intent { seq: u32, id: String, action: Action },
+}
+
+/// What an [`FromUi::Intent`] does to its widget; the effect is that of the original input
+/// on the widget (`Dialog::activate` and the other setters, `InGame::hud_event`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "t", rename_all = "snake_case")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export, export_to = export_dir!()))]
+pub enum Action {
+    /// A click on a button, check, drop-down box, input box or HUD icon (`right`: its
+    /// right-click command), with the modifier keys held.
+    Click {
+        button: Button,
+        #[serde(default)]
+        mods: Mods,
+    },
+    /// The row `row` (index into all rows) of a list.
+    SelectRow { row: u32 },
+    /// The entry `option` of a drop-down box.
+    SelectOption { option: u32 },
+    /// A slider's position.
+    SetValue { value: i32 },
+    /// The whole text of an input box.
+    SetText { text: String },
+    /// A point of the minimap, `uv` in `0..=1` from its top-left corner (`id` `minimap`):
+    /// left centres the camera, right orders the selection there.
+    MinimapAt { uv: [f32; 2], button: Button },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -337,5 +378,34 @@ mod tests {
             r#"{"t":"fill","rgba":[1,2,3,4],"rect":[0,0,5,6],"clip":null}"#
         );
         assert!(serde_json::from_str::<FromUi>(r#"{"t":"nope"}"#).is_err());
+    }
+
+    #[test]
+    fn a_widgets_key_is_sent_only_when_it_has_one() {
+        let widget = |key: Option<&str>| WidgetView {
+            id: "S/1".into(),
+            key: key.map(str::to_owned),
+            kind: WidgetKind::Button,
+            rect: [0; 4],
+            enabled: true,
+            hover: false,
+            parts: Vec::new(),
+        };
+        let without = serde_json::to_string(&widget(None)).unwrap();
+        assert!(!without.contains("key"), "{without}");
+        let with = serde_json::to_string(&widget(Some("ok"))).unwrap();
+        assert!(with.contains(r#""key":"ok""#), "{with}");
+        assert_eq!(serde_json::from_str::<WidgetView>(&without).unwrap(), widget(None));
+        assert_eq!(serde_json::from_str::<WidgetView>(&with).unwrap(), widget(Some("ok")));
+    }
+
+    #[test]
+    fn intents_and_their_refusal_round_trip() {
+        let json = r#"{"t":"intent","seq":7,"id":"Options/3","action":{"t":"set_value","value":40}}"#;
+        let FromUi::Intent { seq, id, action } = serde_json::from_str(json).unwrap() else { panic!() };
+        assert_eq!((seq, id.as_str(), action), (7, "Options/3", Action::SetValue { value: 40 }));
+        let rejected = ToUi::Rejected { seq: 7, reason: "no widget".into() };
+        assert_eq!(serde_json::to_string(&rejected).unwrap(), r#"{"t":"rejected","seq":7,"reason":"no widget"}"#);
+        assert!(serde_json::from_str::<FromUi>(r#"{"t":"intent","seq":1,"id":"a","action":{"t":"nope"}}"#).is_err());
     }
 }

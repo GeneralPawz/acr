@@ -228,14 +228,18 @@ impl Screen for RandomMap {
                 combo.cur = if i == 1 { 2 } else { 0 };
                 c
             };
+            m.d.set_key(control, format!("player_{i}"));
             let nation = m.d.add_combo_box_dlx(ctx.lib, 223, y, 126, COMBO, 0, 8, font::F18W, font::F18Y3);
+            m.d.set_key(nation, format!("nation_{i}"));
             let combo = m.d.combo_mut(nation);
             combo.lines = nation_lines.clone();
             combo.cur = if i == 0 { 1 } else { nation_lines.len() - 1 };
             let color = m.d.add_gp_picture(ctx.lib, 355, y + 1, PLAYERLIST, i + 1);
             m.d.choose(color, COLOR_PARAM + i as i32);
+            m.d.set_key(color, format!("color_{i}"));
             let team = m.d.add_gp_picture(ctx.lib, 398, y + 5, PLAYERLIST, 10);
             m.d.choose(team, TEAM_PARAM + i as i32);
+            m.d.set_key(team, format!("team_{i}"));
             let team_text = m.d.add_text(ctx.lib, ctx.fonts, 413, y + 2, b"X", font::F18Y3, Align::Center);
             self.rows.push(Row { control, nation, color, team_text });
             self.colors.push(i as u8);
@@ -277,6 +281,7 @@ impl Screen for RandomMap {
             b.step = ROW_H;
             b.page = ROW_H * (visible as i32 - 1);
         }
+        m.d.set_key(bar, "options_scroll");
         m.d.set_clip(Some(OPT_CLIP));
         for (k, (label, lines, default)) in rows.into_iter().enumerate() {
             let y = OPT_Y + ROW_H * k as i32;
@@ -288,6 +293,7 @@ impl Screen for RandomMap {
             for w in [l, c] {
                 m.d.widgets[w].scroll_owner = Some(bar);
             }
+            m.d.set_key(c, format!("option_{k}"));
             self.options.push(c);
         }
         m.d.set_clip(None);
@@ -304,9 +310,11 @@ impl Screen for RandomMap {
         m.d.add_gp_picture(ctx.lib, 672, 689, ROOM, 7);
         let start = m.d.add_gp_button(ctx.lib, 899, 706, GAMEBUTTONS, 1, 0);
         m.d.choose(start, OK);
+        m.d.set_key(start, "start");
         m.d.set_hint(start, texts.get("MISS_RUN"));
         let cancel = m.d.add_gp_button(ctx.lib, 959, 706, GAMEBUTTONS, 3, 4);
         m.d.choose(cancel, CANCEL);
+        m.d.set_key(cancel, "cancel");
         m.d.set_hint(cancel, texts.get("SOCANCEL"));
         m.d.ok_sound = Some(super::super::dialog::sound::START);
     }

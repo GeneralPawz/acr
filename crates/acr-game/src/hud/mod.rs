@@ -21,6 +21,7 @@ use std::rc::Rc;
 use acr_formats::Palette;
 
 use crate::ui::Ctx;
+use crate::ui::dialog::Reject;
 use crate::ui::draw::{Draw, GAME_PALETTE, Rect};
 use crate::ui::fonts::FontId;
 use crate::ui::settings::TopBar;
@@ -1081,18 +1082,12 @@ impl Hud {
         );
         if let Some(icon) = Self::army_icons(view).find(|i| Self::army_rect(i.slot).contains(army)) {
             self.pressed = true;
-            return match (&icon.action, icon.disabled) {
-                (Some(a), false) => HudEvent::Command(a.clone()),
-                _ => HudEvent::Used,
-            };
+            return Self::icon_event(icon, false);
         }
         for icon in &view.icons {
             if Self::icon_rect(self.screen, icon.slot).contains(commands) && Self::shown(icon.slot) {
                 self.pressed = true;
-                return match (&icon.action, icon.disabled) {
-                    (Some(a), false) => HudEvent::Command(a.clone()),
-                    _ => HudEvent::Used,
-                };
+                return Self::icon_event(icon, false);
             }
         }
         if self.minimap.is_some()
@@ -1102,6 +1097,47 @@ impl Hud {
             return HudEvent::Camera(px);
         }
         if self.covers(ctx, view, p) { HudEvent::Used } else { HudEvent::None }
+    }
+
+    /// What a click on `icon` does: its command (left: `action`, right: `right`) unless it is
+    /// disabled or has none, which the interface just takes.
+    fn icon_event(icon: &Icon, right: bool) -> HudEvent {
+        match (if right { &icon.right } else { &icon.action }, icon.disabled) {
+            (Some(a), false) => HudEvent::Command(a.clone()),
+            _ => HudEvent::Used,
+        }
+    }
+
+    /// The event of a click on the icon `id` (`hud/<slot>` of the grid, `army/<slot>`) without a
+    /// pixel (the touch skin): what [`Hud::press`] or [`Hud::right_press`] returns for it, but
+    /// only a command; an icon that does nothing is refused.
+    pub fn icon_click(view: &View, id: &str, right: bool) -> Result<HudEvent, Reject> {
+        let (group, slot) = id.split_once('/').ok_or(Reject::NoWidget)?;
+        let slot: usize = slot.parse().map_err(|_| Reject::NoWidget)?;
+        let icon = match group {
+            "hud" => view.icons.iter().find(|i| i.slot == slot && Self::shown(slot)),
+            "army" if !right => Self::army_icons(view).find(|i| i.slot == slot),
+            _ => None,
+        }
+        .ok_or(Reject::NoWidget)?;
+        match Self::icon_event(icon, right) {
+            HudEvent::Used if icon.disabled => Err(Reject::Disabled),
+            HudEvent::Used => Err(Reject::Kind("an icon with a command")),
+            event => Ok(event),
+        }
+    }
+
+    /// The minimap pixel at `uv` (`0..=1` from the top-left of the shown minimap), if the
+    /// minimap is on; the point [`Hud::press`] makes of the same place.
+    pub fn minimap_pixel(&self, view: &View, [u, v]: [f32; 2]) -> Result<[f32; 2], Reject> {
+        if !(0.0..=1.0).contains(&u) || !(0.0..=1.0).contains(&v) {
+            return Err(Reject::Range);
+        }
+        if self.minimap.is_none() {
+            return Err(Reject::Hidden);
+        }
+        let p = self.placement(view);
+        Ok([u * p.rect.width() as f32 + p.offset[0] as f32, v * p.rect.height() as f32 + p.offset[1] as f32])
     }
 
     /// Mouse dragged with the left button held: the minimap keeps moving the camera.
@@ -1137,10 +1173,7 @@ impl Hud {
         if let Some(icon) =
             view.icons.iter().find(|i| Self::shown(i.slot) && Self::icon_rect(self.screen, i.slot).contains(commands))
         {
-            return match (&icon.right, icon.disabled) {
-                (Some(a), false) => HudEvent::Command(a.clone()),
-                _ => HudEvent::Used,
-            };
+            return Self::icon_event(icon, true);
         }
         if self.minimap.is_some()
             && let Some(px) = self.placement(view).pixel_at(self.local(Group::Minimap, view, p))
@@ -2051,6 +2084,48 @@ mod tests {
         hud.hud_scale = None;
         assert_eq!(hud.zoom(Group::Commands, &mixed), Zoom { anchor: [0.0, 768.0], scale: 1.0 });
         assert_eq!(hud.icon_on_canvas(0, &mixed), [182.0, 630.0, 40.0, 40.0]);
+    }
+
+    /// The touch skin's clicks give the event a press at the icon (or the minimap point) gives.
+    #[test]
+    fn an_icon_click_without_a_pixel_is_the_press_event() {
+        let ui = crate::ui::Ui::new(&[]);
+        let ctx = ui.ctx();
+        let mut hud = phone();
+        let mut disabled = icon(3);
+        disabled.disabled = true;
+        let mut silent = icon(4);
+        silent.action = None;
+        let mut view = View { icons: vec![icon(0), icon(2), disabled, silent], army: vec![icon(1)], ..View::default() };
+        view.icons[1].right = Some(HudCommand::SelectType(99));
+        for (id, slot) in [("hud/0", 0), ("hud/2", 2)] {
+            let at = centre(hud.icon_on_canvas(slot, &view));
+            assert_eq!(Hud::icon_click(&view, id, false), Ok(hud.press(&ctx, &view, at)), "{id}");
+        }
+        let at = centre(hud.icon_on_canvas(2, &view));
+        assert_eq!(Hud::icon_click(&view, "hud/2", true), Ok(hud.right_press(&ctx, &view, at)));
+        let at = centre(hud.army_on_canvas(1));
+        assert_eq!(Hud::icon_click(&view, "army/1", false), Ok(hud.press(&ctx, &view, at)));
+        // What a press only takes is refused, as is an unknown or malformed icon.
+        assert_eq!(Hud::icon_click(&view, "hud/3", false), Err(Reject::Disabled));
+        assert_eq!(Hud::icon_click(&view, "hud/4", false), Err(Reject::Kind("an icon with a command")));
+        assert_eq!(Hud::icon_click(&view, "hud/0", true), Err(Reject::Kind("an icon with a command")));
+        assert_eq!(Hud::icon_click(&view, "hud/9", false), Err(Reject::NoWidget));
+        assert_eq!(Hud::icon_click(&view, "army/1", true), Err(Reject::NoWidget));
+        assert_eq!(Hud::icon_click(&view, "hud/x", false), Err(Reject::NoWidget));
+        assert_eq!(Hud::icon_click(&view, "editor/1", false), Err(Reject::NoWidget));
+
+        // The minimap: a point of it is the pixel a press there gives.
+        assert_eq!(hud.minimap_pixel(&view, [0.5, 0.5]), Err(Reject::Hidden));
+        hud.set_minimap(Minimap { pixels: vec![0; (minimap::SIDE * minimap::SIDE) as usize] });
+        let z = hud.zoom(Group::Minimap, &view);
+        let [x, y, w, h] = z.rect(hud.placement(&view).rect);
+        for uv in [[0.5, 0.5], [0.25, 0.75]] {
+            let HudEvent::Camera(px) = hud.press(&ctx, &view, [x + w * uv[0], y + h * uv[1]]) else { panic!() };
+            let got = hud.minimap_pixel(&view, uv).unwrap();
+            assert!((px[0] - got[0]).abs() < 0.5 && (px[1] - got[1]).abs() < 0.5, "{uv:?}: {px:?} {got:?}");
+        }
+        assert_eq!(hud.minimap_pixel(&view, [1.5, 0.5]), Err(Reject::Range));
     }
 
     #[test]

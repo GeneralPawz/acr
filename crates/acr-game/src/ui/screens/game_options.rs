@@ -422,7 +422,16 @@ impl GameOptions {
             _ => b"Seite 6/6: Zur\xfcck \xbb",
         };
         let width = ctx.fonts.width(ctx.lib, font::F18Y3, label);
-        m.entry(ctx, ox + 534 - width, oy + 203, label, [font::F18W, font::F18Y3, font::F18Y3], Align::Left, NEXT_PAGE);
+        let next = m.entry(
+            ctx,
+            ox + 534 - width,
+            oy + 203,
+            label,
+            [font::F18W, font::F18Y3, font::F18Y3],
+            Align::Left,
+            NEXT_PAGE,
+        );
+        m.d.set_key(next, "next_page");
         if self.page == 0 {
             let s = &self.settings;
             for (y, id) in [(203, "INTF_OPT_VO"), (257, "INTF_OPT_AO"), (365, "INTF_OPT_GO")] {
@@ -455,6 +464,18 @@ impl GameOptions {
             self.music = slider(m, 347, 100, s.music_volume);
             self.scroll = slider(m, 429, 8, s.scroll_speed - 2);
             self.speed = slider(m, 455, 100, 100 - s.frame_time.clamp(0, 100));
+            for (w, key) in [
+                (self.resolution, "resolution"),
+                (self.music_mode, "music_mode"),
+                (self.game_mode, "game_mode"),
+                (self.controls, "controls"),
+                (self.sound, "sound"),
+                (self.music, "music"),
+                (self.scroll, "scroll"),
+                (self.speed, "speed"),
+            ] {
+                m.d.set_key(w, key);
+            }
         } else {
             // A page shorter than the frame: its empty boxes and tracks covered with a plain
             // strip of the frame (the box column, one row high).
@@ -478,6 +499,7 @@ impl GameOptions {
             for &(i, y, c) in &combos {
                 let lines = c.lines.iter().map(|l| l.to_vec()).collect();
                 let w = combo(m, y, lines, (c.get)(&self.settings));
+                m.d.set_key(w, format!("choice_{i}"));
                 self.choices.push((i, w));
             }
         }
@@ -493,6 +515,7 @@ impl GameOptions {
                 font::F18Y5,
             );
             m.d.choose(b, param);
+            m.d.set_key(b, if param == OK { "ok" } else { "cancel" });
             if let Kind::GpTextButton(t) = &mut m.d.widgets[b].kind {
                 t.font_dy = 3;
             }

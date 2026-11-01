@@ -29,6 +29,16 @@ const screen = (name = 'MainMenu'): ScreenPatch => ({
 const view = (patch: ViewPatch) => ({ t: 'view' as const, ...patch });
 
 describe('UiState', () => {
+  it('leaves the view alone when the game refuses an intent', () => {
+    const { state, sent } = setup();
+    state.receive({ t: 'hello', protocol: 1, host: 'web', asset_base: '' });
+    state.receive(view({ rev: 1, mode: 'menus', screen: screen() }));
+    state.receive({ t: 'rejected', seq: 3, reason: 'no such widget' });
+    state.receive(view({ rev: 2, mode: 'game' }));
+    expect(state.mode).toBe('game');
+    expect(sent).toEqual([]);
+  });
+
   it('applies patches in order, topic by topic', () => {
     const { state, sent } = setup();
     state.receive({ t: 'hello', protocol: 1, host: 'web', asset_base: '' });

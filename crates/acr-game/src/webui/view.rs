@@ -236,6 +236,7 @@ pub fn widgets(
         let parts = resolver.parts(lib, fonts, &colours(dialog.widget_draws(lib, fonts, i), in_game))?;
         out.push(WidgetView {
             id: format!("{screen}/{i}"),
+            key: w.key.clone(),
             kind: kind(&w.kind),
             rect: rect4(shown_rect(dialog, i)),
             enabled: w.enabled,
@@ -247,6 +248,7 @@ pub fn widgets(
     if !dropdown.is_empty() {
         out.push(WidgetView {
             id: format!("{screen}/dropdown"),
+            key: None,
             kind: WidgetKind::Combo,
             rect: [0, 0, 0, 0],
             enabled: true,
@@ -270,6 +272,7 @@ fn progress(
     };
     Ok(WidgetView {
         id: format!("{screen}/progress"),
+        key: None,
         kind: WidgetKind::Text,
         rect: [draw.x, draw.y, fonts.width(lib, *font, text), fonts.height(lib, *font)],
         enabled: true,
@@ -313,6 +316,7 @@ pub fn screen(resolver: &mut Resolver, ui: &Ui) -> Result<Option<ScreenView>, Fa
                     0,
                     WidgetView {
                         id: format!("{name}/backdrop"),
+                        key: None,
                         kind: WidgetKind::Picture,
                         rect: rect4(rect.unwrap_or(Rect::SCREEN)),
                         enabled: true,

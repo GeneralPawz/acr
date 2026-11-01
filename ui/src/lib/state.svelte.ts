@@ -46,6 +46,8 @@ export class UiState {
       this.#awaitingSnapshot = false;
       return;
     }
+    // Only the touch skin sends intents and answers a refusal (#332).
+    if (message.t === 'rejected') return;
     const patch = message;
     if (this.#awaitingSnapshot && !isSnapshot(patch)) return;
     if (!this.#awaitingSnapshot && patch.rev !== this.#rev + 1) {

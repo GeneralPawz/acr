@@ -51,7 +51,7 @@ pub enum Action {
 pub use dialog::Key;
 
 /// Input forwarded from the window, in canvas coordinates.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Input {
     MouseMove([f32; 2]),
     MouseDown([f32; 2]),
@@ -59,6 +59,8 @@ pub enum Input {
     /// Wheel notches, positive away from the user.
     Wheel(f32),
     Key(Key),
+    /// The touch skin's widget input, checked by [`Ui::intent`] first.
+    Intent(dialog::Intent),
 }
 
 /// The menu mouse cursor: `Cursor_01.GP` frame 0 (cursor pack = palette set + 5, set by
@@ -538,6 +540,17 @@ impl Ui {
         self.navigate(nav)
     }
 
+    /// The touch skin's widget input on the top screen `screen`: checked first, then handled
+    /// as the input it stands for. Nothing happens when it is refused.
+    pub fn intent(&mut self, screen: &str, intent: dialog::Intent) -> Result<Action, dialog::Reject> {
+        let top = self.stack.last().filter(|e| e.built).ok_or(dialog::Reject::Screen)?;
+        if top.screen.name() != screen || top.screen.busy() {
+            return Err(dialog::Reject::Screen);
+        }
+        top.screen.dialog().ok_or(dialog::Reject::Screen)?.check(&intent)?;
+        Ok(self.input(Input::Intent(intent)))
+    }
+
     fn collect_sounds(&mut self) {
         if let Some(top) = self.stack.last_mut() {
             for sound in top.screen.take_sounds() {
@@ -748,6 +761,15 @@ impl Ui {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_intent_needs_the_built_top_screen() {
+        let mut ui = Ui::new(&[]);
+        let name = ui.screens().last().unwrap().0.name();
+        // Nothing is built without the game files; the intent is refused and nothing happens.
+        assert_eq!(ui.intent(name, dialog::Intent::Activate(0)), Err(dialog::Reject::Screen));
+        assert_eq!(ui.intent("Options", dialog::Intent::Activate(0)), Err(dialog::Reject::Screen));
+    }
 
     #[test]
     fn the_loading_progress_shows_only_while_no_game_is_shown() {
