@@ -7,7 +7,7 @@ and their rules in [docs/ui.md](ui.md) stay as they are, the headless driver and
 run on them, and the Svelte app draws a view model Rust publishes and sends raw input back.
 
 What exists now (#317, #322, browser part): the protocol, the bridge, the classic skin, the main menu,
-the player name, the options, the campaigns, the single missions, the load dialog of the main menu, the random map setup, the loading screen and the connection screen of multiplayer (`Placeholder`), and (#325) the HUD's top bar, "M" drop-down, hints, messages and cursor over the running game (#326), the minimap, command panel, unit stats, unit panel and army list (#327), and (#325) the dialogs over the running game: the game menu, the options with their "Weitere Optionen" and ACR rule pages, the save dialog and the load dialog of the game menu, the mission's message boxes, choices and history. Every other screen is still drawn by the engine, under the UI's input overlay.
+the player name, the options, the campaigns, the single missions, the load dialog of the main menu, the random map setup, the loading screen and the connection screen of multiplayer (`Placeholder`), and (#325) the HUD's top bar, "M" drop-down, hints, messages and cursor over the running game (#326), the minimap, command panel, unit stats and unit panel (#327), the game panel and the test editor's window (#328), and (#325) the dialogs over the running game: the game menu, the options with their "Weitere Optionen" and ACR rule pages, the save dialog and the load dialog of the game menu, the mission's message boxes, choices and history. Every other screen is still drawn by the engine, under the UI's input overlay.
 
 ## Parts
 
@@ -48,7 +48,7 @@ and clippy never need Bun.
   publishes after each frame's advance (`WebUi::publish`): only changed topics (`mode`, `loading`,
   `stage`, `screen`, `cursor`, `hud`), at most one message a frame, `rev` growing by one. A gap makes the UI
   send `resync`; the answer carries every topic. Scope `ui.bridge` of the profiler.
-- **Claiming:** the registry (`ui/src/screens/registry.ts`: `MainMenu`, `PlayerName`, `Options`, `Campaigns`, `SingleMission`, `LoadGame`, `RandomMap`, `Placeholder`, `Loading`, `GameMenu`, `GameOptions`, `SaveGameDialog`, `MessageWindow`, `HistoryWindow`, and `HUD`: `TopBar`, `DropDown`, `Hints`, `Messages`, `Minimap`, `CommandPanel`, `UnitStats`) is announced in `ready` (`screens`, `hud`).
+- **Claiming:** the registry (`ui/src/screens/registry.ts`: `MainMenu`, `PlayerName`, `Options`, `Campaigns`, `SingleMission`, `LoadGame`, `RandomMap`, `Placeholder`, `Loading`, `GameMenu`, `GameOptions`, `SaveGameDialog`, `MessageWindow`, `HistoryWindow`, and `HUD`: `TopBar`, `DropDown`, `Hints`, `Messages`, `Minimap`, `CommandPanel`, `UnitStats`, `GamePanel`, `Editor`) is announced in `ready` (`screens`, `hud`).
   `Ui::set_external` makes the engine skip exactly the screens the UI claims, and the cursor, but only
   while `view::screen` can describe the screen completely; otherwise the screen goes on being drawn by
   the engine (`engine_drawn: true`), never half.
@@ -216,6 +216,44 @@ the camera, the new minimap picture is one 150 byte group and an asset fetch fou
 12.7 patches a second, 5.2 KB/s. With the minimap and its frame in one group it was 12.8 KB/s. The page's frame intervals in these phases are 33 ms
 (median) with the UI and with `?ui=engine`: the walking units cost SwiftShader, not the UI.
 
+## The HUD III: game panel, test editor, mortars (#328)
+
+Same rules again (`hud::Claim`, transparent host, whole canvas scale, diffing before resolving); two more parts in
+`ready.hud`, no protocol type: every draw of both is a frame, a string or a fill.
+
+| Part | Group (layer) | Draws |
+|---|---|---|
+| `GamePanel` | `game_panel` (6, beside `unit_panel`: one panel is open at a time) | the game panel (key I): the paper box, the tab strip, the page of each tab (forces, deaths, market, income) clipped to its window, the scroll bar |
+| `Editor` | `editor` (12, over `messages`) | the test editor's window as `Editor::draws` makes it: the frames of both boxes, title row with handle, fold and swords/`Schlacht` buttons, icon grid, combo box, colour swatches, the extras box, the Natur and Gelaende lists, the battle view, the corner grip |
+
+The editor's window is taken out of the engine's overlay beside the mission's messages (`InGame::engine_overlay`); the save notice
+stays with the engine. Moving the window sends a `HudMove` (101 bytes) because the combo box's and the scroll bar's clips were
+widened to the window's content (they clipped to the whole screen, which does not move with the window).
+Input stays the viewport's and the engine's hit-testing (`editor_icons`, the driver's labels) decides every click.
+
+Parity (`ui_parity.py`, 1024x768, dpr 1, blank grass field, counted over the window's box, layout 0 px each): `GamePanel` (forces) 100.000%,
+`GamePanelDeaths` 100.000%, `GamePanelMarket` 100.000% (the first run after a rebuild failed once while the panel was still loading, then 100.000% twice), `GamePanelIncome` 100.000%;
+`Editor` (placing view) 100.000%, `EditorCombo` (nation combo box open) 100.000%, `EditorNature` and `EditorTerrain` (the Natur and Gelaende lists) 100.000%, `EditorBattle` and
+`EditorBattlePlaced` (battle view, before and after "Aufstellen") 100.000%, `EditorMoved` (the window dragged by its handle with the page's mouse) 100.000%.
+
+Scenarios under `--ui classic`: `svelte_game_panel` (open, every tab, close), `svelte_editor` (window, drag, battle view, Aufstellen) and
+`svelte_mortar` (mortar icons in the command group, zone mode, a zone set by a drag, fire); the existing `editor_*` scenarios pass unchanged.
+
+Patch rate (`ui_patches.py --editor`, swiftshader, blank field with the editor, six seconds each): idle 0.3 patches a second (the window's
+first resolve when its files finish loading), the window dragged 21 patches a second, median 101 bytes, 2.1 KB/s (before the clip change:
+16 patches a second of 30 KB, 499 KB/s), the game panel open 0.2 a second (one 8 KB patch), frame intervals at the 16.7 ms vsync in every phase.
+
+Stayed with the engine:
+
+- **Diplomacy panel (F8, and tab 4 of the game panel):** DipServer's CML pages are drawn into the engine's overlay (`InGame::dip_draw`); every draw is a frame,
+  string or fill, so the protocol could carry them, but only a campaign mission with a `DipServer.dll` has them, and the browser's driver cannot start
+  a mission map (and its world moves, so there is no deterministic frame). Not measured, so not claimed; follow-up.
+- **Mortar zones on the map:** the dashed circles, the minimum-range ring and the zone under the cursor are world overlays (like the brackets), drawn by the engine in world
+  coordinates. The four mortar icons are part of the command panel's group and are drawn by the UI (measured with the command panel's route, which has no mortar:
+  the icons are the same `draw_icon` draws).
+- **The mortar icons' parity** has no pixel run of its own: the mortars rule needs a mortar unit (`ArtMrt`) and the page's driver cannot start with the rule.
+- **Pause text:** still in the engine's overlay.
+
 ## Native host spike (Android, #333)
 
 `tools/android/build-webview-spike.sh` builds the example `crates/acr-game/examples/webview_spike_android.rs`
@@ -262,5 +300,5 @@ webview, the `capture` and `shrink` modes, a soft keyboard (the popup is not foc
 
 ## Not yet
 
-The touch skin, the rest of the HUD (the game panel, the pause text, the diplomacy panel), the native webview host (`wry`, spike on Windows), the other screens, and the start screen's layout for other screen ratios
+The touch skin, the rest of the HUD (the pause text, the diplomacy panel, the world overlays), the native webview host (`wry`, spike on Windows), the other screens, and the start screen's layout for other screen ratios
 (#316 section 8).
