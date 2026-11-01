@@ -15,6 +15,12 @@ id: string, role: IconRole,
  */
 size: [number, number], parts: Array<Part>, 
 /**
+ * The command's glyph of the touch skin's own icon set (`ui/src/lib/icons/`), named by what
+ * it does; `parts` then hold only what goes over it (outline, life bar, numbers). `None`:
+ * `parts` are the original's picture, enlarged by the pixel-art scaler.
+ */
+glyph: string | null, 
+/**
  * The hint text (empty: none), for a long press.
  */
 hint: string, disabled: boolean, selected: boolean, 

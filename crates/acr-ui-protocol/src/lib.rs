@@ -190,6 +190,10 @@ pub struct IconView {
     /// `[w, h]` of the draws' box.
     pub size: [i32; 2],
     pub parts: Vec<Part>,
+    /// The command's glyph of the touch skin's own icon set (`ui/src/lib/icons/`), named by what
+    /// it does; `parts` then hold only what goes over it (outline, life bar, numbers). `None`:
+    /// `parts` are the original's picture, enlarged by the pixel-art scaler.
+    pub glyph: Option<String>,
     /// The hint text (empty: none), for a long press.
     pub hint: String,
     pub disabled: bool,

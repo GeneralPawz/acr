@@ -18,6 +18,7 @@ pub mod input;
 pub mod keys;
 #[cfg(all(feature = "webview-gtk", target_os = "linux"))]
 pub mod native;
+pub mod upscale;
 pub mod view;
 #[cfg(target_arch = "wasm32")]
 pub mod web;
@@ -31,7 +32,7 @@ use acr_ui_protocol::{
 pub use assets::{AssetBody, AssetError, AssetReply};
 
 use crate::canvas::Canvas;
-use crate::hud::touch_skin::{Role, TouchIcon, TouchView};
+use crate::hud::touch_skin::{PORTRAIT_SCALE, Role, TouchIcon, TouchView};
 use crate::hud::{Claim, Claimed};
 use crate::ui::draw::Draw;
 use crate::ui::{External, Ui};
@@ -505,7 +506,8 @@ impl WebUi {
                             Role::Army => IconRole::Army,
                         },
                         size: i.size,
-                        parts: self.resolver.parts(lib, fonts, &i.draws)?,
+                        parts: self.resolver.parts_scaled(lib, fonts, &i.draws, PORTRAIT_SCALE)?,
+                        glyph: i.glyph.clone(),
                         hint: text(&i.hint),
                         disabled: i.disabled,
                         selected: i.selected,
@@ -955,7 +957,8 @@ mod tests {
             id: "hud/3".into(),
             role: IconRole::Command,
             size: [40, 40],
-            parts: vec![sprite("frame/game/0/ICONS.GP/7")],
+            parts: vec![sprite("scale/4/frame/game/0/ICONS.GP/7")],
+            glyph: None,
             hint: String::new(),
             disabled: false,
             selected: false,
@@ -973,7 +976,7 @@ mod tests {
             ..TouchHud::default()
         };
         let patch = ViewPatch { rev: 1, touch: Some(Box::new(touch)), ..Default::default() };
-        assert_eq!(referenced(&patch), vec!["frame/game/0/ICONS.GP/7", "frame/game/0/RESPANEL.GP/0"]);
+        assert_eq!(referenced(&patch), vec!["frame/game/0/RESPANEL.GP/0", "scale/4/frame/game/0/ICONS.GP/7"]);
     }
 
     #[test]
