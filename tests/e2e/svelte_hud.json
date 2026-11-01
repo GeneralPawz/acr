@@ -1,6 +1,6 @@
 {
   "name": "svelte_hud",
-  "description": "The classic skin draws the HUD's top bar (#326, docs/webui.md 'The HUD'): the resource values are a group of their own, and the value of food follows a purchase",
+  "description": "The classic skin draws the HUD parts of #326 (docs/webui.md 'The HUD'): the resource values follow a purchase and only they are resent, the 'M' drop-down opens as a group and its first row opens the game menu",
   "args": ["--ui", "classic"],
   "steps": [
     {"cmd": "start", "random": {"nation": 1, "seed": 5}},
@@ -16,6 +16,14 @@
     {"cmd": "wait", "until": {"units": {"owner": 0, "type": "Kre", "finished": true}}, "timeout": 20000},
     {"cmd": "click", "unit": {"owner": 0, "type": "Kre"}},
     {"cmd": "click", "label": "Hellebardier", "expect": {"path": "target.label", "contains": "Hellebardier"}},
-    {"cmd": "view", "expect": {"path": "view.hud.groups.1.parts.3.text", "ne": "${food}"}, "note": "food was paid"}
+    {"cmd": "view", "expect": {"path": "view.hud.groups.1.parts.3.text", "ne": "${food}"}, "note": "food was paid"},
+    {"cmd": "click", "pos": [275, 17], "note": "the M button"},
+    {"cmd": "view", "expect": [
+      {"path": "view.hud.groups.2.name", "eq": "drop_down"},
+      {"path": "view.hud.groups.2.parts", "len_ge": 20}
+    ]},
+    {"cmd": "click", "pos": [276, 72], "note": "its first row", "expect": {"screen": "GameMenu"}},
+    {"cmd": "key", "key": "Escape", "expect": {"screen": "game"}},
+    {"cmd": "view", "expect": {"path": "view.hud.groups.2.name", "ne": "drop_down"}}
   ]
 }
