@@ -184,6 +184,14 @@ fn kind(kind: &Kind) -> WidgetKind {
     }
 }
 
+/// Where widget `i` of `dialog` lies on the canvas: the part inside its clip window (the tree
+/// of the driver reports the same), or the whole rectangle when none of it is inside.
+fn shown_rect(dialog: &Dialog, i: usize) -> Rect {
+    let shown = dialog.shown_rect(i);
+    let visible = shown.intersect(&dialog.widgets[i].clip);
+    if visible.is_empty() { shown } else { visible }
+}
+
 /// The widgets of `dialog`, then the open drop-down as a widget of its own on top.
 pub fn widgets(
     resolver: &mut Resolver,
@@ -198,7 +206,7 @@ pub fn widgets(
         out.push(WidgetView {
             id: format!("{screen}/{i}"),
             kind: kind(&w.kind),
-            rect: rect4(w.rect),
+            rect: rect4(shown_rect(dialog, i)),
             enabled: w.enabled,
             hover: w.hover,
             parts,

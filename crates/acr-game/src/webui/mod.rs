@@ -151,6 +151,13 @@ impl WebUi {
         !self.waiting.is_empty()
     }
 
+    /// Whether the UI draws `screen`: the driver's classic UI draws all it can describe, a page the
+    /// ones its registry names. Screens over the game lie on the game's canvas, which the UI
+    /// does not draw yet.
+    fn draws(&self, screen: &view::ScreenView) -> bool {
+        self.claim_all || (!screen.in_game && self.claimed.contains(&screen.name))
+    }
+
     /// Tells the engine which screens to leave to the UI, and the UI what changed. Call after
     /// the frame's advance, before it is drawn.
     pub fn publish(&mut self, ui: &mut Ui, mode: Mode, loading: Option<f32>, frame: Option<[f32; 2]>) {
@@ -180,7 +187,7 @@ impl WebUi {
 
         // The screen: described by the UI if it claimed it and the description is complete.
         let described = match view::screen(&mut self.resolver, ui) {
-            Ok(Some(screen)) if self.claim_all || self.claimed.contains(&screen.name) => {
+            Ok(Some(screen)) if self.draws(&screen) => {
                 self.error = None;
                 Some(screen)
             }
@@ -356,6 +363,22 @@ mod tests {
         };
         assert_eq!(referenced(&patch), ["bmp/a", "font/1/fonG60w.json", "font/1/fonG60w.png", "frame/menu/0/C.GP/0"]);
         assert!(referenced(&ViewPatch::default()).is_empty());
+    }
+
+    #[test]
+    fn screens_over_the_game_stay_with_the_engine_unless_everything_is_claimed() {
+        let screen = |in_game| view::ScreenView {
+            name: "LoadGame".into(),
+            stack: vec![],
+            in_game,
+            busy: false,
+            hint: None,
+            widgets: vec![],
+        };
+        let mut web = WebUi::new(Box::new(|_| {}), Host::Web, vec!["LoadGame".into()], [1.0; 2], 1.0);
+        assert!(web.draws(&screen(false)) && !web.draws(&screen(true)));
+        web.claim_everything();
+        assert!(web.draws(&screen(true)));
     }
 
     #[test]
