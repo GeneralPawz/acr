@@ -218,6 +218,27 @@ pub fn widgets(
     Ok(out)
 }
 
+/// The replay progress of a loading game ([`Ui::progress_draw`]) as a widget on top of the screen.
+fn progress(
+    resolver: &mut Resolver,
+    lib: &Library,
+    fonts: &Fonts,
+    screen: &str,
+    draw: &Draw,
+) -> Result<WidgetView, Failure> {
+    let Sprite::Text { font, text } = &draw.sprite else {
+        return Err(Failure::Unsupported(format!("{:?}", draw.sprite)));
+    };
+    Ok(WidgetView {
+        id: format!("{screen}/progress"),
+        kind: WidgetKind::Text,
+        rect: [draw.x, draw.y, fonts.width(lib, *font, text), fonts.height(lib, *font)],
+        enabled: true,
+        hover: false,
+        parts: resolver.parts(lib, fonts, std::slice::from_ref(draw))?,
+    })
+}
+
 /// The screen [`Ui::draws`] would show, as a view.
 pub fn screen(resolver: &mut Resolver, ui: &Ui) -> Result<Option<ScreenView>, Failure> {
     let Some(top) = ui.shown_screen() else { return Ok(None) };
@@ -230,7 +251,13 @@ pub fn screen(resolver: &mut Resolver, ui: &Ui) -> Result<Option<ScreenView>, Fa
         in_game: top.in_game(),
         busy: top.busy(),
         hint: dialog.hint().map(|h| CodePage::Cp1252.decode(h)),
-        widgets: widgets(resolver, lib, fonts, name, dialog)?,
+        widgets: {
+            let mut out = widgets(resolver, lib, fonts, name, dialog)?;
+            if let Some(draw) = ui.progress_draw() {
+                out.push(progress(resolver, lib, fonts, name, &draw)?);
+            }
+            out
+        },
     }))
 }
 

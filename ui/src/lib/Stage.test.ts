@@ -71,6 +71,27 @@ describe('Ui', () => {
     });
   });
 
+  it('keeps the claimed loading screen while the game loads and hides it in the game', async () => {
+    const b = bridge([]);
+    const model = new UiState(b);
+    const { container } = mountWith(model, b);
+    const screen = (engine_drawn: boolean) => ({
+      name: 'Loading',
+      stack: ['Loading'],
+      in_game: false,
+      busy: false,
+      engine_drawn,
+      hint: null,
+      widgets: { t: 'full' as const, widgets: [] },
+    });
+    model.receive({ t: 'view', rev: 1, mode: 'loading', loading: 0.4, stage: { menu: canvas, game: canvas }, screen: screen(false) });
+    await Promise.resolve();
+    expect(container.querySelector('[data-acr-screen="Loading"]')).not.toBeNull();
+    model.receive({ t: 'view', rev: 2, mode: 'game' });
+    await Promise.resolve();
+    expect(container.querySelector('.stage')).toBeNull();
+  });
+
   it('forwards pointer input in physical pixels', async () => {
     const sent: FromUi[] = [];
     const b = bridge(sent);

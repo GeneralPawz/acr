@@ -269,6 +269,16 @@ impl Ui {
         self.in_game
     }
 
+    /// The replay progress of a loading game below the loading screen, e.g. "Laden 40%".
+    /// ACR's own: the original restores a savegame without a progress display.
+    pub fn progress_draw(&self) -> Option<Draw> {
+        let p = self.loading_progress.filter(|_| !self.in_game)?;
+        let text = format!("{} {}%", String::from_utf8_lossy(self.texts.get("INTF_LOAD")), (p * 100.0) as u32);
+        let font = screens::font::F18W;
+        let w = self.fonts.width(&self.lib, font, text.as_bytes());
+        Some(Draw::text(font, text.as_bytes(), 512 - w / 2, 700))
+    }
+
     /// The loading screen, e.g. while a mission restarts.
     pub fn show_loading(&mut self) {
         self.stack.clear();
@@ -712,12 +722,9 @@ impl Ui {
             if entry.screen.in_game() {
                 draws = draws.into_iter().map(Draw::in_game).collect();
             }
-            if let (Some(p), false) = (self.loading_progress, self.in_game) {
-                // ACR's own: the original restores a savegame without a progress display.
-                let text = format!("{} {}%", String::from_utf8_lossy(self.texts.get("INTF_LOAD")), (p * 100.0) as u32);
-                let font = screens::font::F18W;
-                let w = self.fonts.width(&self.lib, font, text.as_bytes());
-                draws.push(Draw::text(font, text.as_bytes(), 512 - w / 2, 700));
+            // The UI that draws the loading screen draws the progress too ([`Ui::progress_draw`]).
+            if !claimed && let Some(progress) = self.progress_draw() {
+                draws.push(progress);
             }
         }
         self.textures.resolve(device, queue, images, &self.lib, &self.fonts, canvas, &draws, &mut out);
@@ -738,6 +745,16 @@ impl Ui {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_loading_progress_shows_only_while_no_game_is_shown() {
+        let mut ui = Ui::new(&[]);
+        assert!(ui.progress_draw().is_none());
+        ui.set_loading_progress(Some(0.4));
+        assert!(ui.progress_draw().is_some());
+        ui.enter_game();
+        assert!(ui.progress_draw().is_none());
+    }
 
     const CAMPAIGNS: &[u8] =
         b"1\r\nKolumbus\r\nk.txt\r\nk.bmp\r\n3\r\n#c1@ ON 1 1 1\r\n#c2@ OFF 2 2 2\r\n#c3@ OFF 1 1 1\r\n";
