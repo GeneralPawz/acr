@@ -53,6 +53,7 @@ ROUTES = {
 # stands still under a dialog, so both captures show the same frame), then open the dialog. A dict is
 # a driver request sent as is. Pixels are counted over the dialog's area (`--rect`, see `dialog_area`).
 BLANK = {"cmd": "start", "blank": {"ground": "grass"}}
+EDITOR = {"cmd": "start", "blank": {"ground": "grass", "editor": True}}
 MENU = [BLANK, {"cmd": "key", "key": "F12"}]
 MORE = MENU + ["Spieleinstellungen", "Weitere Optionen »"]
 # The briefing of the first single mission is a MessageWindow; once OK, the "M" drop-down's last row
@@ -95,6 +96,14 @@ ROUTES.update({
     "GamePanelDeaths": [BLANK, {"press": "i"}, [886, 456], {"hover": [512, 300]}],
     "GamePanelMarket": [BLANK, {"press": "i"}, [850, 456], {"hover": [512, 300]}],
     "GamePanelIncome": [BLANK, {"press": "i"}, [922, 456], {"hover": [512, 300]}],
+    # #328: the test editor's window: placing view, the nation combo box open, the battle view, the window dragged.
+    "Editor": [EDITOR, {"hover": [512, 650]}],
+    "EditorCombo": [EDITOR, {"cmd": "click", "label": "Nation", "exact": True}, {"hover": [512, 650]}],
+    "EditorBattle": [EDITOR, {"cmd": "click", "label": "Schlacht", "exact": True}, {"hover": [512, 650]}],
+    "EditorBattlePlaced": [EDITOR, {"cmd": "click", "label": "Schlacht", "exact": True}, {"cmd": "click", "label": "Aufstellen", "exact": True}, {"hover": [512, 650]}],
+    "EditorNature": [EDITOR, {"cmd": "click", "label": "Nation", "exact": True}, {"cmd": "click", "label": "Nation Natur", "exact": True}, {"hover": [512, 650]}],
+    "EditorTerrain": [EDITOR, {"cmd": "click", "label": "Nation", "exact": True}, {"cmd": "click", "label": "Nation Gelaende", "exact": True}, {"hover": [512, 650]}],
+    "EditorMoved": [EDITOR, {"sleep": 2}, {"mouse_drag": [[890, 57], [590, 127]]}, {"hover": [512, 650]}],
     "TopBarWide": [BLANK, {"hover": [960, 540]}],
     "TopBarCentered": [BLANK, {"hover": [960, 540]}],
     "TopBarTouch": [BLANK, {"hover": [792, 360]}],
@@ -118,6 +127,13 @@ HUD_AREAS = {
     "Minimap": "760,505,264,263",
     "UnitPanel": "700,40,324,330",
     "GamePanel": "740,40,284,430",
+    "Editor": "740,40,284,440",
+    "EditorCombo": "740,40,284,440",
+    "EditorBattle": "740,40,284,440",
+    "EditorNature": "740,40,284,440",
+    "EditorTerrain": "740,40,284,440",
+    "EditorBattlePlaced": "740,40,284,440",
+    "EditorMoved": "420,40,320,560",
     "GamePanelDeaths": "740,40,284,430",
     "GamePanelMarket": "740,40,284,430",
     "GamePanelIncome": "740,40,284,430",
@@ -131,7 +147,7 @@ HUD_AREAS = {
 SCREEN_OF = {
     "CampaignMissions": "SingleMission", "RandomMapCombo": "RandomMap", "GameOptionsMore": "GameOptions",
     "GameOptionsRules": "GameOptions", "GameLoadGame": "LoadGame",
-    "TopBar": "game", "CommandPanel": "game", "UnitStats": "game", "Minimap": "game", "UnitPanel": "game", "GamePanel": "game", "GamePanelDeaths": "game", "GamePanelMarket": "game", "GamePanelIncome": "game", "DropDown": "game", "Hints": "game", "Messages": "game", "TopBarWide": "game",
+    "TopBar": "game", "CommandPanel": "game", "UnitStats": "game", "Minimap": "game", "UnitPanel": "game", "Editor": "game", "EditorCombo": "game", "EditorBattle": "game", "EditorNature": "game", "EditorTerrain": "game", "EditorBattlePlaced": "game", "EditorMoved": "game", "GamePanel": "game", "GamePanelDeaths": "game", "GamePanelMarket": "game", "GamePanelIncome": "game", "DropDown": "game", "Hints": "game", "Messages": "game", "TopBarWide": "game",
     "TopBarCentered": "game", "TopBarTouch": "game", "TopBarTouchOpen": "game",
 }
 
@@ -247,6 +263,19 @@ class Page:
                 # The mouse stays here for the screenshot (a hint needs it over its target).
                 self.hover = step["hover"]
                 self.page.mouse.move(*self.hover)
+            elif isinstance(step, dict) and "mouse_drag" in step:
+                # A drag by the page's mouse (the driver has none in the browser): the engine takes the raw input.
+                (x0, y0), (x1, y1) = step["mouse_drag"]
+                # The page forwards moves once per animation frame: the button waits for each.
+                self.page.mouse.move(x0, y0)
+                time.sleep(0.7)
+                self.page.mouse.down()
+                time.sleep(0.7)
+                self.page.mouse.move((x0 + x1) / 2, (y0 + y1) / 2)
+                time.sleep(0.7)
+                self.page.mouse.move(x1, y1)
+                time.sleep(0.7)
+                self.page.mouse.up()
             elif isinstance(step, dict) and "sleep" in step:
                 time.sleep(step["sleep"])
             elif isinstance(step, dict) and "press" in step:

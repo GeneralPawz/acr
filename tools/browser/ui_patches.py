@@ -71,14 +71,32 @@ def main():
     ap.add_argument("--ui", choices=["svelte", "engine"], default="svelte")
     ap.add_argument("--seconds", type=float, default=6.0)
     ap.add_argument("--timeout-s", type=float, default=240.0)
+    ap.add_argument("--editor", action="store_true", help="the test editor's field and the game panel instead of the HUD phases (#328)")
     a = ap.parse_args()
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True, args=u.CHROMIUM_ARGS["swiftshader"])
         page = u.Page(browser, "%s%sui=%s" % (a.url, "&" if "?" in a.url else "?", a.ui), [1024, 768], a.timeout_s, init=HOOK)
-        page.drive(u.BLANK)
+        page.drive(u.EDITOR if a.editor else u.BLANK)
         time.sleep(1.5)
         out = []
         mouse = page.page.mouse
+        if a.editor:
+            out.append(phase(page, "editor open, idle", a.seconds, lambda n: mouse.move(512, 400)))
+            # Over the window's icons: the cell under the mouse is outlined.
+            out.append(phase(page, "mouse over the window's icons", a.seconds, lambda n: mouse.move(780 + (n * 7) % 220, 150 + (n * 5) % 250)))
+            # The window held by its handle and moved to and fro: a shift of the group, not its parts again.
+            mouse.move(890, 57)
+            mouse.down()
+            out.append(phase(page, "window dragged", a.seconds, lambda n: mouse.move(890 - (n * 6) % 300, 57 + (n * 2) % 70)))
+            mouse.up()
+            page.drive({"cmd": "click", "label": "Schlacht", "exact": True})
+            out.append(phase(page, "battle view, mouse over its rows", a.seconds, lambda n: mouse.move(300 + (n * 7) % 220, 100 + (n * 5) % 200)))
+            page.page.keyboard.press("i")
+            out.append(phase(page, "game panel open, mouse over it", a.seconds, lambda n: mouse.move(780 + (n * 7) % 220, 100 + (n * 5) % 350)))
+            browser.close()
+            json.dump(out, sys.stdout, indent=1)
+            print()
+            return
         out.append(phase(page, "idle", a.seconds, lambda n: mouse.move(512, 400)))
         # Along the six resource values: a hint under the mouse, which moves with it.
         out.append(phase(page, "sweep over the top bar", a.seconds, lambda n: mouse.move(330 + (n * 7) % 640, 17)))

@@ -1023,7 +1023,9 @@ impl Editor {
                     }
                     let mut drawn = Vec::new();
                     d.draw(ctx.lib, ctx.fonts, &mut drawn);
-                    out.extend(drawn.into_iter().map(Draw::in_game));
+                    // The widget clips to the whole screen on its sides; the window's content keeps them
+                    // inside the window, so a moved window is the same draws shifted.
+                    out.extend(drawn.into_iter().map(|d| d.in_game().clipped(content)));
                 }
                 Look::DropRow => {
                     out.push(Draw::fill(if i.hot { [90, 70, 20, 255] } else { [0, 0, 0, 255] }, r));
@@ -1034,7 +1036,9 @@ impl Editor {
                     d.add_scroll_bar(ctx.lib, r.x0, r.y0, r.height(), max, pos, VSCROLL, 0);
                     let mut drawn = Vec::new();
                     d.draw(ctx.lib, ctx.fonts, &mut drawn);
-                    out.extend(drawn.into_iter().map(Draw::in_game));
+                    // The widget clips to the whole screen on its sides; the window's content keeps them
+                    // inside the window, so a moved window is the same draws shifted.
+                    out.extend(drawn.into_iter().map(|d| d.in_game().clipped(content)));
                 }
                 Look::Handle => {
                     hud::outline(out, r, colour(OUTLINE));

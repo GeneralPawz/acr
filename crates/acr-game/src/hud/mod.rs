@@ -75,6 +75,8 @@ pub struct Claim {
     pub army: bool,
     /// The game panel (key I): frame, tabs' pages, scroll bar.
     pub game_panel: bool,
+    /// The test editor's window: the placing window and the battle view, wherever it was moved to.
+    pub editor: bool,
 }
 
 impl Claim {
@@ -88,6 +90,7 @@ impl Claim {
         stats: true,
         army: true,
         game_panel: true,
+        editor: true,
     };
 
     pub fn claims(self, layer: Layer) -> bool {
@@ -171,6 +174,12 @@ pub fn claimed(section: Section) -> Vec<Claimed> {
 /// The messages of the mission over the interface, a claimed group like the others.
 pub fn messages_group(draws: Vec<Draw>) -> Claimed {
     Claimed { name: "messages", layer: 11, zoom: Zoom::NONE, draws }
+}
+
+/// The test editor's window over the interface, a claimed group like the others (the mission's
+/// messages above it).
+pub fn editor_group(draws: Vec<Draw>) -> Claimed {
+    Claimed { name: "editor", layer: 12, zoom: Zoom::NONE, draws }
 }
 
 /// The smallest layout size (`RealLx`, `RealLy`); [`Hud::set_screen`] sets the real one.

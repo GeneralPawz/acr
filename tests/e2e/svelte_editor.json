@@ -1,0 +1,27 @@
+{
+  "name": "svelte_editor",
+  "description": "The classic skin draws the test editor's window of #328 as the group editor: the placing window with its icons, combo box and swatches, the window dragged by its handle moves the whole group, the battle view (Schlacht) shows its rows and the swords button, and the engine's hit-testing still takes the clicks",
+  "args": ["--ui", "classic"],
+  "steps": [
+    {"cmd": "start", "blank": {"editor": true}},
+    {"cmd": "wait", "ticks": 5},
+    {"cmd": "view", "expect": [
+      {"path": "view.hud.groups.9.name", "eq": "editor"},
+      {"path": "view.hud.groups.9.parts", "len_ge": 40}
+    ], "capture": {"x0": "view.hud.groups.9.parts.0.x", "y0": "view.hud.groups.9.parts.0.y"}},
+    {"cmd": "click", "label": "Nation", "exact": true},
+    {"cmd": "click", "label": "Nation Frankreich", "exact": true},
+    {"cmd": "drag", "from": {"label": "Editor verschieben", "exact": true}, "to": [580, 130]},
+    {"cmd": "wait", "frames": 3},
+    {"cmd": "view", "expect": [
+      {"path": "view.hud.groups.9.name", "eq": "editor"},
+      {"path": "view.hud.groups.9.parts.0.x", "lt": "${x0}"},
+      {"path": "view.hud.groups.9.parts.0.y", "gt": "${y0}"}
+    ], "note": "the window moved with its handle"},
+    {"cmd": "click", "label": "Schlacht", "exact": true},
+    {"cmd": "view", "expect": {"path": "view.hud.groups.9.name", "eq": "editor"}, "note": "the battle view"},
+    {"cmd": "click", "label": "Aufstellen", "exact": true},
+    {"cmd": "wait", "ticks": 2},
+    {"cmd": "state", "expect": {"path": "state.counts.0.units.EngM18(EN)", "eq": 360}}
+  ]
+}
