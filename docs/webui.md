@@ -254,6 +254,44 @@ Stayed with the engine:
 - **The mortar icons' parity** has no pixel run of its own: the mortars rule needs a mortar unit (`ArtMrt`) and the page's driver cannot start with the rule.
 - **Pause text:** still in the engine's overlay.
 
+## Native host (Linux, #333)
+
+The desktop build can show the menus through the Svelte UI: `native_ui=svelte` in `settings.txt`
+(`engine` by default, as the original; read at start, no in-game switch yet). It takes effect only in a
+build with feature `webview-gtk` (Linux; `libwebkit2gtk-4.1-dev libgtk-3-dev`) that embeds the bundle
+(`webui::bundle::PRESENT`); otherwise the engine draws and a log line says why (`webui::native_ui_active`).
+The spike below found that a transparent child webview cannot show the wgpu frame under it
+(wry#1319), so the host is **opaque and only for full-screen menus**:
+
+- `webui::native` (`webui/native.rs`, written against wry's cross-platform API): one wry child webview
+  covers the whole window (bounds follow `Resized` and `ScaleFactorChanged`), black background
+  (`ui/public/index.html`). The window runs on X11 (XWayland under Wayland: `gdk::set_allowed_backends`
+  and winit `with_x11`, chosen before the event loop exists, which is why `native.rs` reads
+  `native_ui` from `settings.txt` first); GTK is pumped in `about_to_wait`, which keeps the loop
+  waking at least every 8 ms while the webview is shown. Xlib errors above the core codes (wry's child
+  window on XWayland) are dropped by winit's error hook.
+- `acr://localhost/` serves `webui::bundle::file`; `acr://localhost/asset/v1/<path>` goes as
+  `Event::UiAsset` to `webui::assets::resolve` (status and `x-acr-error` as `ui/src/lib/bridge.ts`
+  `nativeBridge` reads them). `AssetReply` is `Send` off the browser for wry's handler.
+- UI to Rust: the IPC handler sends `Event::Ui`, the same event as the browser's `acr_ui_send`, into
+  `webui::input` (hit-testing, keys and cursor stay Rust's). Rust to UI: the same `ToUi` diffs of
+  `WebUi::publish` as `evaluate_script("window.__acr_ui.recv(...)")` (`WebUi` is created by the page's `ready`).
+- **Visibility:** the webview is shown exactly while `WebUi::shown()` (the UI draws the current screen:
+  a screen of the registry that is not `Screen::in_game`, so no `OVER_GAME` screen) and the intro movies
+  are over; hidden otherwise (focus goes back to the window) and the engine draws as without the setting.
+  While shown, keys and mouse go to the webview and reach Rust over IPC; while hidden, winit gets them.
+  The UI's cursor is used only while shown (`External::cursor`); the engine draws its own otherwise.
+- **Engine-drawn, always:** the HUD (`WebUi::hud_claim` is empty on a non-transparent host), the dialogs
+  over the game (game menu, options, save and load, message, choice and history windows), the loading
+  of a game's world, the intro movies. The frame is still rendered under the shown webview.
+- A hidden webview starts as such: wry maps a child window that starts hidden, so `Host::new` toggles
+  its visibility once.
+
+Checked on GNOME/XWayland (RADV): main menu shown (`native_ui=svelte`), the first mission with the engine
+HUD and its message window, webview hidden. Not measured: hiding after showing during a menu-to-game
+transition (needs input into the window), Wayland-native windows (wry has no child webviews there),
+HiDPI scale, resize flicker, Windows and macOS hosts.
+
 ## Native host spike (Linux, #333)
 
 `cargo run --release -p acr-game --features webview-gtk --example webview_spike` (needs
@@ -325,5 +363,5 @@ webview, the `capture` and `shrink` modes, a soft keyboard (the popup is not foc
 
 ## Not yet
 
-The touch skin, the rest of the HUD (the pause text, the diplomacy panel, the world overlays), the native webview host (`wry`; the Linux spike above says a transparent child webview cannot show the swapchain), the other screens, and the start screen's layout for other screen ratios
+The touch skin, the rest of the HUD (the pause text, the diplomacy panel, the world overlays), the native host on Windows and macOS, the other screens, and the start screen's layout for other screen ratios
 (#316 section 8).

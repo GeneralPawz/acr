@@ -66,7 +66,12 @@ impl std::fmt::Display for AssetError {
     }
 }
 
+/// Where an answer goes once it is known. Sendable off the browser, where a native host's
+/// protocol handler (wry) carries it inside `Event`.
+#[cfg(not(target_arch = "wasm32"))]
+pub type AssetReply = Box<dyn FnOnce(Result<AssetBody, AssetError>) + Send>;
 /// Where an answer goes once it is known.
+#[cfg(target_arch = "wasm32")]
 pub type AssetReply = Box<dyn FnOnce(Result<AssetBody, AssetError>)>;
 
 /// An answer, or the files to wait for.
