@@ -21,4 +21,8 @@ hint: string, disabled: boolean, selected: boolean,
 /**
  * A tap does something (the icon is not disabled and has a command).
  */
-clickable: boolean, };
+clickable: boolean, 
+/**
+ * A unit production icon: a click with Ctrl held is an endless order (`GetProduceCount` 1200).
+ */
+endless: boolean, };

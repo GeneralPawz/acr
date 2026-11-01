@@ -25,7 +25,7 @@ describe('touch skin hit regions', () => {
       mode: 'game',
       touch: {
         resources: [],
-        icons: [{ id: 'hud/0', role: 'command', size: [40, 40], parts: [], hint: '', disabled: false, selected: false, clickable: true }],
+        icons: [{ id: 'hud/0', role: 'command', size: [40, 40], parts: [], hint: '', disabled: false, selected: false, clickable: true, endless: false }],
         army: [],
         paused: false,
         minimap: true,

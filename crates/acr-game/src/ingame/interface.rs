@@ -1468,7 +1468,9 @@ impl InGame {
                 frame: rally.frame,
                 slot: rally.slot,
                 selected: self.interface.rally_mode,
-                hint: ctx.texts.get(&rally.hint).to_vec(),
+                // `COMMENT.TXT` `SDS_Str` (the key sits beside `GOATTA` and `PATROL` in dmcr.exe);
+                // the `NRES.DAT` hint name `Set_concentration_point` has no text.
+                hint: ctx.texts.get("SDS_Str").to_vec(),
                 action: Some(HudCommand::Rally),
                 ..Icon::default()
             });

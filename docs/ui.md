@@ -654,7 +654,8 @@ builds the icons.
   bar; a right click sends `CancelUpgrade`. The original's click and cancel handlers
   (0x608b00) are not traced.
 - Rally point: `NRES.DAT [CONST] SET_DEST 11 2 Rally_Point` for `[CANSETDEST]` buildings.
-  The next click on the map sets it. A right click on the map with only buildings selected
+  Its hint is `SDS_Str` (`COMMENT.TXT`: "SAMMELPUNKT setzen (STRG+Rechts-Klick auf die Karte)"; the `NRES.DAT` hint
+  name `Set_concentration_point` has no text). The next click on the map sets it. A right click on the map with only buildings selected
   sets it too.
 - Leave: units inside the selected buildings show one icon per unit type with its count, in
   type order, minus the units already ordered out (`LeaveMine` orders, 0x5f522e); a click lets

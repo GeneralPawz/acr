@@ -510,6 +510,7 @@ impl WebUi {
                         disabled: i.disabled,
                         selected: i.selected,
                         clickable: i.clickable,
+                        endless: i.endless,
                     })
                 })
                 .collect()
@@ -957,6 +958,7 @@ mod tests {
             disabled: false,
             selected: false,
             clickable: true,
+            endless: false,
         };
         let touch = TouchHud {
             resources: vec![ResourceView {

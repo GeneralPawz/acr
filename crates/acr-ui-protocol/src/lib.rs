@@ -191,6 +191,8 @@ pub struct IconView {
     pub selected: bool,
     /// A tap does something (the icon is not disabled and has a command).
     pub clickable: bool,
+    /// A unit production icon: a click with Ctrl held is an endless order (`GetProduceCount` 1200).
+    pub endless: bool,
 }
 
 /// Where the two canvases lie in the window.

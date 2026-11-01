@@ -32,6 +32,8 @@ pub struct TouchIcon {
     pub disabled: bool,
     pub selected: bool,
     pub clickable: bool,
+    /// A unit production icon: Ctrl+click is an endless order.
+    pub endless: bool,
 }
 
 /// The pieces of one frame.
@@ -93,6 +95,7 @@ impl Hud {
                 disabled: i.disabled,
                 selected: i.selected,
                 clickable: i.action.is_some() && !i.disabled,
+                endless: matches!(i.action, Some(HudCommand::Produce(_))),
             }
         };
         let icons = view

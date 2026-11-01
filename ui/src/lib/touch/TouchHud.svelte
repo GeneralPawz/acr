@@ -7,7 +7,7 @@
   import type { ResourceView } from '../protocol/ResourceView';
   import type { Part as PartView } from '../protocol/Part';
   import { gridColumns, portrait as isPortrait, sizeClass } from '../skin';
-  import { intent, leftClick } from './intents';
+  import { ctrlClick, intent, leftClick } from './intents';
   import Sprite from './Sprite.svelte';
 
   const { bridge, model } = ui();
@@ -76,6 +76,12 @@
     hintTimer = setTimeout(() => (hint = null), 2500);
   }
 
+  /** A long press: a production icon orders endlessly (Ctrl+click on the desktop), any other shows its hint. */
+  function holdIcon(icon: IconView) {
+    if (icon.endless && icon.clickable) intent(bridge, icon.id, ctrlClick);
+    showHint(icon.hint);
+  }
+
   function tapIcon(icon: IconView) {
     if (long) {
       long = false;
@@ -126,7 +132,7 @@
     aria-label={icon.hint || icon.id}
     data-acr-id={icon.id}
     data-acr-role={icon.role}
-    onpointerdown={() => press(() => showHint(icon.hint))}
+    onpointerdown={() => press(() => holdIcon(icon))}
     onpointerup={release}
     onpointercancel={release}
     onpointerleave={release}
@@ -162,6 +168,11 @@
         <button class="bar" aria-label="menu" data-acr-id="bar/menu" onclick={() => tapBar('bar/menu')}>
           <span class="burger" aria-hidden="true"></span>
         </button>
+        {#if touch.minimap && mapImage}
+          <button class="bar" aria-label="minimap" aria-expanded={mapOpen} data-acr-id="bar/minimap" onclick={() => (mapOpen = !mapOpen)}>
+            <span class="fold-glyph" class:plus={!mapOpen} aria-hidden="true"></span>
+          </button>
+        {/if}
       </div>
     </header>
     {#if resourcesOpen}
@@ -178,9 +189,6 @@
 
     {#if touch.minimap && mapImage}
       <div class="minimap" data-acr-touch="minimap" data-acr-hit>
-        <button class="fold" aria-label="minimap" aria-expanded={mapOpen} onclick={() => (mapOpen = !mapOpen)}>
-          <span class="fold-glyph" class:plus={!mapOpen} aria-hidden="true"></span>
-        </button>
         {#if mapOpen}
           <div
             class="map"
@@ -250,9 +258,9 @@
   }
   .upper {
     position: absolute;
-    top: env(safe-area-inset-top);
-    left: env(safe-area-inset-left);
-    right: env(safe-area-inset-right);
+    top: 0;
+    left: 0;
+    right: 0;
     display: flex;
     flex-direction: column;
     align-items: stretch;
@@ -260,6 +268,7 @@
     pointer-events: none;
   }
   .landscape .upper {
+    --safe-right: 0px;
     right: calc(env(safe-area-inset-right) + var(--cols) * (var(--cell) + 4px) + 2 * var(--pad));
   }
   /* The bar: the resources' fold at the left, pause and menu at the right; it never wraps under them. */
@@ -269,7 +278,7 @@
     justify-content: space-between;
     gap: 6px;
     box-sizing: border-box;
-    padding: 2px var(--pad);
+    padding: calc(2px + env(safe-area-inset-top)) calc(var(--pad) + var(--safe-right, env(safe-area-inset-right))) 2px calc(var(--pad) + env(safe-area-inset-left));
     background: linear-gradient(rgb(52 34 18 / 0.9), rgb(30 19 9 / 0.88));
     border-bottom: 1px solid #8a6a32;
     pointer-events: auto;

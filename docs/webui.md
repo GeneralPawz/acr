@@ -474,12 +474,12 @@ the touch skin only renders it and sends intents.
   team's "X"), and a picture Rust names with a key (`color_i`, `team_i`) is a control. The text field draws its text in
   the game font (`TextField`); the real `<input>` lies over it, invisible, as the soft keyboard's target (IME: #457).
 - **HUD** (`TouchHud`, from `ViewPatch.touch`, built by `Hud::touch_view` when the touch skin is on): the bar on top
-  (the fold button of the resources, then pause and menu, each 44 CSS pixels tall, never covered) with the resource panel
-  under it (icon cut from `ResPanel`, the number in the skin's type; folded by the button like the minimap, open by default), the minimap top right (its fold button draws a CSS minus or plus) (the classic skin's
+  (flush with the top edge, the safe-area inset padded inside it: the fold button of the resources at the left, then pause, menu and the minimap's fold at the right, each 44 CSS pixels tall, never covered) with the resource panel
+  under it (icon cut from `ResPanel`, the number in the skin's type; folded by the button like the minimap, open by default), the minimap top right under the bar (its fold button, in the bar, draws a CSS minus or plus) (the classic skin's
   three minimap groups cut to the map image, folds with its button), the command grid as a bottom sheet in portrait
   (4, 5 or 6 columns by size class) and a side column in landscape, the selection summary (icons whose command keeps a
   type or formation, and the army list) above the grid. The icons are the original's draws (`draw_icon`) in a 40 pixel
-  box, scaled to a 52-64 pixel cell. **Long press** (450 ms) on an icon shows its hint; on the minimap it orders the
+  box, scaled to a 52-64 pixel cell. **Long press** (450 ms) on an icon shows its hint, and on a production icon (`IconView.endless`) also sends the click with Ctrl held, an endless order; on the minimap it orders the
   selection there. Safe areas: `viewport-fit=cover`, `env(safe-area-inset-*)`, `100dvh`.
 - **Intents added:** `bar/menu` (the game menu, `HudEvent::GameMenu`) and `bar/pause` (`HudEvent::TogglePause`), both
   `click` left, through `InGame::hud_event` (`HudIntent::Bar`). In touch skin `hud_input` is off and the whole HUD is

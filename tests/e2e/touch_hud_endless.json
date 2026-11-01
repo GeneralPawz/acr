@@ -1,0 +1,18 @@
+{
+  "name": "touch_hud_endless",
+  "description": "Touch skin (#438): the page's long press on a production icon is a click intent with Ctrl held, an endless order (count 1200, the infinity sign); a plain click intent orders one unit",
+  "args": ["--ui", "touch"],
+  "steps": [
+    {"cmd": "start", "random": {"nation": 1, "seed": 5}},
+    {"cmd": "wait", "ticks": 200},
+    {"cmd": "drag", "around": {"owner": 0, "type": "Kri"}},
+    {"cmd": "click", "label": "Fort"},
+    {"cmd": "click", "near": {"owner": 0, "type": "Kri"}, "offset": [0, 700]},
+    {"cmd": "wait", "until": {"units": {"owner": 0, "type": "Kre", "finished": true}}, "timeout": 20000},
+    {"cmd": "click", "unit": {"owner": 0, "type": "Kre"}, "expect": {"path": "target.type", "contains": "Kre"}},
+    {"cmd": "move", "label": "Hellebardier", "expect": [{"path": "target.count", "exists": false}, {"path": "target.id", "eq": "hud/1"}]},
+    {"cmd": "ui_send", "msg": {"t": "intent", "seq": 1, "id": "hud/1", "action": {"t": "click", "button": "left", "mods": {"shift": false, "ctrl": true, "alt": false, "meta": false}}}},
+    {"cmd": "wait", "ticks": 5},
+    {"cmd": "move", "label": "Hellebardier", "expect": {"path": "target.count", "eq": 1200}, "note": "Ctrl held: an endless order, the infinity sign"}
+  ]
+}
