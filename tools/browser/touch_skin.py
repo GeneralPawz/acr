@@ -400,6 +400,28 @@ def play(browser, url, name, size, shots, timeout_s, prefix):
         ok = run.report["ordered"] and len(selected) > 0
         run.shot("5-ordered")
         run.audit("ordered")
+    # The command grids the touch skin draws itself (`data-acr-glyph`) and the engine's enlarged portraits
+    # (`scale/4/..`): the peasants' build menu, then a fort (the page buttons), put up finished beside them.
+    state = run.drive({"cmd": "state", "units": True})["state"]
+    mine = [u for u in state["units"] if u["owner"] == state["player"]]
+    peasants = [u["id"] for u in mine if u["type"].startswith("SpnKri")]
+    grids = {}
+    for step, ids in (("6-peasants", peasants[:1]), ("7-fort", None)):
+        if ids is None:
+            at = next(u for u in mine if u["id"] in peasants)
+            fort = run.drive({"cmd": "spawn", "type": "SpnKre", "owner": state["player"], "x": at["x"], "y": at["y"] + 500, "dir": 0})
+            ids = [fort["unit"]["id"]]
+        # The camera over the unit, a finger on it (a spawned fort's centre is on its first tile).
+        target = next(u for u in run.drive({"cmd": "state", "units": True})["state"]["units"] if u["id"] == ids[0])
+        run.drive({"cmd": "camera", "x": target["x"], "y": target["y"]})
+        time.sleep(1.5)
+        target = next(u for u in run.drive({"cmd": "state", "units": True, "visible_only": True})["state"]["units"] if u["id"] == ids[0])
+        page.touchscreen.tap(*target["screen"])
+        time.sleep(2.0)
+        grids[step] = page.evaluate("() => ({ glyphs: document.querySelectorAll('[data-acr-glyph]').length, icons: document.querySelectorAll('.icon').length, portraits: document.querySelectorAll('.icon img').length })")
+        run.shot(step)
+        run.audit(step)
+    run.report["grids"] = grids
     run.report["errors"] = run.errors[:20]
     sheets = run.report["sheets"]
     run.report["passed"] = bool(

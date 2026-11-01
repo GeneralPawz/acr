@@ -9,6 +9,7 @@
 //! | `text/<set>/<FontId>/<fade>/<hex bytes>` | PNG of a whole string, the exact fallback |
 //! | `remap/<player>/<gp>/<frame>/<table>/<row>` | PNG of a game frame through a colour table (gray icons) |
 //! | `image/<name>/<version>` | PNG of an image the engine made (the minimap, the portrait) |
+//! | `scale/<n>/frame/..` / `scale/<n>/remap/..` | the same frame enlarged `n` (2 or 4) times by the pixel-art scaler ([`super::upscale`]) |
 //!
 //! Failures are errors, never placeholders: a bad path, a missing file or a file that does not
 //! decode.
@@ -18,6 +19,7 @@ use std::collections::HashMap;
 use acr_formats::raster::Image;
 
 use super::font_atlas;
+use super::upscale::{MAX_SCALE, upscale};
 use crate::ui::draw::{GAME_PALETTE, MENU_PALETTE, rasterize_frame_as};
 use crate::ui::fonts::{FontId, Fonts};
 use crate::ui::library::Library;
@@ -171,6 +173,12 @@ pub fn bmp_url(path: &str) -> String {
 
 pub fn frame_url(palette: FramePalette, player: u8, gp: &str, frame: usize) -> String {
     format!("frame/{}/{player}/{}/{frame}", palette.name(), encode(gp))
+}
+
+/// The url of the same sprite enlarged `factor` times by the pixel-art scaler (`factor` 1 is
+/// `url`): the touch skin's portraits.
+pub fn scaled_url(url: &str, factor: u32) -> String {
+    if factor > 1 { format!("scale/{factor}/{url}") } else { url.to_owned() }
 }
 
 pub fn remap_url(player: u8, gp: &str, frame: usize, table: &str, row: u8) -> String {
@@ -377,6 +385,33 @@ fn ready(image: Option<Placed>, what: &str) -> Result<Resolved, AssetError> {
     }
 }
 
+/// The sprite a `frame/..` or `remap/..` path (without the leading `scale/<n>/`) names; `None`
+/// while its files load.
+fn sprite_asset(lib: &Library, parts: &[&str], path: &str) -> Result<Option<Placed>, AssetError> {
+    match parts {
+        ["frame", palette, player, gp, frame] => {
+            let palette = match *palette {
+                "menu" => FramePalette::Menu,
+                "game" => FramePalette::Game,
+                "sprite" => FramePalette::Sprite,
+                _ => return Err(bad(path)),
+            };
+            let player: u8 = player.parse().map_err(|_| bad(path))?;
+            let frame: usize = frame.parse().map_err(|_| bad(path))?;
+            let gp = decode(gp).ok_or_else(|| bad(path))?;
+            frame_image(lib, palette, player, &gp, frame)
+        }
+        ["remap", player, gp, frame, table, row] => {
+            let player: u8 = player.parse().map_err(|_| bad(path))?;
+            let frame: usize = frame.parse().map_err(|_| bad(path))?;
+            let row: u8 = row.parse().map_err(|_| bad(path))?;
+            let (gp, table) = (decode(gp).ok_or_else(|| bad(path))?, decode(table).ok_or_else(|| bad(path))?);
+            remap_image(lib, player, &gp, frame, &table, row)
+        }
+        _ => Err(bad(path)),
+    }
+}
+
 /// Answers `path` (below `/asset/v1/`), or says to try again after more files arrived.
 pub fn resolve(lib: &Library, fonts: &Fonts, cache: &mut AssetCache, path: &str) -> Result<Resolved, AssetError> {
     let parts: Vec<&str> = path.split('/').collect();
@@ -388,18 +423,20 @@ pub fn resolve(lib: &Library, fonts: &Fonts, cache: &mut AssetCache, path: &str)
                 None => Ok(Resolved::Pending),
             }
         }
-        ["frame", palette, player, gp, frame] => {
-            let palette = match *palette {
-                "menu" => FramePalette::Menu,
-                "game" => FramePalette::Game,
-                "sprite" => FramePalette::Sprite,
-                _ => return Err(bad(path)),
-            };
-            let player: u8 = player.parse().map_err(|_| bad(path))?;
-            let frame: usize = frame.parse().map_err(|_| bad(path))?;
-            let gp = decode(gp).ok_or_else(|| bad(path))?;
-            match frame_image(lib, palette, player, &gp, frame)? {
-                Some(image) => ready(Some(image), &format!("{gp} frame {frame}")),
+        ["frame", ..] | ["remap", ..] => match sprite_asset(lib, &parts, path)? {
+            Some(image) => ready(Some(image), path),
+            None => Ok(Resolved::Pending),
+        },
+        ["scale", factor, rest @ ..] => {
+            let factor: u32 = factor.parse().map_err(|_| bad(path))?;
+            if !matches!(factor, 1 | 2 | MAX_SCALE) || !matches!(rest, ["frame", ..] | ["remap", ..]) {
+                return Err(bad(path));
+            }
+            match sprite_asset(lib, rest, path)? {
+                Some((image, offset)) => {
+                    let image = upscale(&image, factor).ok_or_else(|| bad(path))?;
+                    ready(Some((image, offset)), path)
+                }
                 None => Ok(Resolved::Pending),
             }
         }
@@ -411,16 +448,6 @@ pub fn resolve(lib: &Library, fonts: &Fonts, cache: &mut AssetCache, path: &str)
             Some(image) => ready(Some((image, [0, 0])), "the parchment"),
             None => Ok(Resolved::Pending),
         },
-        ["remap", player, gp, frame, table, row] => {
-            let player: u8 = player.parse().map_err(|_| bad(path))?;
-            let frame: usize = frame.parse().map_err(|_| bad(path))?;
-            let row: u8 = row.parse().map_err(|_| bad(path))?;
-            let (gp, table) = (decode(gp).ok_or_else(|| bad(path))?, decode(table).ok_or_else(|| bad(path))?);
-            match remap_image(lib, player, &gp, frame, &table, row)? {
-                Some(image) => ready(Some(image), &format!("{gp} frame {frame} through {table}")),
-                None => Ok(Resolved::Pending),
-            }
-        }
         ["image", name, version] => {
             let name = decode(name).ok_or_else(|| bad(path))?;
             let version: u32 = version.parse().map_err(|_| bad(path))?;
@@ -521,6 +548,11 @@ mod tests {
             "font/7/fonG60w.png",
             "nine/other.png",
             "nine/parchment",
+            "scale",
+            "scale/3/frame/menu/0/a/1",
+            "scale/x/frame/menu/0/a/1",
+            "scale/2/bmp/a",
+            "scale/2/scale/2/frame/menu/0/a/1",
         ] {
             let e = resolve(&lib, &fonts, &mut cache, path).err().unwrap_or_else(|| panic!("{path}"));
             assert_eq!(e.status(), 400, "{path}");
@@ -542,11 +574,17 @@ mod tests {
         assert!(lib.take_requests().contains(&"INTERF2\\MAINMENU.GP".to_owned()));
         let none = Library::new(&[]);
         assert_eq!(resolve(&none, &fonts, &mut cache, "nine/parchment.png").err().map(|e| e.status()), Some(404));
+        // A scaled frame waits for the same files as the frame.
+        let mut lib = Library::new(&["ICONS.GP".to_owned(), GAME_PALETTE.to_owned()]);
+        assert!(matches!(resolve(&lib, &fonts, &mut cache, "scale/4/frame/game/0/ICONS.GP/3"), Ok(Resolved::Pending)));
+        assert_eq!(lib.take_requests(), vec!["ICONS.GP".to_owned(), GAME_PALETTE.to_owned()]);
     }
 
     #[test]
     fn urls_name_the_font_and_the_bytes() {
         assert_eq!(text_url(1, FontId("fonG60w"), 0, b"Ab\xfc"), "text/1/fonG60w/0/4162fc");
         assert_eq!(frame_url(FramePalette::Menu, 0, "CURSOR_01.GP", 0), "frame/menu/0/CURSOR_01.GP/0");
+        assert_eq!(scaled_url("frame/menu/0/A.GP/0", 4), "scale/4/frame/menu/0/A.GP/0");
+        assert_eq!(scaled_url("frame/menu/0/A.GP/0", 1), "frame/menu/0/A.GP/0");
     }
 }

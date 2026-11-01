@@ -21,6 +21,7 @@ const icon = (id: string, endless: boolean): IconView => ({
   size: [40, 40],
   parts: [],
   hint: `hint of ${id}`,
+  glyph: null,
   disabled: false,
   selected: false,
   clickable: true,

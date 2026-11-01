@@ -7,6 +7,8 @@
   import type { ResourceView } from '../protocol/ResourceView';
   import type { Part as PartView } from '../protocol/Part';
   import { gridColumns, portrait as isPortrait, sizeClass } from '../skin';
+  import Glyph from '../icons/Glyph.svelte';
+  import { glyph as glyphArt } from '../icons/glyphs';
   import { ctrlClick, intent, leftClick } from './intents';
   import { STOPS, nearestStop, speedOf, ticksPerSecond } from './speed';
   import Sprite from './Sprite.svelte';
@@ -29,7 +31,7 @@
 
   // The resource panel's fold, like the minimap's (transient: per session, the page's own state).
   let resourcesOpen = $state(true);
-  const goldIcon = $derived(touch?.resources.find((r) => r.key === 'gold') ?? touch?.resources[0] ?? null);
+  const hasResources = $derived((touch?.resources.length ?? 0) > 0);
 
   /** The number the game drew for a resource (a lot of money has its own word). */
   function numberOf(r: ResourceView): string {
@@ -157,7 +159,15 @@
     oncontextmenu={(e) => e.preventDefault()}
     onclick={() => tapIcon(icon)}
   >
-    <Sprite parts={icon.parts} size={icon.size} scale={iconScale} />
+    {#if glyphArt(icon.glyph)}
+      <!-- A command the touch skin draws itself; the engine's parts are what goes over it (outline, life bar, numbers). -->
+      <span class="face" class:dim={icon.disabled}>
+        <Glyph name={icon.glyph ?? ''} plaque />
+        <span class="over"><Sprite parts={icon.parts} size={icon.size} scale={iconScale} /></span>
+      </span>
+    {:else}
+      <Sprite parts={icon.parts} size={icon.size} scale={iconScale} />
+    {/if}
   </button>
 {/snippet}
 
@@ -176,25 +186,24 @@
     {/if}
     <div class="upper">
     <header class="top" data-acr-hit>
-      {#if goldIcon}
+      {#if hasResources}
         <button class="fold toggle" aria-label="resources" aria-expanded={resourcesOpen} data-acr-id="bar/resources" onclick={() => (resourcesOpen = !resourcesOpen)}>
-          <Sprite parts={iconOf(goldIcon).parts} size={iconOf(goldIcon).size} scale={0.8} />
-          <span class="caret" class:up={resourcesOpen} aria-hidden="true"></span>
+          <span class="bar-glyph"><Glyph name={resourcesOpen ? 'resources-open' : 'resources-closed'} /></span>
         </button>
       {/if}
       <div class="buttons">
         <button class="bar" aria-label="speed" aria-expanded={speedOpen} data-acr-id="bar/speed" onclick={() => (speedOpen = !speedOpen)}>
-          <span class="gauge" aria-hidden="true"></span>
+          <span class="bar-glyph"><Glyph name="speed" /></span>
         </button>
         <button class="bar" aria-label="pause" data-acr-id="bar/pause" onclick={() => tapBar('bar/pause')}>
-          <span class="glyph" class:play={touch.paused} aria-hidden="true"></span>
+          <span class="bar-glyph"><Glyph name={touch.paused ? 'play' : 'pause'} /></span>
         </button>
         <button class="bar" aria-label="menu" data-acr-id="bar/menu" onclick={() => tapBar('bar/menu')}>
-          <span class="burger" aria-hidden="true"></span>
+          <span class="bar-glyph"><Glyph name="menu" /></span>
         </button>
         {#if touch.minimap && mapImage}
           <button class="bar" aria-label="minimap" aria-expanded={mapOpen} data-acr-id="bar/minimap" onclick={() => (mapOpen = !mapOpen)}>
-            <span class="fold-glyph" class:plus={!mapOpen} aria-hidden="true"></span>
+            <span class="bar-glyph"><Glyph name={mapOpen ? 'map-open' : 'map-closed'} /></span>
           </button>
         {/if}
       </div>
@@ -375,29 +384,6 @@
     gap: 4px;
     min-width: 64px;
   }
-  .caret {
-    width: 0;
-    height: 0;
-    border: 6px solid transparent;
-    border-top-color: #e2c27a;
-    margin-top: 6px;
-  }
-  .caret.up {
-    border-top-color: transparent;
-    border-bottom-color: #e2c27a;
-    margin-top: -6px;
-  }
-  .gauge {
-    width: 24px;
-    height: 12px;
-    border: 3px solid #e8cf93;
-    border-bottom: 0;
-    border-radius: 12px 12px 0 0;
-    background: linear-gradient(#e8cf93, #e8cf93) 9px 1px / 3px 9px no-repeat;
-    transform: rotate(35deg);
-    transform-origin: 50% 100%;
-    margin-top: 8px;
-  }
   .scrim {
     position: absolute;
     inset: 0;
@@ -455,25 +441,6 @@
   .ticks .on {
     background: #ffc840;
   }
-  .glyph {
-    width: 16px;
-    height: 20px;
-    background: linear-gradient(90deg, #e8cf93 0 5px, transparent 5px 11px, #e8cf93 11px);
-  }
-  .glyph.play {
-    width: 0;
-    height: 0;
-    background: none;
-    border: 10px solid transparent;
-    border-left: 16px solid #e8cf93;
-    border-right: 0;
-  }
-  .burger {
-    width: 22px;
-    height: 18px;
-    background: linear-gradient(#e8cf93, #e8cf93) 0 0 / 100% 3px no-repeat, linear-gradient(#e8cf93, #e8cf93) 0 7.5px / 100% 3px no-repeat,
-      linear-gradient(#e8cf93, #e8cf93) 0 15px / 100% 3px no-repeat;
-  }
   .bar,
   .fold {
     display: flex;
@@ -504,18 +471,10 @@
   .map {
     pointer-events: auto;
   }
-  /* A minus or plus drawn in CSS: the game font's glyphs are a few pixels wide. */
-  .fold-glyph {
-    position: relative;
-    width: 20px;
-    height: 20px;
-    background: linear-gradient(#e8cf93, #e8cf93) center / 100% 4px no-repeat;
-  }
-  .fold-glyph.plus::after {
-    content: '';
-    position: absolute;
-    inset: 0 8px;
-    background: #e8cf93;
+  .bar-glyph {
+    display: block;
+    width: 24px;
+    height: 24px;
   }
   .map {
     position: relative;
@@ -597,6 +556,23 @@
     touch-action: manipulation;
     -webkit-tap-highlight-color: transparent;
     -webkit-touch-callout: none;
+  }
+  /* The original's pictures, enlarged by the engine's pixel-art scaler, are smoothed down to the cell. */
+  .icon {
+    --acr-image-rendering: auto;
+  }
+  .face {
+    position: relative;
+    display: block;
+    width: calc(var(--cell) - 4px);
+    height: calc(var(--cell) - 4px);
+  }
+  .face.dim {
+    opacity: 0.45;
+  }
+  .over {
+    position: absolute;
+    inset: 0;
   }
   .icon.selected {
     border-color: #ffc840;

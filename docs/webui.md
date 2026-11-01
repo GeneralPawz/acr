@@ -69,6 +69,7 @@ Decoded at runtime from the player's files (`webui::assets::resolve`), never sto
 | `frame/<menu\|game\|sprite>/<player>/<gp>/<frame>` | PNG of a sprite frame's bounding box; `menu` and `game` use the menus' and the game screen's palette, `sprite` the pack's own |
 | `font/<set>/<FontId>.png` / `.json` | glyph atlas of bytes 0x20..=0xFF / `{height, glyphs: {"<char>": [x, y, w, h, left, top, advance]}}` |
 | `text/<set>/<FontId>/<fade>/<hex bytes>` | a whole string as a PNG, the exact fallback |
+| `scale/<n>/frame/..` / `scale/<n>/remap/..` | the same frame enlarged `n` (1, 2 or 4) times by the pixel-art scaler (`webui::upscale`); the touch skin's portraits |
 
 `GameText.svelte` lays glyph images out like `ShowString` (pen + advance, later glyphs over earlier ones,
 shadows included in each glyph). A string with bytes the atlas lacks (escapes, control bytes) or a fade
@@ -475,12 +476,34 @@ the touch skin only renders it and sends intents.
   the game font (`TextField`); the real `<input>` lies over it, invisible, as the soft keyboard's target (IME: #457).
 - **HUD** (`TouchHud`, from `ViewPatch.touch`, built by `Hud::touch_view` when the touch skin is on): the bar on top
   (flush with the top edge, the safe-area inset padded inside it: the fold button of the resources at the left, then the speed button, pause, menu and the minimap's fold at the right, each 44 CSS pixels tall, never covered) with the resource panel
-  under it (icon cut from `ResPanel`, the number in the skin's type; folded by the button like the minimap, open by default), the minimap top right under the bar (its fold button, in the bar, draws a CSS minus or plus) (the classic skin's
+  under it (icon cut from `ResPanel`, the number in the skin's type; folded by the button like the minimap, open by default), the minimap top right under the bar (its fold button, in the bar, draws a map glyph) (the classic skin's
   three minimap groups cut to the map image, folds with its button), the command grid as a bottom sheet in portrait
   (4, 5 or 6 columns by size class) and a side column in landscape, the selection summary (icons whose command keeps a
   type or formation, and the army list) above the grid. The icons are the original's draws (`draw_icon`) in a 40 pixel
-  box, scaled to a 52-64 pixel cell. **Long press** (450 ms) on an icon shows its hint, and on a production icon (`IconView.endless`) also sends the click with Ctrl held, an endless order; on the minimap it orders the
+  box, scaled to a 52-64 pixel cell; see **Icons** below for what replaces the original's pictures. **Long press** (450 ms) on an icon shows its hint, and on a production icon (`IconView.endless`) also sends the click with Ctrl held, an endless order; on the minimap it orders the
   selection there. Safe areas: `viewport-fit=cover`, `env(safe-area-inset-*)`, `100dvh`.
+- **Icons** (#488): commands are drawn by the skin, portraits are the original's pictures made smooth.
+  - *Commands* are original drawings (`ui/src/lib/icons/glyphs.ts`, `Glyph.svelte`): one 48 x 48 grid, 2.4 wide round
+    strokes and a few solid shapes. `Glyph` draws the markup five times (shadow, dark outline, body, bevel highlight and
+    shade) with light from the upper left, as the original icons are lit; the body is gold by default or a material by
+    class (`iron`, `wood`, `red`, `skin`, `ink`), on a chiselled, grained leather plaque (the theme's `--touch-*`
+    colours are the ramps' ends). Switch pairs are the same drawing with a bar or a pause or play badge.
+    `touch_skin::glyph` names the glyph from the icon's `HudCommand` (never from its picture; a formation's from its
+    `[ORDERICONS]` group) and sends it as `IconView.glyph`; the icon's `parts` are then only what goes over it (the
+    owner's outline, life bar, numbers). The set covers stance (stand ground, advance, attack-move, patrol), fire modes
+    (hold or open fire, friendly fire, melee only), guns and mortars (attack ground, zone, clear, fire, cease, aim guide,
+    canister fire and load), work that stops and resumes (production, fishing, sowing), formations (line, column, square,
+    wedge, crescent, cavalry line, fill, bigger and smaller, group, ungroup, disband), the army list, rally point, idle
+    peasants and mines, the building's pages I to III, the market (trade, clear, plus and minus by ten to ten thousand),
+    and the top bar's speed (a gauge), pause, play, menu, resource fold (a coin with a caret) and minimap fold. A command without a glyph (and any new `HudCommand`) falls back
+    to the original's picture; the unit, building, production, build, upgrade, leave and market resource icons are
+    portraits and always do.
+  - *Portraits* (and every fallback) are fetched through `scale/4/..`: Rust enlarges the 40 pixel frame to 160 with
+    Scale2x run twice with a colour tolerance (`webui/upscale.rs`, no tables, microseconds per icon), and the browser
+    smooths it down to the cell (`image-rendering: auto` on the icons only). A real xBRZ or ScaleFX is a few hundred
+    lines and tables for little gain at 40 pixels; doing it in Rust when the asset is made keeps the page and the phone's
+    GPU out of it, and the answer is cached by the browser like any asset. The original's pictures are enlarged at
+    runtime and never stored.
 - **Game speed** (`bar/speed`, `set_value`, the options' slider position `100 - FPSTime`, `0..=100`; `InGame` stores it in the settings
   like the options page and applies the tick rate): the speed button opens a popover with one slider of eight stops
   (`ui/src/lib/touch/speed.ts`: `FPSTime` 100, 70, 50 (normal), 35, 25, 17, 10, 5, that is 5, 7, 10, 14, 20, 29, 50, 100 ticks
