@@ -42,6 +42,7 @@ ROUTES = {
     "Campaigns": ["Einzelspieler", "Kampagne", "OK"],
     "SingleMission": ["Einzelspieler", "Einzelmission", "OK"],
     "Placeholder": ["Mehrspieler", "Internetspiel"],
+    "LoadGame": ["Laden"],
     "CampaignMissions": ["Einzelspieler", "Kampagne", "OK", "Mission spielen!"],
 }
 
