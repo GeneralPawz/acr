@@ -49,8 +49,26 @@ ROUTES = {
     "CampaignMissions": ["Einzelspieler", "Kampagne", "OK", "Mission spielen!"],
 }
 
+# Over the running game (`Screen::in_game`): start the blank grass field (nothing moves, and the game
+# stands still under a dialog, so both captures show the same frame), then open the dialog. A dict is
+# a driver request sent as is. Pixels are counted over the dialog's area (`--rect`, see `dialog_area`).
+BLANK = {"cmd": "start", "blank": {"ground": "grass"}}
+MENU = [BLANK, {"cmd": "key", "key": "F12"}]
+MORE = MENU + ["Spieleinstellungen", "Weitere Optionen »"]
+ROUTES.update({
+    "GameMenu": MENU,
+    "GameOptions": MENU + ["Spieleinstellungen"],
+    "GameOptionsMore": MORE,
+    "GameOptionsRules": MORE + ["Seite 2/6: Grafik »", "Seite 3/6: Details »", "Seite 4/6: ACR-Regeln »"],
+    "GameLoadGame": MENU + ["Laden"],
+    "SaveGameDialog": MENU + ["Spiel speichern"],
+})
+
 # Routes whose screen is another route's (`Screen::name`): the campaign's missions are a SingleMission.
-SCREEN_OF = {"CampaignMissions": "SingleMission", "RandomMapCombo": "RandomMap"}
+SCREEN_OF = {
+    "CampaignMissions": "SingleMission", "RandomMapCombo": "RandomMap", "GameOptionsMore": "GameOptions",
+    "GameOptionsRules": "GameOptions", "GameLoadGame": "LoadGame",
+}
 
 CHROMIUM_ARGS = {
     "swiftshader": [
@@ -116,8 +134,11 @@ class Page:
 
     def show(self, screen, route):
         """Brings `screen` up and waits until it is built and the page is quiet."""
-        for label in route:
-            self.drive({"cmd": "click", "pos": label} if isinstance(label, list) else {"cmd": "click", "label": label})
+        for step in route:
+            if isinstance(step, dict):
+                self.drive(step)
+            else:
+                self.drive({"cmd": "click", "pos": step} if isinstance(step, list) else {"cmd": "click", "label": step})
             time.sleep(0.5)
         end = time.time() + self.timeout_s
         while time.time() < end:
@@ -163,9 +184,24 @@ def layout_difference(tree, rects):
     return worst, per_id, sorted(set(rects) - set(expected)), sorted(set(rects) & set(expected))
 
 
-def pixel_share(a, b, diff, root):
+def dialog_area(tree, size, margin=40):
+    """The box of a dialog over the game: its widgets' rects plus the frame that reaches past them,
+    as `x,y,w,h` (the whole page for screens of the menus)."""
+    if not tree.get("in_game"):
+        return None
+    rects = [w["rect"] for w in tree["widgets"] if w.get("visible", True) and w["rect"][2] > 0]
+    if not rects:
+        return None
+    x0 = max(0, min(r[0] for r in rects) - margin)
+    y0 = max(0, min(r[1] for r in rects) - margin)
+    x1 = min(size[0], max(r[0] + r[2] for r in rects) + margin)
+    y1 = min(size[1], max(r[1] + r[3] for r in rects) + margin)
+    return "%d,%d,%d,%d" % (x0, y0, x1 - x0, y1 - y0)
+
+
+def pixel_share(a, b, diff, root, rect=None):
     run = subprocess.run(
-        ["cargo", "xtask", "ui-diff", str(a), str(b), "--out", str(diff), "--min", "0"],
+        ["cargo", "xtask", "ui-diff", str(a), str(b), "--out", str(diff), "--min", "0"] + (["--rect", rect] if rect else []),
         cwd=root, capture_output=True, text=True,
     )
     match = re.search(r"([0-9.]+)% of the pixels", run.stdout)
@@ -200,12 +236,13 @@ def main():
             out.mkdir(parents=True, exist_ok=True)
             tree, _, engine_errors = shoot(browser, a.url, "engine", SCREEN_OF.get(screen, screen), ROUTES[screen], size, a.timeout_s, out)
             _, rects, svelte_errors = shoot(browser, a.url, "svelte", SCREEN_OF.get(screen, screen), ROUTES[screen], size, a.timeout_s, out)
-            pixels = pixel_share(out / "engine.png", out / "svelte.png", out / "diff.png", root)
+            area = dialog_area(tree, size)
+            pixels = pixel_share(out / "engine.png", out / "svelte.png", out / "diff.png", root, area)
             layout, per_id, extra, compared = layout_difference(tree, rects)
             passed = pixels >= a.min_pixels and layout <= a.max_layout and bool(compared) and not svelte_errors
             ok &= passed
             report = {
-                "screen": screen, "size": size, "pixels": pixels, "layout": layout,
+                "screen": screen, "size": size, "area": area, "pixels": pixels, "layout": layout,
                 "min_pixels": a.min_pixels, "max_layout": a.max_layout,
                 "compared": compared, "layout_by_id": per_id,
                 "tree_rects": {w["id"]: w["rect"] for w in tree["widgets"]}, "dom_rects": rects, "dom_ids_without_widget": extra,

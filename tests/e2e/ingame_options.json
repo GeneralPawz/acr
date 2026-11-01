@@ -1,0 +1,23 @@
+{
+  "name": "ingame_options",
+  "description": "The game menu's Spieleinstellungen over a running game (#325): a changed option is dropped by Abbruch and kept by OK, and the game goes on after the dialogs",
+  "steps": [
+    {"cmd": "start", "blank": {"ground": "grass"}},
+    {"cmd": "key", "key": "F12", "expect": {"screen": "GameMenu"}},
+    {"cmd": "click", "label": "Spieleinstellungen", "expect": {"screen": "GameOptions"}},
+    {"cmd": "click", "label": "Steuerung: Original", "note": "opens the combo box"},
+    {"cmd": "click", "label": "Steuerung: Modern, Rand aus", "expect": {"path": "target.kind", "eq": "option"}},
+    {"cmd": "click", "label": "Abbruch", "expect": {"screen": "game"}, "note": "dropped; the game menu closes with it"},
+    {"cmd": "key", "key": "F12", "expect": {"screen": "GameMenu"}},
+    {"cmd": "click", "label": "Spieleinstellungen", "expect": {"screen": "GameOptions"}},
+    {"cmd": "ui", "expect": {"path": "ui.widgets.15.label", "eq": "Steuerung: Original"}},
+    {"cmd": "click", "label": "Steuerung: Original", "note": "opens the combo box"},
+    {"cmd": "click", "label": "Steuerung: Modern, Rand aus"},
+    {"cmd": "click", "label": "OK", "expect": {"screen": "game"}, "note": "kept; the game menu closes with it"},
+    {"cmd": "key", "key": "F12", "expect": {"screen": "GameMenu"}},
+    {"cmd": "click", "label": "Spieleinstellungen", "expect": {"screen": "GameOptions"}},
+    {"cmd": "ui", "expect": {"path": "ui.widgets.15.label", "eq": "Steuerung: Modern, Rand aus"}},
+    {"cmd": "click", "label": "Abbruch", "expect": {"screen": "game"}},
+    {"cmd": "wait", "ticks": 20, "expect": {"path": "tick", "ge": 20}}
+  ]
+}

@@ -4,7 +4,7 @@
 //! - `cargo xtask ui [--watch]`   build the Svelte UI (`ui/`, Bun) into `ui/dist`; `web`, `serve` and
 //!   `dist` do it too for the game unless `--no-ui` (or `ACR_UI_DIST` names a built bundle);
 //!   `dist` also embeds it in `AmericanConquest.exe`
-//! - `cargo xtask ui-diff A.png B.png [--out D.png] [--min PERCENT]`   pixels of two screenshots within +-8
+//! - `cargo xtask ui-diff A.png B.png [--out D.png] [--min PERCENT] [--rect X,Y,W,H]`   pixels of two screenshots within +-8
 //! - `cargo xtask serve [--release] [--port N] [--game-dir DIR]`   build, then serve it on
 //!   localhost; with `--game-dir`, the archives are served under `/game/` with range
 //!   support and `http://127.0.0.1:N/?game=/game/` opens the app without a file picker
@@ -109,7 +109,7 @@ fn main() -> ExitCode {
                  cargo xtask serve [--release] [--app game|viewer] [--port N] [--game-dir DIR]\n       \
                  cargo xtask dist [--game-dir DIR] [--install]
                         cargo xtask ui [--watch]
-                        cargo xtask ui-diff A.png B.png [--out D.png] [--min PERCENT]
+                        cargo xtask ui-diff A.png B.png [--out D.png] [--min PERCENT] [--rect X,Y,W,H]
                         cargo xtask assets [NAME..] [--game-dir DIR] [--compress none|meshopt|draco] [--check] [--blend]
                         cargo xtask e2e [FILE..] [--filter S] [--game-dir DIR] [--exe PATH] [--no-build] [--gpu] [--ui engine|classic] [--list] [-v]
                         cargo xtask drive [--game-dir DIR] [--exe PATH] [--no-build] [--gpu] [--ui engine|classic]

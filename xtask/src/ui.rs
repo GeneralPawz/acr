@@ -91,6 +91,17 @@ fn read_png(path: &str) -> Result<Picture> {
     Ok(Picture { width: info.width as usize, height: info.height as usize, rgba })
 }
 
+/// The part of `p` inside `[x, y, w, h]` (clamped to the picture).
+fn crop(p: &Picture, [x, y, w, h]: [usize; 4]) -> Picture {
+    let (x1, y1) = ((x + w).min(p.width), (y + h).min(p.height));
+    let (x0, y0) = (x.min(x1), y.min(y1));
+    let mut rgba = Vec::with_capacity((x1 - x0) * (y1 - y0) * 4);
+    for row in y0..y1 {
+        rgba.extend_from_slice(&p.rgba[(row * p.width + x0) * 4..(row * p.width + x1) * 4]);
+    }
+    Picture { width: x1 - x0, height: y1 - y0, rgba }
+}
+
 /// Share (percent) of pixels of `a` and `b` whose channels all differ by at most
 /// [`TOLERANCE`], and an image of the differences: equal pixels dim, others red.
 fn compare(a: &Picture, b: &Picture) -> Result<(f64, Picture)> {
@@ -124,7 +135,8 @@ fn write_png(path: &str, picture: &Picture) -> Result<()> {
     Ok(())
 }
 
-/// `cargo xtask ui-diff A.png B.png [--out D.png] [--min PERCENT]`.
+/// `cargo xtask ui-diff A.png B.png [--out D.png] [--min PERCENT] [--rect X,Y,W,H]`; with `--rect` only
+/// that part of both pictures counts (a dialog over a game that is the same in both).
 pub fn ui_diff(args: &[String]) -> Result<()> {
     let option = |name: &str| args.windows(2).find(|w| w[0] == name).map(|w| w[1].clone());
     let files: Vec<&String> = args
@@ -134,10 +146,16 @@ pub fn ui_diff(args: &[String]) -> Result<()> {
         .map(|(_, a)| a)
         .collect();
     let [a, b] = files.as_slice() else {
-        return Err("usage: cargo xtask ui-diff A.png B.png [--out D.png] [--min PERCENT]".into());
+        return Err("usage: cargo xtask ui-diff A.png B.png [--out D.png] [--min PERCENT] [--rect X,Y,W,H]".into());
     };
     let min = option("--min").map(|m| m.parse::<f64>()).transpose()?.unwrap_or(MIN_SHARE);
-    let (share, diff) = compare(&read_png(a)?, &read_png(b)?)?;
+    let (mut a, mut b) = (read_png(a)?, read_png(b)?);
+    if let Some(rect) = option("--rect") {
+        let v: Vec<usize> = rect.split(',').map(str::parse).collect::<std::result::Result<_, _>>()?;
+        let [x, y, w, h] = v[..] else { return Err("--rect X,Y,W,H".into()) };
+        (a, b) = (crop(&a, [x, y, w, h]), crop(&b, [x, y, w, h]));
+    }
+    let (share, diff) = compare(&a, &b)?;
     if let Some(out) = option("--out") {
         write_png(&out, &diff)?;
     }
@@ -162,5 +180,15 @@ mod tests {
         assert_eq!(share, 75.0);
         assert_eq!(&diff.rgba[..2], &[255, 18]);
         assert!(compare(&a, &flat([0; 4], 3)).is_err());
+    }
+
+    #[test]
+    fn a_crop_keeps_the_rows_and_clamps_to_the_picture() {
+        let mut p = Picture { width: 3, height: 2, rgba: (0..24).collect() };
+        p.rgba[16] = 99;
+        let c = crop(&p, [1, 1, 5, 5]);
+        assert_eq!((c.width, c.height), (2, 1));
+        assert_eq!(c.rgba, [99, 17, 18, 19, 20, 21, 22, 23]);
+        assert_eq!(crop(&p, [9, 9, 1, 1]).rgba.len(), 0);
     }
 }

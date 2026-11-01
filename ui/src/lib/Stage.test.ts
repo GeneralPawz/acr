@@ -92,6 +92,34 @@ describe('Ui', () => {
     expect(container.querySelector('.stage')).toBeNull();
   });
 
+  it('draws a dialog over the running game and nothing for a menu screen or an engine-drawn dialog', async () => {
+    const b = bridge([]);
+    const model = new UiState(b);
+    const { container } = mountWith(model, b);
+    const screen = (name: string, in_game: boolean, engine_drawn: boolean) => ({
+      name,
+      stack: [name],
+      in_game,
+      busy: false,
+      engine_drawn,
+      hint: null,
+      widgets: { t: 'full' as const, widgets: [] },
+    });
+    const view = async (rev: number, s: ReturnType<typeof screen>) => {
+      model.receive({ t: 'view', rev, mode: rev === 1 ? 'game' : undefined, stage: rev === 1 ? { menu: canvas, game: canvas } : undefined, screen: s });
+      await Promise.resolve();
+    };
+    await view(1, screen('GameMenu', true, false));
+    expect(container.querySelector('[data-acr-screen="GameMenu"]')).not.toBeNull();
+    // The viewport under it still forwards the input the dialog does not use.
+    expect(container.querySelector('[data-acr-viewport]')).not.toBeNull();
+    await view(2, screen('GameMenu', true, true));
+    expect(container.querySelector('.stage')).toBeNull();
+    // No screen of the menus lies over the running game.
+    await view(3, screen('MainMenu', false, false));
+    expect(container.querySelector('.stage')).toBeNull();
+  });
+
   it('forwards pointer input in physical pixels', async () => {
     const sent: FromUi[] = [];
     const b = bridge(sent);

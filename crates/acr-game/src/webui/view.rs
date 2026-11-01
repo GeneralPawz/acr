@@ -192,6 +192,11 @@ fn shown_rect(dialog: &Dialog, i: usize) -> Rect {
     if visible.is_empty() { shown } else { visible }
 }
 
+/// `draws` as the engine shows them: a dialog over the game has the game screen's colours.
+fn colours(draws: Vec<Draw>, in_game: bool) -> Vec<Draw> {
+    if in_game { draws.into_iter().map(Draw::in_game).collect() } else { draws }
+}
+
 /// The widgets of `dialog`, then the open drop-down as a widget of its own on top.
 pub fn widgets(
     resolver: &mut Resolver,
@@ -199,10 +204,11 @@ pub fn widgets(
     fonts: &Fonts,
     screen: &str,
     dialog: &Dialog,
+    in_game: bool,
 ) -> Result<Vec<WidgetView>, Failure> {
     let mut out = Vec::with_capacity(dialog.widgets.len() + 1);
     for (i, w) in dialog.widgets.iter().enumerate() {
-        let parts = resolver.parts(lib, fonts, &dialog.widget_draws(lib, fonts, i))?;
+        let parts = resolver.parts(lib, fonts, &colours(dialog.widget_draws(lib, fonts, i), in_game))?;
         out.push(WidgetView {
             id: format!("{screen}/{i}"),
             kind: kind(&w.kind),
@@ -220,7 +226,7 @@ pub fn widgets(
             rect: [0, 0, 0, 0],
             enabled: true,
             hover: false,
-            parts: resolver.parts(lib, fonts, &dropdown)?,
+            parts: resolver.parts(lib, fonts, &colours(dropdown, in_game))?,
         });
     }
     Ok(out)
@@ -252,15 +258,16 @@ pub fn screen(resolver: &mut Resolver, ui: &Ui) -> Result<Option<ScreenView>, Fa
     let Some(top) = ui.shown_screen() else { return Ok(None) };
     let (lib, fonts) = ui.assets();
     let name = top.name();
+    let in_game = top.in_game();
     let dialog = top.dialog().ok_or_else(|| Failure::Unsupported(format!("{name} has no dialog")))?;
     Ok(Some(ScreenView {
         name: name.to_owned(),
         stack: ui.screens().map(|(s, _)| s.name().to_owned()).collect(),
-        in_game: top.in_game(),
+        in_game,
         busy: top.busy(),
         hint: dialog.hint().map(|h| CodePage::Cp1252.decode(h)),
         widgets: {
-            let mut out = widgets(resolver, lib, fonts, name, dialog)?;
+            let mut out = widgets(resolver, lib, fonts, name, dialog, in_game)?;
             if let Some(draw) = ui.progress_draw() {
                 out.push(progress(resolver, lib, fonts, name, &draw)?);
             }

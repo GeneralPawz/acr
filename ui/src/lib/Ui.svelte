@@ -7,10 +7,14 @@
   const { model } = ui();
   let dpr = $state(window.devicePixelRatio || 1);
 
-  // The DOM shows a menu screen only when the game says it leaves the screen to the UI; the
-  // loading screen stays while the game loads.
+  // The DOM shows a screen only when the game says it leaves the screen to the UI; the
+  // loading screen stays while the game loads. In mode `game` only a dialog over the running game
+  // is drawn here, on top of the canvas that goes on drawing the world and the HUD; everything
+  // outside it reaches the game through the viewport, as the engine's modal dialogs do.
   const shown = $derived(
-    (model.mode === 'menus' || model.mode === 'loading') && model.screen !== null && !model.screen.engine_drawn,
+    model.screen !== null &&
+      !model.screen.engine_drawn &&
+      (model.mode === 'menus' || model.mode === 'loading' || (model.mode === 'game' && model.screen.in_game)),
   );
 
   onMount(() => {

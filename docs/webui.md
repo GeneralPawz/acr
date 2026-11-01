@@ -7,7 +7,7 @@ and their rules in [docs/ui.md](ui.md) stay as they are, the headless driver and
 run on them, and the Svelte app draws a view model Rust publishes and sends raw input back.
 
 What exists now (#317, #322, browser part): the protocol, the bridge, the classic skin, the main menu,
-the player name, the options, the campaigns, the single missions, the load dialog of the main menu, the random map setup, the loading screen and the connection screen of multiplayer (`Placeholder`). Every other screen is still drawn by the engine, under the UI's input overlay.
+the player name, the options, the campaigns, the single missions, the load dialog of the main menu, the random map setup, the loading screen and the connection screen of multiplayer (`Placeholder`), and (#325) the dialogs over the running game: the game menu, the options with their "Weitere Optionen" and ACR rule pages, the save dialog and the load dialog of the game menu. Every other screen is still drawn by the engine, under the UI's input overlay.
 
 ## Parts
 
@@ -48,7 +48,7 @@ and clippy never need Bun.
   publishes after each frame's advance (`WebUi::publish`): only changed topics (`mode`, `loading`,
   `stage`, `screen`, `cursor`), at most one message a frame, `rev` growing by one. A gap makes the UI
   send `resync`; the answer carries every topic. Scope `ui.bridge` of the profiler.
-- **Claiming:** the registry (`ui/src/screens/registry.ts`: `MainMenu`, `PlayerName`, `Options`, `Campaigns`, `SingleMission`, `LoadGame`, `RandomMap`, `Placeholder`, `Loading`) is announced in `ready`.
+- **Claiming:** the registry (`ui/src/screens/registry.ts`: `MainMenu`, `PlayerName`, `Options`, `Campaigns`, `SingleMission`, `LoadGame`, `RandomMap`, `Placeholder`, `Loading`, `GameMenu`, `GameOptions`, `SaveGameDialog`) is announced in `ready`.
   `Ui::set_external` makes the engine skip exactly the screens the UI claims, and the cursor, but only
   while `view::screen` can describe the screen completely; otherwise the screen goes on being drawn by
   the engine (`engine_drawn: true`), never half.
@@ -81,6 +81,8 @@ A screen joins the registry when `cargo xtask ui-diff` of its screenshots, `ui=e
 `ui=svelte` at 1024x768, device pixel ratio 1, shows at least 99.5% of the pixels within +-8 per
 channel. Main menu, player name and options: 100.000%, layout 0 px (#317, #322). Campaigns, single missions and the campaign's missions (the same `SingleMission` screen, route `CampaignMissions`, ACR's Lake Erie row included): 100.000%, layout 0 px (#323). `LoadGame` (from the main menu): 100.000%, layout 0 px; its widgets' rects are the part inside their clip window, as the driver's tree reports them. `RandomMap` (players, nations, colours, teams, the scrolled option rows with ACR's Meer landscape, start; also with the landscape combo box open, route `RandomMapCombo`): 100.000%, layout 0 px over 64 widgets (#324). `Placeholder`: 100.000%, layout 0 px. `Loading` is claimed without a browser parity run: it lasts under a second in the browser and the page's driver answers nothing meanwhile, so it cannot be caught for a screenshot; it is a single picture, resolved like the backgrounds above, and the UI keeps it on screen in mode `loading`, where the engine's replay progress ("Laden 40%") became the widget `Loading/progress` (`Ui::progress_draw`).
 
+Over the running game (#325; the blank grass field, the pixels counted over the dialog's box, `ui_parity.py` routes): `GameMenu` 100.000%, `GameOptions` 100.000% (also "Weitere Optionen", route `GameOptionsMore`, and the ACR rule page, `GameOptionsRules`), `LoadGame` from the game menu (`GameLoadGame`) 100.000%, `SaveGameDialog` 99.992% (the input box's caret), layout 0 px over 8 to 24 widgets each.
+
 Typing goes as raw keys: the engine's input box takes the key's text as CP1252 (`typed` in
 `webui/keys.rs`, `cp1252` in `lib.rs`), so `ÄÖü€` is stored as the original stores it. A real `<input>`
 overlay for IME and soft keyboards is not built yet.
@@ -101,9 +103,27 @@ overlay for IME and soft keyboards is not built yet.
 - The web driver (`acr_drive`) also takes `click`, `key` and `text`.
 - `tools/browser/ui_parity.py --screens <names>`: see docs/testing.md "Browser".
 
-Screens over the running game (`Screen::in_game`: the game menu, `SaveGameDialog`, `LoadGame` from the game menu, the mission windows) stay with the engine
-even when named in the registry: they lie on the game's canvas, which the UI draws with the HUD (#316); the
-UI of the driver (`--ui classic`) still describes them for the asset check.
+## Dialogs over the running game (#325)
+
+The classic skin over the game canvas (#316): in mode `game` the page's DOM lies over the canvas, which goes on
+drawing the world and the HUD; the UI draws only a dialog (`ScreenPatch.in_game`) on the menu canvas of `stage`
+(`Ui.svelte`), where the engine drew it. `webui::OVER_GAME` lists the screens it may claim (`GameMenu`,
+`GameOptions`, `SaveGameDialog`, `LoadGame` from the game menu);
+the registry still has to name them, and any other `Screen::in_game` screen stays with the engine (`WebUi::draws`).
+The engine takes a claimed dialog out of its frame (`Ui::set_external`) and nothing else.
+
+- **Colours:** the widgets' draws are those of the menus' screens; over the game `view::widgets` maps them through
+  `Draw::in_game` as the engine does (frames from the game palette, `GameFrame`/`GameText`).
+- **Input:** every one of these dialogs is modal in the engine (the game stands still, `Ui::dialog_open`, and all input
+  goes to the dialog), so the full-page `GameViewport` stays as it is: it forwards pointer, wheel and keys, Rust
+  hit-tests them against the dialog and the game gets none of it while the dialog is open, as in the engine. A dialog that is not
+  modal would need the viewport to let the pointer through outside its widgets; there is none yet.
+- **Host:** the browser page draws transparently over the canvas. A native webview that only draws opaque
+  full-screen menus (Linux WebKitGTK #333, Windows #319, undecided) cannot, so `WebUi::new` sets `transparent`
+  from the host (`Host::Web`) and on any other host these screens stay with the engine; the check is in Rust,
+  the UI needs nothing. A native host that draws transparently turns it on there.
+- **Driver:** `--ui classic` claims every screen it can describe, over the game too, and checks their assets.
+  Scenarios: `save_load` (game menu, save dialog, load dialog), `ingame_options` and `options_rules_page`.
 
 ## Native host spike (Android, #333)
 
