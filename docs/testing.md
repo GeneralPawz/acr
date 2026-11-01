@@ -413,7 +413,7 @@ when not the default: `clickable`, `enabled: false`, `hover`, `selected`. Labels
 UTF-8 (the game's CP1252 decoded). Rects are window pixels of the visible part. Over a
 running game the tree also has `messages` (mission hints and texts over the map) and
 `cursor` (`pos`, `mode`: `normal`, `placing <type>`, `rally`, `patrol`,
-`attack_ground`).
+`attack_ground`; `outline` while placing by touch; `fields` while placing a mill: `free` and `blocked` field points).
 
 ### State (`state`)
 

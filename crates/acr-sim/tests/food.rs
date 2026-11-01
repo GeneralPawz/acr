@@ -125,6 +125,40 @@ fn mills_plant_fields_and_pay_for_them() {
 }
 
 #[test]
+fn a_mills_field_footprint_is_the_grown_diamond_split_by_what_blocks_it() {
+    let (mut w, [peasant, .., mel, field]) = setup();
+    // The definition's grid: `EXSPRITES KUK00 2 3 64 0`, 7 × 7 points 64 px apart.
+    let spots = acr_sim::sprite::field_footprint(&w, mel, 4096, 4096);
+    assert_eq!(spots.len(), 49);
+    assert!(spots.iter().all(|s| s.free));
+    let corner = spots.iter().map(|s| (s.x, s.y)).max().unwrap();
+    assert_eq!(corner, (4096 + 6 * 64, 4096));
+    // It is what the city tick plants (no jitter here).
+    w.spawn(mel, 0, Pos::from_pixels(4096, 4096), 0);
+    economy::census_all(&mut w);
+    assert_eq!(acr_sim::sprite::plant_fields(&mut w, 0, 4096 << 4, 4096 << 4, field), 49);
+    // Types that grow no fields have no footprint.
+    assert!(acr_sim::sprite::field_footprint(&w, peasant, 4096, 4096).is_empty());
+    // Fields already standing block their points.
+    let spots = acr_sim::sprite::field_footprint(&w, mel, 4096, 4096);
+    assert!(spots.iter().all(|s| !s.free));
+    // A lock blocks the points whose 8 × 15 cells around it reach it, and only those.
+    let (mut w, [.., mel, _]) = setup();
+    std::sync::Arc::make_mut(&mut w.map).land.set_pt((4096 + 64) >> 4, 4096 >> 4);
+    let spots = acr_sim::sprite::field_footprint(&w, mel, 4096, 4096);
+    let free = |x, y| spots.iter().find(|s| (s.x, s.y) == (x, y)).unwrap().free;
+    assert!(free(4096, 4096));
+    assert!(free(4160, 4160));
+    assert!(!free(4160, 4032));
+    // Off the map nothing can grow.
+    assert!(!free_at(&w, mel, 0, 0));
+}
+
+fn free_at(w: &World, mel: TypeId, x: i32, y: i32) -> bool {
+    acr_sim::sprite::field_footprint(w, mel, 0, 0).iter().find(|s| (s.x, s.y) == (x, y)).unwrap().free
+}
+
+#[test]
 fn hunters_carry_meat_home() {
     let (mut w, [_, hun, deer, mel, _]) = setup();
     w.spawn(mel, 0, Pos::from_pixels(2048, 2048), 0);

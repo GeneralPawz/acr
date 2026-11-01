@@ -326,6 +326,20 @@ impl InGame {
         (self.interface.touch && self.interface.placing.is_some()).then(|| self.touch_outline_at())
     }
 
+    /// The field area shown with the building being placed (a mill): how many field points
+    /// are free and how many blocked, at the outline (touch) or the pointer.
+    pub fn field_preview_counts(&self) -> Option<(usize, usize)> {
+        let (kind, world) = (self.interface.placing?, self.world.as_ref()?);
+        let at = if self.interface.touch { self.touch_outline_at() } else { self.cursor? };
+        let (x, y) = self.world_at(at);
+        let (x, y) = self.placement_site(kind, x, y).unwrap_or((x, y));
+        let spots = acr_sim::sprite::field_footprint(world, kind, x, y);
+        (!spots.is_empty()).then(|| {
+            let free = spots.iter().filter(|s| s.free).count();
+            (free, spots.len() - free)
+        })
+    }
+
     /// The window size the interface was last laid out for.
     pub fn window_size_px(&self) -> [f32; 2] {
         self.interface.window

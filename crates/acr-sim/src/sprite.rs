@@ -197,6 +197,68 @@ fn snap(x: i32, y: i32, g: i32) -> (i32, i32) {
     (a + b, a - b)
 }
 
+/// The ground of a field at pixel `(px, py)`: free of locks (8 × 15 cells around) and flat
+/// (the heights 64 px left, right, above and below differ from their mean by less than 40,
+/// 32, 32, 32).
+fn ground_free(w: &World, px: i32, py: i32) -> bool {
+    let (cx, cy) = (px >> 4, py >> 4);
+    if w.map.land.check_bar(cx - 4, cy - 3, 8, 15) {
+        return false;
+    }
+    let h = |x, y| w.map.heights.at(x, y);
+    let hs = [h(px - 64, py), h(px + 64, py), h(px, py - 64), h(px, py + 64)];
+    let mean = hs.iter().sum::<i32>() >> 2;
+    (hs[0] - mean).abs() < 40 && hs[1..].iter().all(|&v| (v - mean).abs() < 32)
+}
+
+/// One field of a mill's full-grown field area: its pixel position and whether a field can
+/// grow there ([`field_footprint`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FieldSpot {
+    pub x: i32,
+    pub y: i32,
+    /// The grid's pitch (px): the half diagonal of the point's diamond cell.
+    pub step: i32,
+    pub free: bool,
+}
+
+/// The area the fields of a mill of `kind` standing at world pixel `(x, y)` would cover once
+/// grown: the `(2n + 1)²` points of its first product's `EXSPRITES` (a 7 × 7 grid 64 px
+/// apart without), without the planting jitter. A point is free where [`create_sprite_object`]
+/// would plant: on the map, free of locks (the finished mill's included) and flat, and no
+/// sprite (a tree, a deposit) too close. Empty for a type that grows no fields. ACR's
+/// addition for the placement preview; the original shows only the building.
+pub fn field_footprint(w: &World, kind: TypeId, x: i32, y: i32) -> Vec<FieldSpot> {
+    let Some(field) = w.catalog.get(kind).economy.mill.then(|| crate::economy::product_of(w, kind)).flatten() else {
+        return Vec::new();
+    };
+    let (n, step, name) = match &w.catalog.get(field).economy.ex_sprites {
+        Some(ex) => (ex.n, ex.step, Some(ex.name.clone())),
+        None => (3, 64, None),
+    };
+    let mill_locks = crate::construction::lock_footprint(w, kind, Pos::from_pixels(x, y));
+    let first = name.and_then(|name| w.sprite_kinds.0.find(&name));
+    let r = first.and_then(|f| w.sprite_kinds.0.chars.get(usize::from(f))).map_or(0, |c| c.list_radius);
+    // `create_sprite_object`'s map limits (1/16 px) in pixels.
+    let (lo, hi) = (1024 >> 4, (((240 << w.map.shift) + 2) << 9) >> 4);
+    let mut spots = Vec::new();
+    for i in -n..=n {
+        for j in -n..=n {
+            let (px, py) = (x + (i + j) * step, y + (i - j) * step);
+            let (cx, cy) = (px >> 4, py >> 4);
+            let on_map = (lo..=hi).contains(&px) && (lo..=hi).contains(&py);
+            let free = on_map
+                && ground_free(w, px, py)
+                && !mill_locks
+                    .iter()
+                    .any(|&(lx, ly)| (cx - 4..cx + 4).contains(&lx) && (cy - 3..cy + 12).contains(&ly))
+                && spaced(w, px, py, r);
+            spots.push(FieldSpot { x: px, y: py, step, free });
+        }
+    }
+    spots
+}
+
 /// `CreateObject` (0x5155c5) for a `SPRITEOBJECT` type (a field) at `(x16, y16)` (1/16
 /// px): the position snaps to the sprite's grid; the ground there must be free of locks
 /// (8 × 15 cells around) and flat (the heights 64 px left, right, above and below differ
@@ -225,14 +287,7 @@ pub fn create_sprite_object(w: &mut World, player: u8, kind: TypeId, x16: i32, y
     // `[DISCRET]` grid, 1 by default (no shipped sprite sets another).
     let _ = oc;
     let (px, py) = snap(x16 >> 4, y16 >> 4, 1);
-    let (cx, cy) = (px >> 4, py >> 4);
-    if w.map.land.check_bar(cx - 4, cy - 3, 8, 15) {
-        return false;
-    }
-    let h = |x, y| w.map.heights.at(x, y);
-    let hs = [h(px - 64, py), h(px + 64, py), h(px, py - 64), h(px, py + 64)];
-    let mean = hs.iter().sum::<i32>() >> 2;
-    if (hs[0] - mean).abs() >= 40 || hs[1..].iter().any(|&v| (v - mean).abs() >= 32) {
+    if !ground_free(w, px, py) {
         return false;
     }
     let mut index = first;
