@@ -656,9 +656,23 @@ builds the icons.
 - Rally point: `NRES.DAT [CONST] SET_DEST 11 2 Rally_Point` for `[CANSETDEST]` buildings.
   The next click on the map sets it. A right click on the map with only buildings selected
   sets it too.
-- Leave: units inside a selected building show as one icon of their type with the count, at
-  slot 23. A click lets them all out (`Leave`). The original's icons for units inside (around
-  0x6072af) are not decoded; the slot is ACR's choice.
+- Leave: units inside the selected buildings show one icon per unit type with its count, in
+  type order, minus the units already ordered out (`LeaveMine` orders, 0x5f522e); a click lets
+  one out (`Leave`, 0x5f5a66). The original builds them in 0x5f5db9 (called from 0x60908d;
+  occupant part 0x5f6f4b..0x5f7484, static decode) in two layouts:
+  - A: the selected buildings are one type whose MD defines `PAGE3` (NM+0x1828; `ENGKRE.MD`
+    has `PAGE1..3`). The occupants mark page 3 used (0x28cff78; the page flags run backwards,
+    0x28cff7a is page 1, see 0x5aa0ce..0x5aa10e) and, while page 3 is the current one, type
+    `i` (0-based) takes slot `i % 11 + i / 12 * 12 + 1`, so type 11 lands on slot 1 again (a
+    quirk we keep: `occupant_slot`). For a fort, page 1 has the production and the page
+    buttons; page 3 lists officer, flag bearer, drummer, halberdiers and peasants.
+  - B: any other building type: each occupant type takes a slot without a fixed position
+    (0x4958c0), as the type icons do; we take the first free one after all other icons.
+  Not decoded: OB+0x25 bit 7 (the `UNLOAD_ICON`, `Parom_Unload_All`, hint `UNLOADALL`, click
+  0x5f5cc2, slot 24 in layout B), the exact free-slot rule of 0x4958c0/0x495856, and
+  mixed selections (the original counts over all selected objects in layout B; ACR only for
+  one selected type). ACR shows only the page buttons in use, the original one per defined
+  `PAGEn` (0x609b18).
 - The selected types take the first slots the commands leave free (`AddIcon` without a
   position, 0x495631). Both sets are drawn at the same origin (0x5aaa15).
 

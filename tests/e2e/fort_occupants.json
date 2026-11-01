@@ -1,0 +1,24 @@
+{
+  "name": "fort_occupants",
+  "description": "A fort with Spanish units inside lists every occupant type on its page 3 (0x5f5db9, PAGE3 of ENGKRE.MD), not only the first three: officer, flag bearer, drummer, halberdiers and peasants (#485)",
+  "args": ["--dialogs", "report"],
+  "step_timeout_s": 120,
+  "steps": [
+    {"cmd": "click", "label": "Einzelspieler"},
+    {"cmd": "click", "label": "Kampagne"},
+    {"cmd": "click", "label": "OK", "expect": {"screen": "Campaigns"}},
+    {"cmd": "click", "label": "Mission spielen!", "expect": {"screen": "SingleMission"}},
+    {"cmd": "click", "label": "Mission spielen!"},
+    {"cmd": "wait", "until": {"dialog": "MessageWindow"}, "timeout": 3000},
+    {"cmd": "click", "label": "OK", "expect": {"screen": "game"}},
+    {"cmd": "spawn", "type": "EngKre(SP)", "owner": 0, "x": 5300, "y": 10100, "dir": 0, "capture": {"fort": "unit.id"}},
+    {"cmd": "command", "command": {"type": "enter", "units": {"owner": 0, "type": "Spn"}, "building": "${fort}"}},
+    {"cmd": "wait", "ticks": 1500, "note": "everybody walks in"},
+    {"cmd": "select", "units": ["${fort}"]},
+    {"cmd": "wait", "ticks": 2},
+    {"cmd": "click", "id": "hud/24", "note": "PAGE3"},
+    {"cmd": "move", "id": "hud/1", "expect": [{"path": "target.count", "eq": 1}, {"path": "target.label", "contains": "Offizier"}]},
+    {"cmd": "move", "id": "hud/4", "expect": [{"path": "target.count", "ge": 14}, {"path": "target.label", "contains": "Hellebardier"}]},
+    {"cmd": "move", "id": "hud/5", "expect": {"path": "target.count", "ge": 15}}
+  ]
+}
