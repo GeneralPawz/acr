@@ -1,0 +1,28 @@
+{
+  "name": "menu_player_name",
+  "description": "Einzelspieler -> Zufallskarte -> the player name: typing stores CP1252, OK needs a name, Abbruch leaves",
+  "steps": [
+    {"cmd": "click", "label": "Einzelspieler"},
+    {"cmd": "click", "label": "Zufallskarte", "expect": {"screen": "PlayerName"}},
+    {"cmd": "ui", "expect": {"path": "ui.widgets.3.kind", "eq": "input"}},
+    {"cmd": "key", "key": "Backspace"},
+    {"cmd": "key", "key": "Backspace"},
+    {"cmd": "key", "key": "Backspace"},
+    {"cmd": "key", "key": "Backspace"},
+    {"cmd": "key", "key": "Backspace"},
+    {"cmd": "key", "key": "Backspace"},
+    {"cmd": "key", "key": "Backspace"},
+    {"cmd": "key", "key": "Backspace"},
+    {"cmd": "key", "key": "Backspace"},
+    {"cmd": "key", "key": "Backspace"},
+    {"cmd": "key", "key": "Backspace"},
+    {"cmd": "key", "key": "Backspace"},
+    {"cmd": "key", "key": "Backspace"},
+    {"cmd": "key", "key": "Backspace"},
+    {"cmd": "key", "key": "Backspace"},
+    {"cmd": "key", "key": "Backspace"},
+    {"cmd": "text", "text": "ÄÖü€"},
+    {"cmd": "ui", "expect": {"path": "ui.widgets.3.label", "eq": "ÄÖü€"}},
+    {"cmd": "click", "label": "Abbruch", "expect": {"screen": "MainMenu"}}
+  ]
+}
