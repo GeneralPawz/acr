@@ -428,6 +428,9 @@ cursor is drawn anywhere in the window, also beside the menu canvas.
   in this layout), so the reload bar at x = 173..176 shows just left of the joint. ACR
   drew the stats before the box until 2026-10; the box's left edge (x 170..179) hid the
   bar.
+- The builder skips housed objects (OB+0x58 non-zero): units inside a building add to no
+  type or formation icon, nor to the single-type stats (ACR: `inside_of`, `panel_units`).
+  They stay selected for commands.
 - A type icon has:
   - an outline in player colour `0xd0 + 4·nation`;
   - a life bar: two lines of colour 255 with the rest in colour 0, length

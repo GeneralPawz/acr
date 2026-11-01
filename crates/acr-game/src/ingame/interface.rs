@@ -515,6 +515,13 @@ impl InGame {
         self.selected.iter().filter_map(move |&id| world.and_then(|w| w.unit(id)).filter(|u| selectable(u)))
     }
 
+    /// The selected units the panel lists: those outside buildings. The original's panel
+    /// builder (0x606710) skips objects whose housed field (OB+0x58) is non-zero; they stay
+    /// selected for commands.
+    fn panel_units(&self) -> impl Iterator<Item = &Unit> {
+        self.selected_units().filter(|u| listed_in_panel(u))
+    }
+
     /// Dead, dying and (hit-locations rule) out-of-the-fight units leave the selection
     /// ([`selectable`]). Called after a tick.
     pub(super) fn prune_selection(&mut self) {
@@ -608,7 +615,7 @@ impl InGame {
         // selected formation (0x606d10).
         let mut types: Vec<(acr_sim::TypeId, i32, i32, i32)> = Vec::new();
         let mut brigades: Vec<u16> = Vec::new();
-        for u in self.selected_units() {
+        for u in self.panel_units() {
             if let Some(b) = u.brigade {
                 if !brigades.contains(&b) {
                     brigades.push(b);
@@ -630,7 +637,7 @@ impl InGame {
         // A single formation shows its soldiers' numbers with the formation bonus and the
         // reload of all its members (0x606edd).
         let single = match (&types[..], &brigades[..]) {
-            ([(kind, ..)], []) => self.selected_units().find(|u| u.kind == *kind && u.brigade.is_none()),
+            ([(kind, ..)], []) => self.panel_units().find(|u| u.kind == *kind && u.brigade.is_none()),
             ([], [b]) => world
                 .brigades
                 .get(usize::from(*b))
@@ -657,7 +664,7 @@ impl InGame {
                 };
                 s.reload = Some(match u.brigade.and_then(|b| world.brigades.get(usize::from(b))) {
                     Some(br) => sum(&mut br.members.iter().flatten().filter_map(|&m| world.unit(m))),
-                    None => sum(&mut self.selected_units().filter(|v| v.kind == kind)),
+                    None => sum(&mut self.panel_units().filter(|v| v.kind == kind)),
                 });
             }
             view.stats = Some(s);
@@ -3273,6 +3280,11 @@ pub(super) fn selectable(u: &Unit) -> bool {
     u.living() && !u.body.out_of_fight()
 }
 
+/// Whether the selection panel lists `u` (0x606710 skips a housed object, OB+0x58 != 0).
+fn listed_in_panel(u: &Unit) -> bool {
+    u.inside_of.is_none()
+}
+
 /// A member of brigade `b` that still fights ([`selectable`]): the soldiers the formation
 /// icons count. ACR keeps a dead man's id in his brigade until the corpse is gone, where
 /// the original's `Die` empties his slot.
@@ -3372,6 +3384,27 @@ fn leave_commands(player: u8, buildings: &[EntityId], kind: TypeId, n: usize) ->
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_panel_skips_housed_units() {
+        use acr_sim::Pos;
+        use acr_sim::catalog::{Catalog, ObjectType};
+        use acr_sim::formation::Formations;
+        use acr_sim::map::MapGrid;
+        use std::sync::Arc;
+        let mut c = Catalog::new();
+        let t = c.add(ObjectType::from_def(
+            "Mus(EN)",
+            &acr_formats::defs::UnitDef::parse(b"NAME X\r\nLIFE 100\r\nGEOMETRY 1 10 40\r\n[END]\r\n"),
+        ));
+        let mut w = acr_sim::World::new(Arc::new(MapGrid::open(1)), Arc::new(c), Arc::new(Formations::default()));
+        let out = w.spawn(t, 0, Pos::from_pixels(900, 900), 0);
+        let housed = w.spawn(t, 0, Pos::from_pixels(900, 900), 0);
+        let house = w.spawn(t, 0, Pos::from_pixels(950, 900), 0);
+        w.units[housed.0 as usize].inside_of = Some(house);
+        assert!(listed_in_panel(w.unit(out).unwrap()));
+        assert!(!listed_in_panel(w.unit(housed).unwrap()));
+    }
 
     #[test]
     fn strangers_in_the_fog_get_no_marks() {
