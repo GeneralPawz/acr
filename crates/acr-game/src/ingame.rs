@@ -610,28 +610,46 @@ impl InGame {
     /// Mission messages and dialogs drawn over the map (the interface's canvas,
     /// [`InGame::screen_canvas`]).
     pub fn overlay(&self, ctx: &crate::ui::Ctx) -> Vec<crate::ui::draw::Draw> {
-        let (mut out, rest) = self.overlay_split(ctx);
-        out.extend(rest);
+        let (mut out, editor, notice) = self.overlay_split(ctx);
+        out.extend(editor);
+        out.extend(notice);
         out
     }
 
-    /// [`InGame::overlay`] as the mission's texts and the rest (the save notice, the editor's).
-    fn overlay_split(&self, ctx: &crate::ui::Ctx) -> (Vec<crate::ui::draw::Draw>, Vec<crate::ui::draw::Draw>) {
+    /// [`InGame::overlay`] as the mission's texts, the editor's window and the save notice.
+    fn overlay_split(
+        &self,
+        ctx: &crate::ui::Ctx,
+    ) -> (Vec<crate::ui::draw::Draw>, Vec<crate::ui::draw::Draw>, Vec<crate::ui::draw::Draw>) {
         let mut messages = Vec::new();
         self.mission.draws(ctx, self.interface.hud.screen(), &mut messages);
-        let mut rest = Vec::new();
-        self.save_overlay(&mut rest);
-        self.editor_overlay(ctx, &mut rest);
-        (messages, rest)
+        let mut editor = Vec::new();
+        self.editor_overlay(ctx, &mut editor);
+        let mut notice = Vec::new();
+        self.save_overlay(&mut notice);
+        (messages, editor, notice)
     }
 
-    /// The overlay the engine draws: without the mission's texts when an external UI claimed them.
+    /// The overlay the engine draws: without the mission's texts and the editor's window when an
+    /// external UI claimed them.
     pub fn engine_overlay(&mut self, ctx: &crate::ui::Ctx) -> Vec<crate::ui::draw::Draw> {
-        if !self.interface.claim.messages {
+        let claim = self.interface.claim;
+        if !claim.messages && !claim.editor {
             return self.overlay(ctx);
         }
-        let (messages, rest) = self.overlay_split(ctx);
-        self.interface.claimed.push(crate::hud::messages_group(messages));
+        let (messages, editor, notice) = self.overlay_split(ctx);
+        let mut rest = Vec::new();
+        if claim.messages {
+            self.interface.claimed.push(crate::hud::messages_group(messages));
+        } else {
+            rest.extend(messages);
+        }
+        if claim.editor {
+            self.interface.claimed.push(crate::hud::editor_group(editor));
+        } else {
+            rest.extend(editor);
+        }
+        rest.extend(notice);
         rest
     }
 
