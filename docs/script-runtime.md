@@ -242,6 +242,12 @@ address it reproduces.
   (`GetLandType`, `City+0x184`), which only `StartAI` and the playback of recorded games
   set; a random map started from the menu keeps 0. `acr mission-run --land N` sets it for
   the computer nations to exercise this.
+* **AI difficulty** (`GetDifficulty` 0x569555 and `GetDiff` read `City+0x183`, per nation):
+  a mission start stores the menu's choice (0x53ea5d) for nations 0..=6; the random-map
+  start (dialog 0x5cc630 → 0x5cd790, then the loop at 0x5b48cc..0x5b4a68) calls `StartAI`
+  (0x565ae0) for every player with the player's combo value less one, which stores it at
+  0x565b28 (skipped for -1). ACR gives each computer player's nation its own value
+  (`ScriptSetup::difficulty` is per nation, filled in `MissionLink::new`).
 * **Hidden units**: units inside buildings have `Sdoxlo` = 1 and `Hidden` set in the
   original, so functions that test `Sdoxlo == 0` skip them and others accept them
   ("alive or hidden"); ACR follows each function's test (`Api::member` vs `member_h`).

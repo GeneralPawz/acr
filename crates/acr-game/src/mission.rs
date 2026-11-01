@@ -62,7 +62,7 @@ pub struct MissionLink {
     fog_tick: Option<u64>,
     /// The player whose fog it is (`GameSetup::local_player`).
     viewer: u8,
-    difficulty: u8,
+    difficulty: [u8; 8],
     scripts: Option<Scripts>,
     /// AI DLLs to load once their files are there.
     pending_ais: Vec<(u8, String)>,
@@ -98,6 +98,9 @@ impl MissionLink {
             GameKind::Mission(m) => (None, None, Some(m.map.clone()), m.difficulty.index()),
             GameKind::RandomMap(_) | GameKind::Blank(_) | GameKind::Acr(_) => (None, None, None, 1),
         };
+        // Missions give one value to nations 0..=6 (nation 7 stays 0).
+        let mut per_nation = [0u8; 8];
+        per_nation[..7].fill(difficulty.min(3) as u8);
         // Random maps put player k's units in nation `color` (random_map.rs).
         let random = matches!(setup.kind, GameKind::RandomMap(_) | GameKind::Blank(_));
         let nation_of = |i: usize| if random { setup.players.get(i).map_or(i as u8, |p| p.color) } else { i as u8 };
@@ -109,6 +112,15 @@ impl MissionLink {
             .filter(|(_, p)| matches!(p.control, Control::Computer(_)) && !matches!(setup.kind, GameKind::Acr(_)))
             .map(|(i, _)| nation_of(i))
             .collect();
+        // Random maps: every computer player plays at its own combo value (the original's
+        // 0x5b4a60 passes it to `StartAI`, which stores it in `City+0x183`, 0x565b28).
+        if random {
+            for (i, p) in setup.players.iter().enumerate() {
+                if let Control::Computer(d) = p.control {
+                    per_nation[usize::from(nation_of(i) & 7)] = d.index() as u8;
+                }
+            }
+        }
         let local_player = nation_of(setup.local_player);
         Self {
             acr: if let GameKind::Acr(m) = setup.kind { Some(m) } else { None },
@@ -124,7 +136,7 @@ impl MissionLink {
             fog_tick: None,
             open_fog: matches!(setup.kind, GameKind::Blank(_)),
             viewer: setup.local_player as u8,
-            difficulty: difficulty.min(3) as u8,
+            difficulty: per_nation,
             scripts: None,
             pending_ais: Vec::new(),
             new_requests: Vec::new(),
@@ -582,5 +594,29 @@ impl MissionLink {
         if let Some(t) = text.filter(|t| !t.is_empty()) {
             crate::mission_ui::central_text(ctx, out, t, self.local_player, screen);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ui::setup::{Difficulty, PlayerSetup, RandomMapSetup};
+
+    /// A random map hands each computer player's combo value to its own nation (the colour).
+    #[test]
+    fn random_map_difficulty_is_per_computer_player() {
+        let player = |color, control| PlayerSetup { name: Vec::new(), nation: 0, color, team: 0, control };
+        let setup = GameSetup {
+            kind: GameKind::RandomMap(RandomMapSetup::default()),
+            players: vec![
+                player(2, Control::Human),
+                player(5, Control::Computer(Difficulty::Easy)),
+                player(0, Control::Computer(Difficulty::Impossible)),
+            ],
+            local_player: 0,
+            rules: Default::default(),
+        };
+        let link = MissionLink::new(&setup);
+        assert_eq!(link.difficulty, [4, 1, 1, 1, 1, 0, 1, 0]);
     }
 }

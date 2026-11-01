@@ -137,16 +137,18 @@ pub struct LightSpot {
 /// Settings the scripts can query.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ScriptSetup {
-    /// Difficulty chosen in the menu (`CITY[n].Difficulty`): 0 easy, 1 normal, 2 hard,
-    /// 3 very hard. Missions give it to nations 0..=6.
-    pub difficulty: u8,
+    /// Difficulty per nation (`CITY[n].Difficulty`): 0 easy, 1 normal, 2 hard, 3 very hard,
+    /// 4 impossible. Missions give the menu's choice to nations 0..=6; random maps give
+    /// each computer player's own (0x5b4a60 passes the player's combo value less one to
+    /// `StartAI`, which stores it at 0x565b28).
+    pub difficulty: [u8; 8],
     /// The human player's nation (`GetMyNation`).
     pub local_player: u8,
 }
 
 impl Default for ScriptSetup {
     fn default() -> Self {
-        Self { difficulty: 1, local_player: 0 }
+        Self { difficulty: [1, 1, 1, 1, 1, 1, 1, 0], local_player: 0 }
     }
 }
 
@@ -254,8 +256,7 @@ pub struct ScriptState {
 
 impl ScriptState {
     pub fn new(setup: ScriptSetup, texts: MissionTexts) -> Self {
-        let mut difficulty = [0; 8];
-        difficulty[..7].fill(setup.difficulty);
+        let difficulty = setup.difficulty;
         Self {
             setup,
             texts,
