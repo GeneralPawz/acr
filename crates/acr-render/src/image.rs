@@ -62,7 +62,6 @@ pub struct ImageRenderer {
     globals: wgpu::Buffer,
     globals_group: wgpu::BindGroup,
     image_layout: wgpu::BindGroupLayout,
-    sampler: wgpu::Sampler,
     srgb: bool,
     instances: wgpu::Buffer,
     batches: Vec<(Rc<wgpu::BindGroup>, Range<u32>)>,
@@ -92,35 +91,21 @@ impl ImageRenderer {
         });
         let image_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("image"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
                 },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
-            ],
+                count: None,
+            }],
         });
         let globals_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("image globals"),
             layout: &globals_layout,
             entries: &[wgpu::BindGroupEntry { binding: 0, resource: globals.as_entire_binding() }],
-        });
-        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("image"),
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            ..Default::default()
         });
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("image"),
@@ -150,7 +135,7 @@ impl ImageRenderer {
                 compilation_options: Default::default(),
                 targets: &[Some(wgpu::ColorTargetState {
                     format: target,
-                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                    blend: Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
             }),
@@ -158,16 +143,7 @@ impl ImageRenderer {
             cache: None,
         });
         let instances = Self::instance_buffer(device, 64);
-        Self {
-            pipeline,
-            globals,
-            globals_group,
-            image_layout,
-            sampler,
-            srgb: target.is_srgb(),
-            instances,
-            batches: Vec::new(),
-        }
+        Self { pipeline, globals, globals_group, image_layout, srgb: target.is_srgb(), instances, batches: Vec::new() }
     }
 
     fn instance_buffer(device: &wgpu::Device, count: u64) -> wgpu::Buffer {
@@ -179,7 +155,8 @@ impl ImageRenderer {
         })
     }
 
-    /// Uploads straight-alpha RGBA pixels (sRGB colour values, top row first).
+    /// Uploads straight-alpha RGBA pixels (sRGB colour values, top row first). The shader
+    /// premultiplies them per texel before it filters (`image.wgsl`).
     pub fn upload(
         &self,
         device: &wgpu::Device,
@@ -207,13 +184,10 @@ impl ImageRenderer {
         let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("image"),
             layout: &self.image_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&texture.create_view(&Default::default())),
-                },
-                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(&self.sampler) },
-            ],
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(&texture.create_view(&Default::default())),
+            }],
         });
         ImageTexture { width, height, group: Rc::new(group) }
     }
