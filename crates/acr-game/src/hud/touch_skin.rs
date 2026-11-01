@@ -115,7 +115,11 @@ impl Hud {
             })
             .collect();
         let army = Self::army_icons(view).map(|i| icon(i, format!("army/{}", i.slot), Role::Army)).collect();
-        Some(TouchView { resources, icons, army, paused: view.paused,
+        Some(TouchView {
+            resources,
+            icons,
+            army,
+            paused: view.paused,
             minimap: self.minimap.is_some(),
             speed: 50,
             speed_text: [ctx.texts.get("SLOWMOD").to_vec(), ctx.texts.get("FASTMOD").to_vec()],

@@ -2136,7 +2136,8 @@ impl InGame {
         self.post_hints(ctx);
         let view = self.build_view(ctx, window);
         let hud_layers = self.interface.hud.draw(ctx, &view);
-        self.interface.touch_view = if self.interface.claim.touch { self.interface.hud.touch_view(ctx, &view) } else { None };
+        self.interface.touch_view =
+            if self.interface.claim.touch { self.interface.hud.touch_view(ctx, &view) } else { None };
         if let Some(touch) = &mut self.interface.touch_view {
             touch.speed = 100 - self.frame_time.clamp(0, 100);
         }
