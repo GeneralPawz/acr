@@ -1,0 +1,10 @@
+{
+  "name": "menu_options",
+  "description": "Hauptmenü -> Optionen: the screen comes up with its controls and leaves again with Abbruch",
+  "steps": [
+    {"cmd": "ui", "expect": {"screen": "MainMenu"}},
+    {"cmd": "click", "label": "Optionen", "expect": {"screen": "Options"}},
+    {"cmd": "ui", "expect": [{"screen": "Options"}, {"path": "ui.stack.1", "eq": "Options"}]},
+    {"cmd": "click", "label": "Abbruch", "expect": {"screen": "MainMenu"}}
+  ]
+}
