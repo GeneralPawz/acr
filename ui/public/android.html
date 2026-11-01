@@ -1,0 +1,20 @@
+<!doctype html>
+<!-- The Android host page: the same bundle in a transparent WebView over the game's surface. -->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <title>American Conquest</title>
+  <link rel="stylesheet" href="./acr-ui.css">
+  <style>
+    html, body { margin: 0; height: 100%; background: transparent; overflow: hidden; }
+    * { -webkit-user-select: none; user-select: none; -webkit-tap-highlight-color: transparent; }
+  </style>
+</head>
+<body>
+  <script type="module">
+    import { mountUi, androidBridge } from './acr-ui.js';
+    mountUi(document.body, androidBridge());
+  </script>
+</body>
+</html>

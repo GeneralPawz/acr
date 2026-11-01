@@ -56,8 +56,13 @@ pub enum ToUi {
 #[serde(rename_all = "snake_case")]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export, export_to = export_dir!()))]
 pub enum Host {
+    /// A webview in an opaque window over the game's (Linux): full-screen menus only.
     Native,
+    /// The browser page, transparent over the game's canvas.
     Web,
+    /// A webview in a transparent popup over the game's surface (Android); touches outside the
+    /// page's interactive rectangles go to the game.
+    Android,
 }
 
 /// What the app shows (`Game.mode`).

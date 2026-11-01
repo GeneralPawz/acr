@@ -3,6 +3,9 @@
 # `ACR_ANDROID_ABIS="arm64-v8a x86_64"` adds the emulator's ABI.
 # Needs the Android SDK (build-tools, platform 36), the NDK and the aarch64-linux-android
 # Rust target; ANDROID_HOME and ANDROID_NDK_HOME point to them. Signed with a local debug key.
+# The Svelte UI (native_ui=svelte, docs/webui.md): the bundle is embedded from ACR_UI_DIST, else
+# built with Bun in ui/ first (without Bun the APK carries none and native_ui=svelte falls back to
+# the engine's UI); WebHost.java is compiled into the APK's dex (javac and d8 from the SDK).
 set -euo pipefail
 root=$(cd "$(dirname "$0")/../.." && pwd)
 out=${1:-$root/target/android/AmericanConquest.apk}
@@ -12,7 +15,15 @@ tc=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin
 abis=${ACR_ANDROID_ABIS:-arm64-v8a}
 target=${CARGO_TARGET_DIR:-$root/target}
 work=$root/target/android/work
-rm -rf "$work" && mkdir -p "$work/res"
+rm -rf "$work" && mkdir -p "$work/res" "$work/classes"
+if [ -z "${ACR_UI_DIST:-}" ]; then
+  if command -v bun >/dev/null; then
+    (cd "$root/ui" && bun install --frozen-lockfile && bun run build)
+    export ACR_UI_DIST=$root/ui/dist
+  else
+    echo "warning: no Bun and no ACR_UI_DIST: the APK carries no Svelte bundle" >&2
+  fi
+fi
 for abi in $abis; do
   case $abi in
     arm64-v8a) triple=aarch64-linux-android ;;
@@ -26,12 +37,16 @@ for abi in $abis; do
   cp "$target/$triple/release/libacr_game.so" "$work/lib/$abi/"
   "$tc/llvm-strip" --strip-debug "$work/lib/$abi/libacr_game.so"
 done
+# The Java side of the Svelte UI's WebView.
+javac -source 8 -target 8 -Xlint:-options -classpath "$platform/android.jar" -d "$work/classes" \
+  $(find "$root/tools/android/java" -name '*.java')
+"$bt/d8" --lib "$platform/android.jar" --min-api 28 --output "$work" $(find "$work/classes" -name '*.class')
 # The launcher icon: an adaptive icon drawn from monogram.svg (docs/android.md).
 python3 "$root/tools/android/make-icon.py" "$root/tools/android/monogram.svg" "$work/res" \
   "${ACR_ICON_PREVIEW:-$work/icon-preview.png}" "$root/crates/acr-game/Ac.ico"
 "$bt/aapt2" compile --dir "$work/res" -o "$work/res.zip"
 "$bt/aapt2" link -o "$work/base.apk" -I "$platform/android.jar" --manifest "$root/tools/android/AndroidManifest.xml" "$work/res.zip"
-(cd "$work" && zip -q -0 -r base.apk lib)
+(cd "$work" && zip -q -0 -r base.apk lib classes.dex)
 "$bt/zipalign" -f -p 16384 "$work/base.apk" "$work/aligned.apk"
 key=${ACR_ANDROID_KEY:-$HOME/.android/acr-debug.keystore}
 if [ ! -f "$key" ]; then

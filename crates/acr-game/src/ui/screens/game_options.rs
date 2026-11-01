@@ -12,7 +12,9 @@
 use super::super::dialog::{Align, CANCEL, Kind, OK, WidgetId};
 use super::super::draw::{Draw, Rect};
 use super::super::graphics::{Graphics, PRESETS};
-use super::super::settings::{CONTROL_CHOICES, CameraMode, Controls, Gore, Models, RESOLUTIONS, Settings, Weather};
+use super::super::settings::{
+    CONTROL_CHOICES, CameraMode, Controls, Gore, Models, Orientation, RESOLUTIONS, Settings, Weather,
+};
 use super::super::{Ctx, Input, Nav, Screen};
 use super::{Menu, font};
 use crate::ui::fonts::FontId;
@@ -120,6 +122,17 @@ const BATTLE: &[Row] = &[
         lines: &[b"Aus (Original)", b"An: Leiste mittig"],
         get: |s| on_off(s.center_top_bar),
         set: |s, i| s.center_top_bar = i == 1,
+    }),
+    Row::Choice(Choice {
+        // `orientation`: the Android activity's rotation; no effect elsewhere.
+        label: b"Ausrichtung",
+        lines: &[b"Quer (Original)", b"Automatisch", b"Hochkant"],
+        get: |s| match s.orientation {
+            Orientation::Landscape => 0,
+            Orientation::Auto => 1,
+            Orientation::Portrait => 2,
+        },
+        set: |s, i| s.orientation = [Orientation::Landscape, Orientation::Auto, Orientation::Portrait][i.min(2)],
     }),
 ];
 
@@ -593,7 +606,14 @@ mod tests {
         );
         assert_eq!(
             labels(BATTLE),
-            [&b"Blutdarstellung"[..], b"Verwesung", b"Liegezeit", b"Schlachtfeldspuren", b"Leiste mittig"]
+            [
+                &b"Blutdarstellung"[..],
+                b"Verwesung",
+                b"Liegezeit",
+                b"Schlachtfeldspuren",
+                b"Leiste mittig",
+                b"Ausrichtung"
+            ]
         );
         let mut s = Settings::default();
         for row in RULES.iter().chain(RULES_MORE) {
