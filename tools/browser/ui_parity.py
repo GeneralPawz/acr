@@ -38,6 +38,7 @@ music_volume=0
 ROUTES = {
     "MainMenu": [],
     "PlayerName": ["Einzelspieler", "Zufallskarte"],
+    "Options": ["Optionen"],
 }
 
 CHROMIUM_ARGS = {
