@@ -396,8 +396,12 @@ impl Screen for ChoiceWindow {
         }
     }
 
-    fn draw(&self, ctx: &Ctx, out: &mut Vec<Draw>) {
+    fn backdrop(&self, ctx: &Ctx, out: &mut Vec<Draw>) {
         paper_box(ctx, out, self.frame, CHOICE_FILL, CHOICE_CORNERS, 0);
+    }
+
+    fn draw(&self, ctx: &Ctx, out: &mut Vec<Draw>) {
+        self.backdrop(ctx, out);
         self.menu.draw(ctx, out);
     }
 

@@ -1383,17 +1383,19 @@ pub(crate) fn web_request(game: &mut Game, event_loop: &ActiveEventLoop, line: &
     Value::Object(reply)
 }
 
-/// Whether the browser's queued requests may run: no files on their way, the top screen
-/// built and a started game ready (as the native driver settles).
+/// Whether the browser's queued request `line` may run: no files on their way, the top screen
+/// built and a started game ready (as the native driver settles), and no message box open,
+/// except for `ui`, which only looks (the UI's parity check reads the tree of a message box).
 #[cfg(target_arch = "wasm32")]
-pub(crate) fn web_ready(game: &Game) -> bool {
+pub(crate) fn web_ready(game: &Game, line: &str) -> bool {
+    let looks = serde_json::from_str::<serde_json::Value>(line).is_ok_and(|v| v["cmd"] == "ui");
     let screen_ready = tree::top(game).is_none_or(|(s, built)| built && !s.busy());
     let game_ready = match &game.mode {
         Mode::Intro => true,
         Mode::Menus => true,
         Mode::InGame(g) => g.ready(),
     };
-    game.in_flight.get() == 0 && screen_ready && game_ready && tree::modal(game).is_none()
+    game.in_flight.get() == 0 && screen_ready && game_ready && (looks || tree::modal(game).is_none())
 }
 
 #[cfg(test)]

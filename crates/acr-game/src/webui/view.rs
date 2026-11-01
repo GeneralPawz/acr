@@ -268,6 +268,34 @@ pub fn screen(resolver: &mut Resolver, ui: &Ui) -> Result<Option<ScreenView>, Fa
         hint: dialog.hint().map(|h| CodePage::Cp1252.decode(h)),
         widgets: {
             let mut out = widgets(resolver, lib, fonts, name, dialog, in_game)?;
+            // What the screen draws under its widgets (the choice window's paper box).
+            let mut backdrop = Vec::new();
+            top.backdrop(&ui.ctx(), &mut backdrop);
+            if !backdrop.is_empty() {
+                let rect = backdrop.iter().filter(|d| !matches!(d.sprite, Sprite::Fill(_))).fold(
+                    None,
+                    |r: Option<Rect>, d| {
+                        let at = Rect { x0: d.x, y0: d.y, x1: d.x + d.size[0], y1: d.y + d.size[1] };
+                        Some(r.map_or(at, |r| Rect {
+                            x0: r.x0.min(at.x0),
+                            y0: r.y0.min(at.y0),
+                            x1: r.x1.max(at.x1),
+                            y1: r.y1.max(at.y1),
+                        }))
+                    },
+                );
+                out.insert(
+                    0,
+                    WidgetView {
+                        id: format!("{name}/backdrop"),
+                        kind: WidgetKind::Picture,
+                        rect: rect4(rect.unwrap_or(Rect::SCREEN)),
+                        enabled: true,
+                        hover: false,
+                        parts: resolver.parts(lib, fonts, &colours(backdrop, in_game))?,
+                    },
+                );
+            }
             if let Some(draw) = ui.progress_draw() {
                 out.push(progress(resolver, lib, fonts, name, &draw)?);
             }
