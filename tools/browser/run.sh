@@ -51,4 +51,4 @@ for _ in $(seq 1 600); do
   kill -0 $SERVER 2>/dev/null || { tail -30 "$LOG"; exit 1; }
   sleep 1
 done
-"$VENV/bin/python" tools/browser/browser_test.py --url "http://127.0.0.1:$PORT/?game=/game/" --out "$OUT" "${PASS[@]}"
+"$VENV/bin/python" tools/browser/browser_test.py --url "http://127.0.0.1:$PORT/?game=/game/&ui=engine" --out "$OUT" "${PASS[@]}"

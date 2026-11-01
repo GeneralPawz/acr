@@ -16,7 +16,7 @@ the player name, the options, the campaigns, the single missions, the load dialo
 | Protocol (serde, TypeScript export) | `crates/acr-ui-protocol`; `cargo test -p acr-ui-protocol --features ts` writes `ui/src/lib/protocol/` (committed, checked for no diff) |
 | Game side | `crates/acr-game/src/webui/`: `mod.rs` (state, diffing), `view.rs`, `input.rs`, `keys.rs`, `assets.rs`, `font_atlas.rs`, `web.rs` (wasm exports) |
 | App | `ui/` (Svelte 5, Vite 8, TypeScript, Vitest; Bun 1.4.4, no Node needed): `cargo xtask ui` (`--watch`) builds `ui/dist/acr-ui.js` + `.css` |
-| Browser page | `crates/acr-game/web/index.html`: `/?game=/game/&ui=svelte` mounts it after the game started; the default is `ui=engine` |
+| Browser page | `crates/acr-game/web/index.html`: mounts it after the game started; it is the default, `/?game=/game/&ui=engine` selects the engine UI instead |
 | Tooling | `cargo xtask web/serve/dist` build and copy the bundle to `target/web/game/ui/` (`--no-ui` or no `bun` skips it, `ACR_UI_DIST` names a bundle built elsewhere); `cargo xtask ui-diff A.png B.png [--out D.png]` |
 
 ## Bundle embedding

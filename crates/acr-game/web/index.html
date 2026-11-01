@@ -28,11 +28,10 @@
     import init, * as wasm from './acr_game.js';
     const { start, start_url } = wasm;
     await init({ module_or_path: new URL('./acr_game_bg.wasm', import.meta.url) });
-    // `?ui=svelte` draws the claimed menu screens with the Svelte UI over the canvas
-    // (docs/webui.md); the default is the engine's own. Without the bundle (`cargo xtask ui`)
-    // the engine UI stays.
+    // The Svelte UI draws the claimed screens over the canvas (docs/webui.md) unless `?ui=engine`
+    // asks for the engine's own. Without the bundle (`cargo xtask ui`) the engine UI stays.
     const mountUi = async () => {
-      if (new URLSearchParams(location.search).get('ui') !== 'svelte') return;
+      if (new URLSearchParams(location.search).get('ui') === 'engine') return;
       try {
         const ui = await import('./ui/acr-ui.js');
         const css = document.createElement('link');
