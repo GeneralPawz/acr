@@ -1,0 +1,27 @@
+{
+  "name": "svelte_hud_scale",
+  "description": "The classic skin's interface groups at a phone-like window (1584x720) with hud_scale 1.8 (#448) and the touch top bar (#326): a hint over a scaled icon is a group stretched about the mouse, the bar's pause and escape plaques are the touch bar's text, and the groups are the same ones the plain bar has",
+  "args": ["--size", "1584x720", "--ui", "classic"],
+  "steps": [
+    {"cmd": "start", "random": {"nation": 1, "seed": 5}},
+    {"cmd": "wait", "ticks": 200},
+    {"cmd": "drag", "around": {"owner": 0, "type": "Kri"}},
+    {"cmd": "hud_scale", "scale": 1.8},
+    {"cmd": "move", "pos": [321, 521]},
+    {"cmd": "view", "expect": [
+      {"path": "view.hud.groups.0.name", "eq": "top_bar"},
+      {"path": "view.hud.groups.2.name", "eq": "hint"},
+      {"path": "view.hud.groups.2.scale", "gt": 1.799},
+      {"path": "view.hud.groups.2.scale", "lt": 1.801},
+      {"path": "view.hud.groups.2.anchor.0", "gt": 330},
+      {"path": "view.hud.groups.2.anchor.0", "lt": 380}
+    ], "note": "the anchor is the mouse in canvas pixels (window / 0.9375)"},
+    {"cmd": "top_bar", "mode": "touch"},
+    {"cmd": "move", "pos": [700, 300]},
+    {"cmd": "view", "expect": [
+      {"path": "view.hud.groups.0.name", "eq": "top_bar"},
+      {"path": "view.hud.groups.1.name", "eq": "top_bar_text"},
+      {"path": "view.hud.groups.1.parts", "len_ge": 2}
+    ], "note": "pause and escape glyphs: the touch bar has no resource values until its panel opens"}
+  ]
+}
