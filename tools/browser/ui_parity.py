@@ -37,6 +37,7 @@ music_volume=0
 # claims later add their routes with their issues.
 ROUTES = {
     "MainMenu": [],
+    "PlayerName": ["Einzelspieler", "Zufallskarte"],
 }
 
 CHROMIUM_ARGS = {

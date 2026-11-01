@@ -80,6 +80,15 @@ mod tests {
     }
 
     #[test]
+    fn typed_umlauts_and_the_euro_sign_arrive_as_cp1252() {
+        let bytes: Vec<u8> = ["Ä", "Ö", "ü", "€"]
+            .iter()
+            .map(|c| crate::cp1252(typed(&dom_key(c, "").unwrap()).unwrap()).unwrap())
+            .collect();
+        assert_eq!(bytes, [0xc4, 0xd6, 0xfc, 0x80]);
+    }
+
+    #[test]
     fn modifiers_map_to_winit() {
         let state = modifiers(Mods { shift: true, alt: true, ..Default::default() });
         assert_eq!(state, ModifiersState::SHIFT | ModifiersState::ALT);
