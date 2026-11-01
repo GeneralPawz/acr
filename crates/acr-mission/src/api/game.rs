@@ -588,3 +588,49 @@ fn set_start_point(api: &mut Api, c: &mut Call) -> Result<u32> {
     }
     Ok(0)
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use acr_script::heap::Heap;
+    use acr_script::memory::Memory;
+    use acr_script::runtime::HostCall;
+    use acr_script::x86::Cpu;
+    use acr_sim::World;
+    use acr_sim::catalog::Catalog;
+    use acr_sim::formation::Formations;
+    use acr_sim::map::MapGrid;
+
+    use super::super::{Api, Call, Caller, function};
+    use crate::state::{ScriptSetup, ScriptState};
+    use crate::texts::MissionTexts;
+
+    fn call(name: &str, st: &mut ScriptState, caller: Caller) -> u32 {
+        let mut world = World::new(
+            Arc::new(MapGrid::open(1)),
+            Arc::new(Catalog::new()),
+            Arc::new(Formations::new(&Default::default(), &Default::default())),
+        );
+        let mut mem = Memory::new();
+        mem.map(0x1_0000, 0x1_0000);
+        let mut cpu = Cpu::new();
+        cpu.regs[usize::from(acr_script::x86::decode::reg::ESP)] = 0x1_8000;
+        let mut heap = Heap::new(0x2_0000, 0x3_0000);
+        let mut raw = HostCall { dll: "test", name, cpu: &mut cpu, mem: &mut mem, heap: &mut heap };
+        let (mut commands, mut events) = (Vec::new(), Vec::new());
+        let mut api =
+            Api { st, world: &mut world, commands: &mut commands, events: &mut events, caller, vm: 0, dip: None };
+        (function(name).expect("known").handler)(&mut api, &mut Call { raw: &mut raw }).expect("call")
+    }
+
+    /// Random maps give every computer player its own difficulty (`City+0x183`).
+    #[test]
+    fn get_difficulty_is_per_nation() {
+        let setup = ScriptSetup { difficulty: [0, 3, 2, 4, 1, 0, 2, 3], local_player: 0 };
+        let mut st = ScriptState::new(setup, MissionTexts::default());
+        for n in 0..8u8 {
+            assert_eq!(call("GetDifficulty", &mut st, Caller::Ai(n)), u32::from(setup.difficulty[usize::from(n)]));
+        }
+    }
+}
