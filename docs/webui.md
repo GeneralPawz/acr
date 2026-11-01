@@ -48,7 +48,7 @@ and clippy never need Bun.
   publishes after each frame's advance (`WebUi::publish`): only changed topics (`mode`, `loading`,
   `stage`, `screen`, `cursor`), at most one message a frame, `rev` growing by one. A gap makes the UI
   send `resync`; the answer carries every topic. Scope `ui.bridge` of the profiler.
-- **Claiming:** the registry (`ui/src/screens/registry.ts`: `MainMenu`, `PlayerName`, `Options`, `Campaigns`, `SingleMission`, `LoadGame`, `RandomMap`, `Placeholder`, `Loading`, `GameMenu`, `GameOptions`, `SaveGameDialog`, `MessageWindow`, `ChoiceWindow`, `HistoryWindow`) is announced in `ready`.
+- **Claiming:** the registry (`ui/src/screens/registry.ts`: `MainMenu`, `PlayerName`, `Options`, `Campaigns`, `SingleMission`, `LoadGame`, `RandomMap`, `Placeholder`, `Loading`, `GameMenu`, `GameOptions`, `SaveGameDialog`, `MessageWindow`, `HistoryWindow`) is announced in `ready`.
   `Ui::set_external` makes the engine skip exactly the screens the UI claims, and the cursor, but only
   while `view::screen` can describe the screen completely; otherwise the screen goes on being drawn by
   the engine (`engine_drawn: true`), never half.
@@ -81,7 +81,7 @@ A screen joins the registry when `cargo xtask ui-diff` of its screenshots, `ui=e
 `ui=svelte` at 1024x768, device pixel ratio 1, shows at least 99.5% of the pixels within +-8 per
 channel. Main menu, player name and options: 100.000%, layout 0 px (#317, #322). Campaigns, single missions and the campaign's missions (the same `SingleMission` screen, route `CampaignMissions`, ACR's Lake Erie row included): 100.000%, layout 0 px (#323). `LoadGame` (from the main menu): 100.000%, layout 0 px; its widgets' rects are the part inside their clip window, as the driver's tree reports them. `RandomMap` (players, nations, colours, teams, the scrolled option rows with ACR's Meer landscape, start; also with the landscape combo box open, route `RandomMapCombo`): 100.000%, layout 0 px over 64 widgets (#324). `Placeholder`: 100.000%, layout 0 px. `Loading` is claimed without a browser parity run: it lasts under a second in the browser and the page's driver answers nothing meanwhile, so it cannot be caught for a screenshot; it is a single picture, resolved like the backgrounds above, and the UI keeps it on screen in mode `loading`, where the engine's replay progress ("Laden 40%") became the widget `Loading/progress` (`Ui::progress_draw`).
 
-Over the running game (#325; the blank grass field, the pixels counted over the dialog's box, `ui_parity.py` routes): `GameMenu` 100.000%, `GameOptions` 100.000% (also "Weitere Optionen", route `GameOptionsMore`, and the ACR rule page, `GameOptionsRules`), `LoadGame` from the game menu (`GameLoadGame`) 100.000%, `SaveGameDialog` 99.992% (the input box's caret), layout 0 px over 8 to 24 widgets each. `MessageWindow` (the first single mission's briefing) 100.000%, `HistoryWindow` (the same mission's history) 100.000%, layout 0 px over 8 and 10 widgets. `ChoiceWindow` is claimed without a browser parity run: no mission reachable here asks a multiple choice; its widgets are the ones of the other windows and its paper box is the `backdrop` widget.
+Over the running game (#325; the blank grass field, the pixels counted over the dialog's box, `ui_parity.py` routes): `GameMenu` 100.000%, `GameOptions` 100.000% (also "Weitere Optionen", route `GameOptionsMore`, and the ACR rule page, `GameOptionsRules`), `LoadGame` from the game menu (`GameLoadGame`) 100.000%, `SaveGameDialog` 99.992% (the input box's caret), layout 0 px over 8 to 24 widgets each. `MessageWindow` (the first single mission's briefing) 100.000%, `HistoryWindow` (the same mission's history) 100.000%, layout 0 px over 8 and 10 widgets. `ChoiceWindow` is not in the registry yet and stays engine-drawn: no mission reachable here asks a multiple choice, so its parity was never measured (#462); the UI side is ready (its widgets are the ones of the other windows, its paper box is the `backdrop` widget).
 
 Typing goes as raw keys: the engine's input box takes the key's text as CP1252 (`typed` in
 `webui/keys.rs`, `cp1252` in `lib.rs`), so `ÄÖü€` is stored as the original stores it. A real `<input>`
@@ -109,7 +109,7 @@ The classic skin over the game canvas (#316): in mode `game` the page's DOM lies
 drawing the world and the HUD; the UI draws only a dialog (`ScreenPatch.in_game`) on the menu canvas of `stage`
 (`Ui.svelte`), where the engine drew it. `webui::OVER_GAME` lists the screens it may claim (`GameMenu`,
 `GameOptions`, `SaveGameDialog`, `LoadGame` from the game menu, `MessageWindow`, `ChoiceWindow`, `HistoryWindow`);
-the registry still has to name them, and any other `Screen::in_game` screen stays with the engine (`WebUi::draws`).
+the registry still has to name them (`ChoiceWindow` it does not yet, #462), and any other `Screen::in_game` screen stays with the engine (`WebUi::draws`).
 The engine takes a claimed dialog out of its frame (`Ui::set_external`) and nothing else.
 
 - **Colours:** the widgets' draws are those of the menus' screens; over the game `view::widgets` maps them through
