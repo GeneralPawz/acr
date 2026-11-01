@@ -480,6 +480,12 @@ pub struct NationList {
 }
 
 impl NationList {
+    /// The nation files the game loads (0x60e4a0 → 0x60e7f0): those of the first block, in
+    /// list order, without the placeholder entries named `-`.
+    pub fn files(&self) -> Vec<String> {
+        self.blocks.first().into_iter().flatten().filter(|e| e.name != "-").map(|e| e.file.clone()).collect()
+    }
+
     pub fn parse(data: &[u8]) -> Self {
         let mut list = NationList::default();
         let mut lines = token_lines(data).into_iter();
@@ -534,6 +540,12 @@ UP2 ICO #POSITION 0 0 #STAGELEVEL 2 MSG #COST 0 #TIME 5\r\n / BUILD x\r\n\
 [UPGRADEPLACE]\r\nEngCen(EN) 2 UP1\r\n UP2\r\n[COUNTRY]\r\nENGLAND 3\r\n#INFANTRY\r\nEngPik(EN)\r\nEngCen(EN)\r\n\
 [OFFICERS]\r\nOf(EN) NONE 1\r\nLINE 2 #L15 #L36 1 EngPik(EN)\r\n[STAGEDEPENDENT]\r\nUP1 1\r\n\
 [UPGRADEENABLE]\r\nUP1\r\n/UP2\r\n[AUTOUPGRADE]\r\nUP1 1 UP2\r\n[UNITLOCK]\r\nEngPik(EN) 3 EngPik(EN)\r\n[END]\r\n";
+
+    #[test]
+    fn lists_the_files_of_the_first_block_without_placeholders() {
+        let list = NationList::parse(b"3\r\nEN England ENG.NDS (EN)\r\n- - X.NDS (XX)\r\nIR Iroquois IROKEZ.NDS (IR)\r\n1\r\nCO Cossacks COS.NDS (CO)\r\n");
+        assert_eq!(list.files(), ["ENG.NDS", "IROKEZ.NDS"]);
+    }
 
     #[test]
     fn parses_sections() {

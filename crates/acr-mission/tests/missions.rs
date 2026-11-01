@@ -190,3 +190,26 @@ fn a_tribe_offers_an_alliance_and_sells_its_services() {
     assert!(world.players[0].resources[1] < gold, "the offer was not paid");
     assert!(scripts.errors().is_empty(), "{:?}", scripts.errors());
 }
+
+/// Only the nation files of `NATIONS.LST` count (#473): the stale `TEXT\IROKEZ.NDS` enabled the
+/// Iroquois' `IroLut(IR)` and `IroTam(IR)` at the start; they need their ENABLE research.
+#[test]
+fn iroquois_units_wait_for_their_enable_research() {
+    use acr_sim::tech::Effect;
+    let Some(mut vfs) = game() else { return };
+    let paths: Vec<String> = vfs.list().map(|(p, _)| p.to_owned()).collect();
+    let mut assets = SimAssets::default();
+    let mut queue = assets.start(&paths);
+    while let Some(p) = queue.pop() {
+        let data = vfs.read(&p).ok();
+        queue.extend(assets.add_file(&p, data.as_deref()));
+    }
+    let catalog = assets.build().catalog;
+    for name in ["IroLut(IR)", "IroTam(IR)"] {
+        let t = catalog.find(name).expect(name);
+        assert!(!catalog.tech.of(t).is_some_and(|x| x.start_enabled), "{name} is enabled at the start");
+        let up = catalog.tech.find_upgrade(&format!("{name}ENABLE")).expect("enable research");
+        let Effect::Enable { units, .. } = &catalog.tech.upgrade(up).effect else { panic!("not an ENABLE upgrade") };
+        assert!(units.contains(&t), "{name}ENABLE does not enable {name}");
+    }
+}
