@@ -8,7 +8,7 @@
 use std::collections::HashMap;
 
 use acr_formats::CodePage;
-use acr_ui_protocol::{CanvasView, CursorView, Part, WidgetKind, WidgetView};
+use acr_ui_protocol::{CanvasView, CursorView, Part, WidgetKind, WidgetValue, WidgetView};
 
 use super::assets::{self, AssetError, FramePalette};
 use crate::canvas::Canvas;
@@ -193,6 +193,14 @@ pub struct ScreenView {
     pub widgets: Vec<WidgetView>,
 }
 
+/// The widget's kind for the UI: a text button that reports nothing is a static text.
+fn widget_kind(w: &crate::ui::dialog::Widget) -> WidgetKind {
+    match &w.kind {
+        Kind::TextButton(_) | Kind::GpTextButton(_) if w.param.is_none() => WidgetKind::Text,
+        k => kind(k),
+    }
+}
+
 fn kind(kind: &Kind) -> WidgetKind {
     match kind {
         Kind::Area => WidgetKind::Area,
@@ -206,6 +214,31 @@ fn kind(kind: &Kind) -> WidgetKind {
         Kind::ComboBox(_) => WidgetKind::Combo,
         Kind::TextViewer(_) => WidgetKind::Viewer,
         Kind::InputBox(_) => WidgetKind::Input,
+    }
+}
+
+fn text(bytes: &[u8]) -> String {
+    CodePage::Cp1252.decode(bytes)
+}
+
+/// The text and state of a widget for a skin that lays widgets out by role.
+fn describe(kind: &Kind) -> (Option<String>, Option<WidgetValue>) {
+    let rows = |lines: &[Vec<u8>]| lines.iter().map(|l| text(l)).collect::<Vec<_>>();
+    match kind {
+        Kind::TextButton(b) => (Some(text(&b.text)), None),
+        Kind::GpTextButton(b) => (Some(text(&b.text)), None),
+        Kind::Universal(u) => (Some(text(&u.text)), Some(WidgetValue::Check { on: u.state != 0 })),
+        Kind::ListBox(l) => (
+            None,
+            Some(WidgetValue::List { rows: rows(&l.items), selected: (l.cur < l.items.len()).then_some(l.cur as u32) }),
+        ),
+        Kind::ComboBox(c) => {
+            (None, Some(WidgetValue::Combo { options: rows(&c.lines), selected: c.cur as u32, open: c.open }))
+        }
+        Kind::Slider(s) => (None, Some(WidgetValue::Range { value: s.pos, max: s.max })),
+        Kind::InputBox(i) => (None, Some(WidgetValue::Input { text: text(&i.text), capacity: i.capacity as u32 })),
+        Kind::TextViewer(v) => (None, Some(WidgetValue::Viewer { text: text(v.text()) })),
+        _ => (None, None),
     }
 }
 
@@ -234,13 +267,16 @@ pub fn widgets(
     let mut out = Vec::with_capacity(dialog.widgets.len() + 1);
     for (i, w) in dialog.widgets.iter().enumerate() {
         let parts = resolver.parts(lib, fonts, &colours(dialog.widget_draws(lib, fonts, i), in_game))?;
+        let (label, value) = describe(&w.kind);
         out.push(WidgetView {
             id: format!("{screen}/{i}"),
             key: w.key.clone(),
-            kind: kind(&w.kind),
+            kind: widget_kind(w),
             rect: rect4(shown_rect(dialog, i)),
             enabled: w.enabled,
             hover: w.hover,
+            label,
+            value,
             parts,
         });
     }
@@ -253,6 +289,8 @@ pub fn widgets(
             rect: [0, 0, 0, 0],
             enabled: true,
             hover: false,
+            label: None,
+            value: None,
             parts: resolver.parts(lib, fonts, &colours(dropdown, in_game))?,
         });
     }
@@ -267,16 +305,18 @@ fn progress(
     screen: &str,
     draw: &Draw,
 ) -> Result<WidgetView, Failure> {
-    let Sprite::Text { font, text } = &draw.sprite else {
+    let Sprite::Text { font, text: bytes } = &draw.sprite else {
         return Err(Failure::Unsupported(format!("{:?}", draw.sprite)));
     };
     Ok(WidgetView {
         id: format!("{screen}/progress"),
         key: None,
         kind: WidgetKind::Text,
-        rect: [draw.x, draw.y, fonts.width(lib, *font, text), fonts.height(lib, *font)],
+        rect: [draw.x, draw.y, fonts.width(lib, *font, bytes), fonts.height(lib, *font)],
         enabled: true,
         hover: false,
+        label: Some(text(bytes)),
+        value: None,
         parts: resolver.parts(lib, fonts, std::slice::from_ref(draw))?,
     })
 }
@@ -321,6 +361,8 @@ pub fn screen(resolver: &mut Resolver, ui: &Ui) -> Result<Option<ScreenView>, Fa
                         rect: rect4(rect.unwrap_or(Rect::SCREEN)),
                         enabled: true,
                         hover: false,
+                        label: None,
+                        value: None,
                         parts: resolver.parts(lib, fonts, &colours(backdrop, in_game))?,
                     },
                 );

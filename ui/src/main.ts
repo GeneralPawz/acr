@@ -2,6 +2,7 @@ import { mount } from 'svelte';
 import type { Bridge } from './lib/bridge';
 import { nativeBridge, webBridge } from './lib/bridge';
 import { FontCache } from './lib/fonts';
+import { pixelRatio } from './lib/pixels';
 import type { FromUi } from './lib/protocol/FromUi';
 import { UiState } from './lib/state.svelte';
 import { HUD, SCREENS } from './screens/registry';
@@ -17,7 +18,7 @@ export function mountUi(target: HTMLElement, bridge: Bridge) {
   const app = mount(Root, { target, props: { bridge, fonts: new FontCache(bridge), model: state } });
   const viewport = (): Pick<Extract<FromUi, { t: 'viewport' }>, 'viewport' | 'dpr'> => ({
     viewport: [window.innerWidth, window.innerHeight],
-    dpr: window.devicePixelRatio || 1,
+    dpr: pixelRatio(),
   });
   window.addEventListener('resize', () => bridge.send({ t: 'viewport', ...viewport() }));
   bridge.send({ t: 'ready', protocol: PROTOCOL, screens: [...SCREENS], hud: [...HUD], ...viewport() });

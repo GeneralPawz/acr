@@ -48,6 +48,10 @@ pub enum ToUi {
         protocol: u32,
         host: Host,
         asset_base: String,
+        /// The player's `ui_skin` setting; the UI resolves `auto` itself from the viewport
+        /// ([`FromUi::Skin`] tells the game what it chose).
+        #[serde(default)]
+        skin: SkinSetting,
     },
     View(ViewPatch),
     /// The game refused the [`FromUi::Intent`] numbered `seq`; nothing changed. `reason` is
@@ -64,6 +68,28 @@ pub enum ToUi {
 pub enum Host {
     Native,
     Web,
+}
+
+/// The `ui_skin` setting (`settings.txt`): `auto` is the classic skin with a fine pointer on a wide
+/// viewport and the touch skin otherwise (docs/webui.md "Touch skin").
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export, export_to = export_dir!()))]
+pub enum SkinSetting {
+    #[default]
+    Auto,
+    Classic,
+    Touch,
+}
+
+/// The skin the UI draws with.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export, export_to = export_dir!()))]
+pub enum Skin {
+    #[default]
+    Classic,
+    Touch,
 }
 
 /// What the app shows (`Game.mode`).
@@ -101,6 +127,70 @@ pub struct ViewPatch {
     /// The parts of the in-game interface the UI draws (mode `game`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hud: Option<Box<HudPatch>>,
+    /// The touch skin's view of the interface (only while the UI named [`Skin::Touch`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub touch: Option<Box<TouchHud>>,
+}
+
+/// The in-game interface as the touch skin lays it out: semantic pieces, each with the draws of
+/// its original art in its own pixel space, instead of the classic skin's canvas groups. Taps go
+/// back as intents on the ids (`hud/<slot>`, `army/<slot>`, `bar/menu`, `bar/pause`, `minimap`).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export, export_to = export_dir!()))]
+pub struct TouchHud {
+    /// The six resources, in the bar's order.
+    pub resources: Vec<ResourceView>,
+    /// The command grid's icons (the selected types and formations, the commands, production).
+    pub icons: Vec<IconView>,
+    /// The army list's icons.
+    pub army: Vec<IconView>,
+    /// The game is paused.
+    pub paused: bool,
+    /// The game has a minimap (`minimap` takes taps on it).
+    pub minimap: bool,
+}
+
+/// A resource of the top bar: its icon and number.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export, export_to = export_dir!()))]
+pub struct ResourceView {
+    /// `wood`, `gold`, `stone`, `food`, `iron` or `coal`.
+    pub key: String,
+    pub value: u32,
+    /// `[w, h]` of the draws' box.
+    pub size: [i32; 2],
+    pub parts: Vec<Part>,
+}
+
+/// What an icon asks for when it is tapped.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export, export_to = export_dir!()))]
+pub enum IconRole {
+    /// Keeps a selected type or formation (the selection summary).
+    Select,
+    /// A command, a production or an upgrade.
+    Command,
+    /// A formation of the army list.
+    Army,
+}
+
+/// One icon of the command grid or the army list.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export, export_to = export_dir!()))]
+pub struct IconView {
+    /// `hud/<slot>` or `army/<slot>`.
+    pub id: String,
+    pub role: IconRole,
+    /// `[w, h]` of the draws' box.
+    pub size: [i32; 2],
+    pub parts: Vec<Part>,
+    /// The hint text (empty: none), for a long press.
+    pub hint: String,
+    pub disabled: bool,
+    pub selected: bool,
+    /// A tap does something (the icon is not disabled and has a command).
+    pub clickable: bool,
 }
 
 /// Where the two canvases lie in the window.
@@ -163,8 +253,48 @@ pub struct WidgetView {
     pub rect: [i32; 4],
     pub enabled: bool,
     pub hover: bool,
+    /// The widget's text, for a skin that lays widgets out by role (a button's or check's label).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub label: Option<String>,
+    /// The widget's state: a list's rows, a combo box's options, a slider's position, a text.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub value: Option<WidgetValue>,
     /// What the widget draws, in order.
     pub parts: Vec<Part>,
+}
+
+/// The state a skin that does not draw the original's pixels needs of a widget.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "t", rename_all = "snake_case")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export, export_to = export_dir!()))]
+pub enum WidgetValue {
+    List {
+        rows: Vec<String>,
+        selected: Option<u32>,
+    },
+    Combo {
+        options: Vec<String>,
+        selected: u32,
+        open: bool,
+    },
+    /// A slider: `0..=max`.
+    Range {
+        value: i32,
+        max: i32,
+    },
+    Input {
+        text: String,
+        capacity: u32,
+    },
+    Viewer {
+        text: String,
+    },
+    /// A check or radio button of a strip.
+    Check {
+        on: bool,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -293,6 +423,18 @@ pub enum FromUi {
     Key { key: String, code: String, down: bool, repeat: bool, mods: Mods },
     /// The page lost the focus: held keys and buttons are released.
     Blur,
+    /// The skin the UI draws with now (it resolves `ui_skin=auto` from the viewport and the
+    /// pointer). The touch skin takes the HUD's pixels away from the game and gets
+    /// [`ViewPatch::touch`]; sent after [`ToUi::Hello`] and whenever the choice changes.
+    Skin { skin: Skin },
+    /// A finger on the map (physical pixels), for the game's touch gestures (`touch.rs`).
+    Touch {
+        #[cfg_attr(feature = "ts", ts(type = "number"))]
+        id: u64,
+        phase: TouchPhase,
+        x: f32,
+        y: f32,
+    },
     /// The touch skin asks for a widget's effect without a pixel: Rust checks it and answers
     /// [`ToUi::Rejected`] with the same `seq` if it cannot be applied. `id` is a widget's id
     /// (`<Screen>/<index>`), a HUD icon's (`hud/<slot>`, `army/<slot>`) or `minimap`.
@@ -333,6 +475,15 @@ pub enum Phase {
     Down,
     Up,
     Cancel,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export, export_to = export_dir!()))]
+pub enum TouchPhase {
+    Started,
+    Moved,
+    Ended,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -389,6 +540,8 @@ mod tests {
             rect: [0; 4],
             enabled: true,
             hover: false,
+            label: None,
+            value: None,
             parts: Vec::new(),
         };
         let without = serde_json::to_string(&widget(None)).unwrap();
@@ -407,5 +560,45 @@ mod tests {
         let rejected = ToUi::Rejected { seq: 7, reason: "no widget".into() };
         assert_eq!(serde_json::to_string(&rejected).unwrap(), r#"{"t":"rejected","seq":7,"reason":"no widget"}"#);
         assert!(serde_json::from_str::<FromUi>(r#"{"t":"intent","seq":1,"id":"a","action":{"t":"nope"}}"#).is_err());
+    }
+
+    #[test]
+    fn the_skin_travels_both_ways_and_a_touch_is_a_finger() {
+        let hello =
+            ToUi::Hello { protocol: PROTOCOL, host: Host::Web, asset_base: String::new(), skin: SkinSetting::Touch };
+        let json = serde_json::to_string(&hello).unwrap();
+        assert!(json.contains(r#""skin":"touch""#), "{json}");
+        // An older game says nothing: `auto`.
+        let old = r#"{"t":"hello","protocol":1,"host":"web","asset_base":""}"#;
+        assert_eq!(
+            serde_json::from_str::<ToUi>(old).unwrap(),
+            ToUi::Hello { protocol: 1, host: Host::Web, asset_base: String::new(), skin: SkinSetting::Auto }
+        );
+        let skin: FromUi = serde_json::from_str(r#"{"t":"skin","skin":"touch"}"#).unwrap();
+        assert_eq!(skin, FromUi::Skin { skin: Skin::Touch });
+        let touch: FromUi = serde_json::from_str(r#"{"t":"touch","id":2,"phase":"started","x":1.5,"y":2}"#).unwrap();
+        assert_eq!(touch, FromUi::Touch { id: 2, phase: TouchPhase::Started, x: 1.5, y: 2.0 });
+        assert!(serde_json::from_str::<FromUi>(r#"{"t":"skin","skin":"auto"}"#).is_err());
+    }
+
+    #[test]
+    fn a_widget_carries_its_label_and_value_only_when_it_has_them() {
+        let widget = WidgetView {
+            id: "S/2".into(),
+            key: None,
+            kind: WidgetKind::List,
+            rect: [0; 4],
+            enabled: true,
+            hover: false,
+            label: None,
+            value: Some(WidgetValue::List { rows: vec!["a".into()], selected: Some(0) }),
+            parts: Vec::new(),
+        };
+        let json = serde_json::to_string(&widget).unwrap();
+        assert!(
+            !json.contains("label") && json.contains(r#""value":{"t":"list","rows":["a"],"selected":0}"#),
+            "{json}"
+        );
+        assert_eq!(serde_json::from_str::<WidgetView>(&json).unwrap(), widget);
     }
 }

@@ -5,7 +5,9 @@ import type { CursorView } from './protocol/CursorView';
 import type { HudGroup } from './protocol/HudGroup';
 import type { Mode } from './protocol/Mode';
 import type { ScreenPatch } from './protocol/ScreenPatch';
+import type { SkinSetting } from './protocol/SkinSetting';
 import type { Stage } from './protocol/Stage';
+import type { TouchHud } from './protocol/TouchHud';
 import type { ToUi } from './protocol/ToUi';
 import type { WidgetView } from './protocol/WidgetView';
 
@@ -23,8 +25,12 @@ export class UiState {
   cursor = $state.raw<CursorView | null>(null);
   /** The groups of the in-game interface, in stacking order. */
   hud = $state.raw<HudGroup[]>([]);
+  /** The touch skin's view of the interface (the last `touch` topic). */
+  touch = $state.raw<TouchHud | null>(null);
   /** Game protocol version of the last `Hello`. */
   protocol = $state.raw<number | null>(null);
+  /** The player's `ui_skin` of the last `Hello`. */
+  skinSetting = $state.raw<SkinSetting>('auto');
 
   #rev = 0;
   #awaitingSnapshot = false;
@@ -42,12 +48,16 @@ export class UiState {
   receive(message: ToUi): void {
     if (message.t === 'hello') {
       this.protocol = message.protocol;
+      this.skinSetting = message.skin ?? 'auto';
       this.#rev = 0;
       this.#awaitingSnapshot = false;
       return;
     }
-    // Only the touch skin sends intents and answers a refusal (#332).
-    if (message.t === 'rejected') return;
+    // The game says why it refused an intent; nothing changed, so the log is all there is to do.
+    if (message.t === 'rejected') {
+      console.warn(`intent ${message.seq} refused: ${message.reason}`);
+      return;
+    }
     const patch = message;
     if (this.#awaitingSnapshot && !isSnapshot(patch)) return;
     if (!this.#awaitingSnapshot && patch.rev !== this.#rev + 1) {
@@ -63,6 +73,7 @@ export class UiState {
     if (patch.loading !== undefined) this.loading = patch.loading;
     if (patch.stage != null) this.stage = patch.stage;
     if (patch.cursor !== undefined) this.cursor = patch.cursor;
+    if (patch.touch != null) this.touch = patch.touch;
     if (patch.hud != null) this.hud = applyHud(snapshot ? [] : this.hud, patch.hud);
     if (patch.screen != null) {
       const { widgets, ...info } = patch.screen;

@@ -25,11 +25,13 @@ pub mod web;
 use std::collections::HashMap;
 
 use acr_ui_protocol::{
-    Host, HudGroup, HudPatch, Mode, PROTOCOL, ScreenPatch, Stage, ToUi, ViewPatch, WidgetView, WidgetsPatch,
+    Host, HudGroup, HudPatch, IconRole, IconView, Mode, PROTOCOL, ResourceView, ScreenPatch, Skin, SkinSetting, Stage,
+    ToUi, TouchHud, ViewPatch, WidgetView, WidgetsPatch,
 };
 pub use assets::{AssetBody, AssetError, AssetReply};
 
 use crate::canvas::Canvas;
+use crate::hud::touch_skin::{Role, TouchIcon, TouchView};
 use crate::hud::{Claim, Claimed};
 use crate::ui::draw::Draw;
 use crate::ui::{External, Ui};
@@ -100,6 +102,8 @@ struct Sent {
     /// The groups of the in-game interface, with the draws they were made from; `None` until the
     /// first patch of a connection (or a resync), which then carries the topic even if empty.
     hud: Option<HashMap<String, SentGroup>>,
+    /// The touch skin's pieces as last sent, before they were resolved.
+    touch: Option<TouchView>,
 }
 
 /// A group of the interface as the UI has it: the draws it was made from (at its last full send),
@@ -190,11 +194,22 @@ pub struct WebUi {
     pub viewport: ([f32; 2], f32),
     /// Last modifier state forwarded, to report changes only.
     pub mods: acr_ui_protocol::Mods,
+    /// The skin the UI named ([`FromUi::Skin`]); the touch skin gets [`ViewPatch::touch`] and
+    /// the whole interface claimed.
+    skin: Skin,
+    /// The touch skin's pieces of the frame being published ([`WebUi::set_touch_view`]).
+    touch_view: Option<TouchView>,
 }
 
 impl WebUi {
     /// A UI that announced `Ready` for `claimed`; answers with `Hello`.
-    pub fn new(
+    pub fn new(send: Sender, host: Host, claimed: Vec<String>, hud: Vec<String>, viewport: [f32; 2], dpr: f32) -> Self {
+        Self::with_skin(SkinSetting::Auto, send, host, claimed, hud, viewport, dpr)
+    }
+
+    /// Like [`WebUi::new`], with the player's `ui_skin` setting for the `Hello`.
+    pub fn with_skin(
+        skin_setting: SkinSetting,
         mut send: Sender,
         host: Host,
         claimed: Vec<String>,
@@ -202,7 +217,7 @@ impl WebUi {
         viewport: [f32; 2],
         dpr: f32,
     ) -> Self {
-        let hello = ToUi::Hello { protocol: PROTOCOL, host, asset_base: String::new() };
+        let hello = ToUi::Hello { protocol: PROTOCOL, host, asset_base: String::new(), skin: skin_setting };
         send(&serde_json::to_string(&hello).expect("hello serializes"));
         Self {
             send,
@@ -221,7 +236,28 @@ impl WebUi {
             waiting: Vec::new(),
             viewport: (viewport, dpr),
             mods: Default::default(),
+            skin: Skin::Classic,
+            touch_view: None,
         }
+    }
+
+    /// The UI draws with `skin` from now on; the touch skin's pieces are sent afresh.
+    pub fn set_skin(&mut self, skin: Skin) {
+        if self.skin != skin {
+            self.skin = skin;
+            self.sent.touch = None;
+            self.sent.hud = None;
+        }
+    }
+
+    /// The touch skin draws the interface.
+    pub fn touch(&self) -> bool {
+        self.skin == Skin::Touch
+    }
+
+    /// The pieces the touch skin lays out this frame (`None`: not a running game).
+    pub fn set_touch_view(&mut self, view: Option<TouchView>) {
+        self.touch_view = view;
     }
 
     /// Whether the UI draws the current screen, as of the last [`WebUi::publish`].
@@ -240,6 +276,11 @@ impl WebUi {
     /// darkens sprite and text edges that the browser composites correctly, so the two differ on
     /// every edge (#464); until that is fixed the engine keeps the HUD there.
     pub fn hud_claim(&self, scale: f32) -> Claim {
+        // The touch skin lays everything out itself, so nothing of the engine's pixels is to
+        // match, whatever the scale.
+        if self.touch() {
+            return Claim { touch: true, ..Claim::ALL };
+        }
         let whole = scale.fract() == 0.0;
         let has = |part: &str| self.claim_all || (self.transparent && whole && self.hud.iter().any(|p| p == part));
         Claim {
@@ -253,6 +294,7 @@ impl WebUi {
             army: has("ArmyList"),
             game_panel: has("GamePanel"),
             editor: has("Editor"),
+            touch: false,
         }
     }
 
@@ -419,10 +461,69 @@ impl WebUi {
             }
         }
 
+        match self.touch_patch(ui) {
+            Ok(Some(touch)) => {
+                patch.touch = Some(Box::new(touch));
+                changed = true;
+            }
+            Ok(None) | Err(view::Failure::Pending) => {}
+            Err(e) => {
+                log::error!("webui: the touch interface: {e:?}");
+                if matches!(e, view::Failure::Asset(_)) {
+                    self.error = Some(format!("{e:?}"));
+                }
+            }
+        }
+
         if changed {
             self.rev += 1;
             (self.send)(&serde_json::to_string(&ToUi::View(patch)).expect("view serializes"));
         }
+    }
+
+    /// The touch skin's topic if its pieces changed since the last patch.
+    fn touch_patch(&mut self, ui: &Ui) -> Result<Option<TouchHud>, view::Failure> {
+        let Some(view) = self.touch_view.take().filter(|_| self.touch()) else { return Ok(None) };
+        if self.sent.touch.as_ref() == Some(&view) {
+            return Ok(None);
+        }
+        let (lib, fonts) = ui.assets();
+        let text = |bytes: &[u8]| acr_formats::CodePage::Cp1252.decode(bytes);
+        let mut resources = Vec::new();
+        for r in &view.resources {
+            let parts = self.resolver.parts(lib, fonts, &r.draws)?;
+            resources.push(ResourceView { key: r.key.to_owned(), value: r.value, size: r.size, parts });
+        }
+        let mut icons = |list: &[TouchIcon]| -> Result<Vec<IconView>, view::Failure> {
+            list.iter()
+                .map(|i| {
+                    Ok(IconView {
+                        id: i.id.clone(),
+                        role: match i.role {
+                            Role::Select => IconRole::Select,
+                            Role::Command => IconRole::Command,
+                            Role::Army => IconRole::Army,
+                        },
+                        size: i.size,
+                        parts: self.resolver.parts(lib, fonts, &i.draws)?,
+                        hint: text(&i.hint),
+                        disabled: i.disabled,
+                        selected: i.selected,
+                        clickable: i.clickable,
+                    })
+                })
+                .collect()
+        };
+        let touch = TouchHud {
+            resources,
+            icons: icons(&view.icons)?,
+            army: icons(&view.army)?,
+            paused: view.paused,
+            minimap: view.minimap,
+        };
+        // Recorded only once everything could be made: a retry sends it all.
+        self.sent.touch = Some(view);
+        Ok(Some(touch))
     }
 
     /// The interface topic: the groups whose draws changed, and the ones that are gone. Draws are
@@ -561,6 +662,10 @@ pub fn referenced(patch: &ViewPatch) -> Vec<String> {
     if let Some(hud) = &patch.hud {
         hud.groups.iter().flat_map(|g| &g.parts).for_each(&mut part);
     }
+    if let Some(touch) = &patch.touch {
+        touch.resources.iter().flat_map(|r| &r.parts).for_each(&mut part);
+        touch.icons.iter().chain(&touch.army).flat_map(|i| &i.parts).for_each(&mut part);
+    }
     if let Some(Some(cursor)) = &patch.cursor {
         out.push(cursor.url.clone());
     }
@@ -632,6 +737,8 @@ mod tests {
             rect: [0; 4],
             enabled: true,
             hover: false,
+            label: None,
+            value: None,
             parts,
         };
         let sprite = |url: &str| Part::Sprite { url: url.into(), x: 0, y: 0, w: 1, h: 1, alpha: 1.0, clip: None };
@@ -820,6 +927,45 @@ mod tests {
         other.draws[2] = Draw::game_text(font::YELLOW, b"STEIN", 16, 22);
         let p = web.hud_patch(&ui, vec![other]).unwrap().unwrap();
         assert_eq!(p.groups.len(), 1);
+    }
+
+    #[test]
+    fn the_touch_skin_claims_the_whole_interface_at_any_scale_and_host() {
+        let mut web = WebUi::new(Box::new(|_| {}), Host::Native, vec![], vec![], [1.0; 2], 1.0);
+        assert_eq!(web.hud_claim(1.40625), Claim::default());
+        web.set_skin(Skin::Touch);
+        assert!(web.touch());
+        assert_eq!(web.hud_claim(1.40625), Claim { touch: true, ..Claim::ALL });
+        web.set_skin(Skin::Classic);
+        assert_eq!(web.hud_claim(1.0), Claim::default());
+    }
+
+    #[test]
+    fn a_patch_refers_to_the_touch_pieces_assets() {
+        use acr_ui_protocol::Part;
+        let sprite = |url: &str| Part::Sprite { url: url.into(), x: 0, y: 0, w: 1, h: 1, alpha: 1.0, clip: None };
+        let icon = IconView {
+            id: "hud/3".into(),
+            role: IconRole::Command,
+            size: [40, 40],
+            parts: vec![sprite("frame/game/0/ICONS.GP/7")],
+            hint: String::new(),
+            disabled: false,
+            selected: false,
+            clickable: true,
+        };
+        let touch = TouchHud {
+            resources: vec![ResourceView {
+                key: "wood".into(),
+                value: 5,
+                size: [40, 35],
+                parts: vec![sprite("frame/game/0/RESPANEL.GP/0")],
+            }],
+            icons: vec![icon],
+            ..TouchHud::default()
+        };
+        let patch = ViewPatch { rev: 1, touch: Some(Box::new(touch)), ..Default::default() };
+        assert_eq!(referenced(&patch), vec!["frame/game/0/ICONS.GP/7", "frame/game/0/RESPANEL.GP/0"]);
     }
 
     #[test]

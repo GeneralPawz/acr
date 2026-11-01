@@ -3,6 +3,7 @@ import type { HudPatch } from "./HudPatch";
 import type { Mode } from "./Mode";
 import type { ScreenPatch } from "./ScreenPatch";
 import type { Stage } from "./Stage";
+import type { TouchHud } from "./TouchHud";
 
 /**
  * Changed topics of the view model since the last patch. `rev` grows by one with every
@@ -20,4 +21,8 @@ cursor?: import("./CursorView").CursorView | null,
 /**
  * The parts of the in-game interface the UI draws (mode `game`).
  */
-hud?: HudPatch | null, };
+hud?: HudPatch | null, 
+/**
+ * The touch skin's view of the interface (only while the UI named [`Skin::Touch`]).
+ */
+touch?: TouchHud | null, };

@@ -33,7 +33,8 @@ pub fn apply(game: &mut Game, event_loop: &ActiveEventLoop, message: FromUi) {
                 return;
             };
             game.ui.set_external(Some(External { screens: screens.clone(), cursor: true }));
-            game.webui = Some(WebUi::new(send, super::HOST, screens, hud, viewport, dpr));
+            game.webui =
+                Some(WebUi::with_skin(game.ui.settings().ui_skin, send, super::HOST, screens, hud, viewport, dpr));
         }
         // Every other message needs a UI that said Ready.
         other => {
@@ -44,6 +45,8 @@ pub fn apply(game: &mut Game, event_loop: &ActiveEventLoop, message: FromUi) {
             match other {
                 FromUi::Viewport { viewport, dpr } => web.viewport = (viewport, dpr),
                 FromUi::Resync => web.resync(),
+                FromUi::Skin { skin } => web.set_skin(skin),
+                FromUi::Touch { id, phase, x, y } => game.ui_touch(id, phase, [x, y], event_loop),
                 FromUi::Pointer { phase, x, y, button, mods } => {
                     mods_changed(game, mods);
                     pointer(game, event_loop, phase, [x, y], button.unwrap_or(Button::Left));

@@ -234,6 +234,10 @@ impl Game {
             Mode::InGame(g) if g.ready() => g.take_claimed(),
             _ => Vec::new(),
         };
+        web.set_touch_view(match &mut self.mode {
+            Mode::InGame(g) if g.ready() => g.take_touch_view(),
+            _ => None,
+        });
         web.publish(&mut self.ui, mode, loading, size, hud);
         // The webview covers the window exactly while the UI draws the screen; the movies and
         // the game are the engine's.
@@ -507,6 +511,10 @@ impl Game {
                 game.set_scale_factor(density);
                 let scale = Canvas::fit(size).scale;
                 game.set_hud_claim(self.webui.as_ref().map(|w| w.hud_claim(scale)).unwrap_or_default());
+                // The touch skin's buttons are intents; a pixel never reaches the HUD under them.
+                if self.webui.as_ref().is_some_and(|w| w.touch()) {
+                    game.set_hud_input(false);
+                }
                 let (l, images, cursor) = game.interface(&self.ui.ctx(), size, game_dt);
                 layers = l;
                 // The "Zielhilfe" icon's switch is kept in `settings.txt` (`aim_guides`).
@@ -1218,12 +1226,35 @@ impl Game {
             TouchPhase::Moved => touch::Phase::Moved,
             TouchPhase::Ended | TouchPhase::Cancelled => touch::Phase::Ended,
         };
+        self.touch_at(touch.id, phase, [touch.location.x, touch.location.y], event_loop);
+    }
+
+    /// A finger of the Svelte UI's map (`FromUi::Touch`, window pixels): the same gestures.
+    fn ui_touch(&mut self, id: u64, phase: acr_ui_protocol::TouchPhase, at: [f32; 2], event_loop: &ActiveEventLoop) {
+        use acr_ui_protocol::TouchPhase;
+        // A finger of the UI is touch mode on every platform (a browser has one mode otherwise).
+        if self.input_mode != input_mode::InputMode::Touch {
+            self.input_mode = input_mode::InputMode::Touch;
+            if let Mode::InGame(game) = &mut self.mode {
+                game.set_input_mode(self.ui.settings(), self.input_mode);
+            }
+        }
+        let phase = match phase {
+            TouchPhase::Started => touch::Phase::Started,
+            TouchPhase::Moved => touch::Phase::Moved,
+            TouchPhase::Ended => touch::Phase::Ended,
+        };
+        let at = self.to_render(PhysicalPosition::new(f64::from(at[0]), f64::from(at[1])));
+        self.touch_at(id, phase, [at.x, at.y], event_loop);
+    }
+
+    fn touch_at(&mut self, id: u64, phase: touch::Phase, at: [f64; 2], event_loop: &ActiveEventLoop) {
         if let Some(window) = &self.window {
             self.touches.set_scale(window.scale_factor() * self.input_factor());
         }
         let paused = matches!(&self.mode, Mode::InGame(g) if g.paused());
         let now = self.touch_now();
-        let gestures = self.touches.event(touch.id, phase, [touch.location.x, touch.location.y], now, paused);
+        let gestures = self.touches.event(id, phase, at, now, paused);
         self.gestures(gestures, event_loop);
     }
 
@@ -1396,6 +1427,9 @@ impl Game {
         let hud = match (id, action) {
             ("minimap", Action::MinimapAt { uv, button }) => {
                 Some(ingame::HudIntent::Minimap { uv: *uv, right: *button == Button::Right })
+            }
+            (_, Action::Click { button: Button::Left, .. }) if id.starts_with("bar/") => {
+                Some(ingame::HudIntent::Bar { id })
             }
             (_, Action::Click { button, .. }) if id.starts_with("hud/") || id.starts_with("army/") => {
                 Some(ingame::HudIntent::Icon { id, right: *button == Button::Right })

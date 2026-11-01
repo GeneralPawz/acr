@@ -4,7 +4,8 @@
   import { MoveCoalescer, browserKey, buttonOf, modsOf, wheelLines } from './input';
 
   const { bridge, model } = ui();
-  let { dpr }: { dpr: number } = $props();
+  /** `touch`: a finger is sent as a touch (the game's gestures: tap, long press, pan, pinch); a mouse still is the pointer. */
+  let { dpr, touch = false }: { dpr: number; touch?: boolean } = $props();
 
   // Raw input in window (physical) pixels. Nothing is hit-tested here: the game owns the
   // widgets and the cursor's meaning.
@@ -39,9 +40,16 @@
     else out.send(message);
   }
 
+  function finger(e: PointerEvent, phase: 'started' | 'moved' | 'ended') {
+    out.send({ t: 'touch', id: e.pointerId, phase, x: e.clientX * dpr, y: e.clientY * dpr });
+  }
+
+  const isFinger = (e: PointerEvent) => touch && e.pointerType === 'touch';
+
   function down(e: PointerEvent) {
     bridge.unlockAudio?.();
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    if (isFinger(e)) return finger(e, 'started');
     pointer(e, 'down');
   }
 
@@ -90,10 +98,10 @@
   class="viewport"
   data-acr-viewport
   style:cursor={cursorUrl}
-  onpointermove={(e) => pointer(e, 'move')}
+  onpointermove={(e) => (isFinger(e) ? finger(e, 'moved') : pointer(e, 'move'))}
   onpointerdown={down}
-  onpointerup={(e) => pointer(e, 'up')}
-  onpointercancel={(e) => pointer(e, 'cancel')}
+  onpointerup={(e) => (isFinger(e) ? finger(e, 'ended') : pointer(e, 'up'))}
+  onpointercancel={(e) => (isFinger(e) ? finger(e, 'ended') : pointer(e, 'cancel'))}
   oncontextmenu={(e) => e.preventDefault()}
   onwheel={wheel}
 ></div>

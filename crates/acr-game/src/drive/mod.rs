@@ -520,6 +520,10 @@ impl Driver {
             dpr: 1.0,
         };
         crate::webui::input::apply(game, event_loop, ready);
+        if self.touch() {
+            let skin = acr_ui_protocol::FromUi::Skin { skin: acr_ui_protocol::Skin::Touch };
+            crate::webui::input::apply(game, event_loop, skin);
+        }
         match game.webui.as_mut() {
             Some(web) => web.claim_everything(),
             None => self.ui_error = Some("--ui classic|touch: the game did not accept the UI".into()),
