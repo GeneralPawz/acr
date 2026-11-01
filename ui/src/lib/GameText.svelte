@@ -66,6 +66,6 @@
   .glyph {
     position: absolute;
     background-repeat: no-repeat;
-    image-rendering: pixelated;
+    image-rendering: var(--acr-image-rendering, pixelated);
   }
 </style>

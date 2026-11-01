@@ -610,11 +610,39 @@ impl InGame {
     /// Mission messages and dialogs drawn over the map (the interface's canvas,
     /// [`InGame::screen_canvas`]).
     pub fn overlay(&self, ctx: &crate::ui::Ctx) -> Vec<crate::ui::draw::Draw> {
-        let mut out = Vec::new();
-        self.mission.draws(ctx, self.interface.hud.screen(), &mut out);
-        self.save_overlay(&mut out);
-        self.editor_overlay(ctx, &mut out);
+        let (mut out, rest) = self.overlay_split(ctx);
+        out.extend(rest);
         out
+    }
+
+    /// [`InGame::overlay`] as the mission's texts and the rest (the save notice, the editor's).
+    fn overlay_split(&self, ctx: &crate::ui::Ctx) -> (Vec<crate::ui::draw::Draw>, Vec<crate::ui::draw::Draw>) {
+        let mut messages = Vec::new();
+        self.mission.draws(ctx, self.interface.hud.screen(), &mut messages);
+        let mut rest = Vec::new();
+        self.save_overlay(&mut rest);
+        self.editor_overlay(ctx, &mut rest);
+        (messages, rest)
+    }
+
+    /// The overlay the engine draws: without the mission's texts when an external UI claimed them.
+    pub fn engine_overlay(&mut self, ctx: &crate::ui::Ctx) -> Vec<crate::ui::draw::Draw> {
+        if !self.interface.claim.messages {
+            return self.overlay(ctx);
+        }
+        let (messages, rest) = self.overlay_split(ctx);
+        self.interface.claimed.push(crate::hud::messages_group(messages));
+        rest
+    }
+
+    /// What an external UI draws of the interface ([`crate::hud::Claim`]); the engine leaves it out.
+    pub fn set_hud_claim(&mut self, claim: crate::hud::Claim) {
+        self.interface.claim = claim;
+    }
+
+    /// The groups the engine left out this frame, for the external UI.
+    pub fn take_claimed(&mut self) -> Vec<crate::hud::Claimed> {
+        std::mem::take(&mut self.interface.claimed)
     }
 
     /// Left button: press starts a selection, release selects by click or rectangle.

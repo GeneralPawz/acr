@@ -50,6 +50,84 @@ pub mod font {
     pub const SMALL_BLACK1: FontId = FontId("SmallBlackFont1");
 }
 
+/// A part of the interface an external UI draws instead of the engine (docs/webui.md "The
+/// HUD"): the game leaves the claimed sections of `Hud::draw` out of its layers
+/// and passes them on ([`claimed`]).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Claim {
+    /// The resource bar, or the touch top bar, with the "M" plaque.
+    pub top_bar: bool,
+    /// The "M" drop-down.
+    pub drop_down: bool,
+    /// The tooltip at the mouse.
+    pub hints: bool,
+    /// The mission's hint lines, the central text and the end of the game.
+    pub messages: bool,
+}
+
+impl Claim {
+    pub const ALL: Claim = Claim { top_bar: true, drop_down: true, hints: true, messages: true };
+
+    pub fn claims(self, layer: Layer) -> bool {
+        match layer {
+            Layer::TopBar => self.top_bar,
+            Layer::DropDown => self.drop_down,
+            Layer::Hint => self.hints,
+            _ => false,
+        }
+    }
+}
+
+/// The parts of [`Hud::draw`], in drawing order.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Layer {
+    Minimap,
+    Commands,
+    Army,
+    Panel,
+    TopBar,
+    DropDown,
+    Hint,
+}
+
+/// One part of the interface's draws, with the scale of its canvas.
+pub struct Section {
+    pub layer: Layer,
+    pub zoom: Zoom,
+    pub draws: Vec<Draw>,
+}
+
+/// A group of a claimed part as the external UI gets it: draws in canvas pixels, scaled about the zoom's anchor.
+pub struct Claimed {
+    pub name: &'static str,
+    /// Stacking order over the canvas, low first.
+    pub layer: u8,
+    pub zoom: Zoom,
+    pub draws: Vec<Draw>,
+}
+
+/// The groups of a claimed section. The top bar's text is a group of its own, so a changed
+/// resource does not resend the frames: strings come after the frames they lie on and no two
+/// frames of the bar overlap a string of another, so the split keeps the picture.
+pub fn claimed(section: Section) -> Vec<Claimed> {
+    let Section { layer, zoom, draws } = section;
+    let group = |name, layer, draws| Claimed { name, layer, zoom, draws };
+    match layer {
+        Layer::TopBar => {
+            let (text, frames): (Vec<Draw>, Vec<Draw>) = draws.into_iter().partition(Draw::is_text);
+            vec![group("top_bar", 0, frames), group("top_bar_text", 1, text)]
+        }
+        Layer::DropDown => vec![group("drop_down", 2, draws)],
+        Layer::Hint => vec![group("hint", 3, draws)],
+        _ => Vec::new(),
+    }
+}
+
+/// The messages of the mission over the interface, a claimed group like the others.
+pub fn messages_group(draws: Vec<Draw>) -> Claimed {
+    Claimed { name: "messages", layer: 4, zoom: Zoom::NONE, draws }
+}
+
 /// The smallest layout size (`RealLx`, `RealLy`); [`Hud::set_screen`] sets the real one.
 pub const SCREEN: [i32; 2] = [1024, 768];
 
@@ -1013,7 +1091,7 @@ impl Hud {
     /// The interface in layers in drawing order, each with the [`Zoom`] of its canvas
     /// (`hud_scale`): the minimap, the command panel, the army list, the side panels, then
     /// the top bar and the drop-down at the canvas' scale and the hint at the mouse.
-    pub fn draw(&mut self, ctx: &Ctx, view: &View) -> Vec<(Zoom, Vec<Draw>)> {
+    pub fn draw(&mut self, ctx: &Ctx, view: &View) -> Vec<Section> {
         let Some(palette) = ctx.lib.palette(GAME_PALETTE) else { return Vec::new() };
         let data = self.data(ctx);
         let mut layers = Vec::new();
@@ -1023,7 +1101,7 @@ impl Hud {
         if self.minimap.is_some() {
             let mut out = Vec::new();
             self.draw_minimap(ctx, view, &palette, &mut out);
-            layers.push((self.zoom(Group::Minimap, view), out));
+            layers.push(Section { layer: Layer::Minimap, zoom: self.zoom(Group::Minimap, view), draws: out });
         }
         let screen = self.screen;
         let mut out = Vec::new();
@@ -1042,7 +1120,7 @@ impl Hud {
         if let Some(market) = view.market {
             draw_market(ctx, market, screen, &mut out);
         }
-        layers.push((self.zoom(Group::Commands, view), out));
+        layers.push(Section { layer: Layer::Commands, zoom: self.zoom(Group::Commands, view), draws: out });
         // The army icons, the last set 0x5a9fa0 draws (0x5aa394).
         let mut out = Vec::new();
         let mouse = self.mouse_in(Group::Army, view);
@@ -1051,7 +1129,7 @@ impl Hud {
             let pressed = self.pressed && mouse.is_some_and(|m| r.contains(m));
             draw_icon(ctx, icon, r.x0, r.y0, pressed, &palette, &mut out);
         }
-        layers.push((self.zoom(Group::Army, view), out));
+        layers.push(Section { layer: Layer::Army, zoom: self.zoom(Group::Army, view), draws: out });
         let mut panel = Vec::new();
         match (self.panel, &view.unit_info) {
             (Panel::Unit, Some(info)) => self.unit_panel.draw(ctx, info, view.morale.as_ref(), &palette, &mut panel),
@@ -1063,17 +1141,23 @@ impl Hud {
             _ => {}
         }
         let dx = self.panel_dx();
-        layers.push((self.zoom(Group::Panel, view), panel.into_iter().map(|d| d.translated(dx, 0)).collect()));
+        layers.push(Section {
+            layer: Layer::Panel,
+            zoom: self.zoom(Group::Panel, view),
+            draws: panel.into_iter().map(|d| d.translated(dx, 0)).collect(),
+        });
         let mut out = Vec::new();
         if self.touch() {
             self.draw_touch_bar(ctx, view, &mut out);
         } else {
             draw_resources(ctx, view, screen, self.top_dx(), &mut out);
         }
+        layers.push(Section { layer: Layer::TopBar, zoom: Zoom::NONE, draws: out });
         if self.dropdown {
+            let mut out = Vec::new();
             self.draw_dropdown(ctx, view, &mut out);
+            layers.push(Section { layer: Layer::DropDown, zoom: Zoom::NONE, draws: out });
         }
-        layers.push((Zoom::NONE, out));
         layers.extend(self.draw_hint(ctx, view, &palette));
         layers
     }
@@ -1211,7 +1295,7 @@ impl Hud {
 
     /// Hints of the resource values and icons: a box at the mouse (`DS+6 == −1`, 0x47d6b2),
     /// scaled about the mouse like the panel it hints at.
-    fn draw_hint(&self, ctx: &Ctx, view: &View, palette: &Palette) -> Option<(Zoom, Vec<Draw>)> {
+    fn draw_hint(&self, ctx: &Ctx, view: &View, palette: &Palette) -> Option<Section> {
         let m = self.mouse?;
         let mut hint: Option<&[u8]> = None;
         let mut scaled = true;
@@ -1256,7 +1340,7 @@ impl Hud {
         let [sw, sh] = zoom.to_layout([self.screen[0] as f32, self.screen[1] as f32]);
         let mut out = Vec::new();
         tooltip(ctx, palette, text, m, [sw.floor() as i32, sh.floor() as i32], &mut out);
-        Some((zoom, out))
+        Some(Section { layer: Layer::Hint, zoom, draws: out })
     }
 }
 
@@ -1858,5 +1942,19 @@ mod tests {
         hud.hud_scale = None;
         assert_eq!(hud.zoom(Group::Commands, &mixed), Zoom { anchor: [0.0, 768.0], scale: 1.0 });
         assert_eq!(hud.icon_on_canvas(0, &mixed), [182.0, 630.0, 40.0, 40.0]);
+    }
+
+    #[test]
+    fn a_claimed_top_bar_splits_its_text_from_its_frames() {
+        let fill = Draw::fill([1, 2, 3, 255], Rect::new(0, 0, 4, 4));
+        let text = Draw::game_text(font::YELLOW, b"7", 1, 2);
+        let section =
+            Section { layer: Layer::TopBar, zoom: Zoom::NONE, draws: vec![fill.clone(), text.clone(), fill.clone()] };
+        let groups = claimed(section);
+        let names: Vec<_> = groups.iter().map(|g| (g.name, g.layer, g.draws.len())).collect();
+        assert_eq!(names, [("top_bar", 0, 2), ("top_bar_text", 1, 1)]);
+        assert!(claimed(Section { layer: Layer::Minimap, zoom: Zoom::NONE, draws: vec![fill] }).is_empty());
+        assert!(Claim::ALL.claims(Layer::Hint) && !Claim::default().claims(Layer::TopBar));
+        assert!(!Claim::ALL.claims(Layer::Commands));
     }
 }

@@ -460,6 +460,7 @@ impl Driver {
         let ready = acr_ui_protocol::FromUi::Ready {
             protocol: acr_ui_protocol::PROTOCOL,
             screens: Vec::new(),
+            hud: Vec::new(),
             viewport: self.options.size.map(|v| v as f32),
             dpr: 1.0,
         };

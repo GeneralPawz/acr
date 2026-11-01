@@ -212,7 +212,12 @@ impl Game {
             Mode::InGame(g) => (acr_ui_protocol::Mode::Loading, g.loading_progress()),
         };
         let size = self.frame_size();
-        web.publish(&mut self.ui, mode, loading, size);
+        // What the engine left out of the interface this frame (nothing outside a running game).
+        let hud = match &mut self.mode {
+            Mode::InGame(g) if g.ready() => g.take_claimed(),
+            _ => Vec::new(),
+        };
+        web.publish(&mut self.ui, mode, loading, size, hud);
         self.webui = Some(web);
     }
 
@@ -477,6 +482,7 @@ impl Game {
                     self.ui.open_dialog(window);
                 }
                 game.set_scale_factor(density);
+                game.set_hud_claim(self.webui.as_ref().map(|w| w.hud_claim()).unwrap_or_default());
                 let (l, images, cursor) = game.interface(&self.ui.ctx(), size, game_dt);
                 layers = l;
                 // The "Zielhilfe" icon's switch is kept in `settings.txt` (`aim_guides`).
@@ -491,7 +497,7 @@ impl Game {
                     self.ui.change_settings(|s| s.editor_window = place);
                 }
                 // Mission pages, hints and the end of the game over the interface.
-                layers.push((game.screen_canvas(), game.overlay(&self.ui.ctx())));
+                layers.push((game.screen_canvas(), game.engine_overlay(&self.ui.ctx())));
                 for (name, image) in images {
                     self.ui.set_image(name, image);
                 }

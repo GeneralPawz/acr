@@ -6,4 +6,4 @@ import type { Phase } from "./Phase";
 /**
  * UI to Rust.
  */
-export type FromUi = { "t": "ready", protocol: number, screens: Array<string>, viewport: [number, number], dpr: number, } | { "t": "viewport", viewport: [number, number], dpr: number, } | { "t": "resync" } | { "t": "pointer", phase: Phase, x: number, y: number, button: Button | null, mods: Mods, } | { "t": "wheel", x: number, y: number, lines: number, mods: Mods, } | { "t": "key", key: string, code: string, down: boolean, repeat: boolean, mods: Mods, } | { "t": "blur" };
+export type FromUi = { "t": "ready", protocol: number, screens: Array<string>, hud: Array<string>, viewport: [number, number], dpr: number, } | { "t": "viewport", viewport: [number, number], dpr: number, } | { "t": "resync" } | { "t": "pointer", phase: Phase, x: number, y: number, button: Button | null, mods: Mods, } | { "t": "wheel", x: number, y: number, lines: number, mods: Mods, } | { "t": "key", key: string, code: string, down: boolean, repeat: boolean, mods: Mods, } | { "t": "blur" };

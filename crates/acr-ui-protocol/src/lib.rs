@@ -85,13 +85,16 @@ pub struct ViewPatch {
     #[cfg_attr(feature = "ts", ts(type = "number | null", optional))]
     pub loading: Option<Option<f32>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub stage: Option<Stage>,
+    pub stage: Option<Box<Stage>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub screen: Option<ScreenPatch>,
     /// The engine's cursor as an image; `null` = none (the system's cursor).
     #[serde(default, skip_serializing_if = "Option::is_none", with = "nullable")]
     #[cfg_attr(feature = "ts", ts(type = "import(\"./CursorView\").CursorView | null", optional))]
     pub cursor: Option<Option<CursorView>>,
+    /// The parts of the in-game interface the UI draws (mode `game`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hud: Option<Box<HudPatch>>,
 }
 
 /// Where the two canvases lie in the window.
@@ -204,6 +207,31 @@ pub enum Part {
     },
 }
 
+/// The changed groups of the in-game interface. A group is a layer of draw parts on the game
+/// canvas (`Stage::game`), replaced as a whole; resources and the top bar's frames are groups
+/// of their own, so a changed number does not resend the frames.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export, export_to = export_dir!()))]
+pub struct HudPatch {
+    /// Groups that are new or changed.
+    pub groups: Vec<HudGroup>,
+    /// Names of groups that are gone.
+    pub removed: Vec<String>,
+}
+
+/// One layer of the in-game interface, in game canvas pixels.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export, export_to = export_dir!()))]
+pub struct HudGroup {
+    pub name: String,
+    /// Stacking order, low first.
+    pub layer: u8,
+    /// `hud_scale`: the group is drawn `scale` times larger about `anchor` (1: as it is).
+    pub anchor: [f32; 2],
+    pub scale: f32,
+    pub parts: Vec<Part>,
+}
+
 /// The engine's cursor image; `hotspot` is the pixel of the image that points.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export, export_to = export_dir!()))]
@@ -217,9 +245,17 @@ pub struct CursorView {
 #[serde(tag = "t", rename_all = "snake_case")]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export, export_to = export_dir!()))]
 pub enum FromUi {
-    /// The UI is mounted. `screens` are the screens it draws itself; the engine stops drawing
-    /// exactly those, and only if `protocol` is [`PROTOCOL`].
-    Ready { protocol: u32, screens: Vec<String>, viewport: [f32; 2], dpr: f32 },
+    /// The UI is mounted. `screens` are the screens it draws itself and `hud` the parts of the
+    /// in-game interface; the engine stops drawing exactly those, and only if `protocol` is
+    /// [`PROTOCOL`].
+    Ready {
+        protocol: u32,
+        screens: Vec<String>,
+        #[serde(default)]
+        hud: Vec<String>,
+        viewport: [f32; 2],
+        dpr: f32,
+    },
     /// The page size in CSS pixels changed.
     Viewport { viewport: [f32; 2], dpr: f32 },
     /// Send the whole view model again.

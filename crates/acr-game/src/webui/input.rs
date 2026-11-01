@@ -23,7 +23,7 @@ pub fn on_message(game: &mut Game, event_loop: &ActiveEventLoop, json: &str) {
 /// Applies a message the caller already parsed (the driver's `ui_send`).
 pub fn apply(game: &mut Game, event_loop: &ActiveEventLoop, message: FromUi) {
     match message {
-        FromUi::Ready { protocol, screens, viewport, dpr } => {
+        FromUi::Ready { protocol, screens, hud, viewport, dpr } => {
             if protocol != PROTOCOL {
                 log::error!("webui: the UI speaks protocol {protocol}, the game {PROTOCOL}; the engine draws");
                 return;
@@ -33,7 +33,7 @@ pub fn apply(game: &mut Game, event_loop: &ActiveEventLoop, message: FromUi) {
                 return;
             };
             game.ui.set_external(Some(External { screens: screens.clone(), cursor: true }));
-            game.webui = Some(WebUi::new(send, super::HOST, screens, viewport, dpr));
+            game.webui = Some(WebUi::new(send, super::HOST, screens, hud, viewport, dpr));
         }
         // Every other message needs a UI that said Ready.
         other => {
