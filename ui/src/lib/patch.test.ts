@@ -61,17 +61,25 @@ describe('applyHud', () => {
     layer,
     anchor: [0, 0],
     scale: 1,
+    offset: [0, 0],
     parts: text ? [{ t: 'text', font: 'YellowFont', set: 0, text, x: 0, y: 0, fade: 0, clip: null }] : [],
   });
 
   it('replaces a group as a whole, drops removed ones and keeps the stacking order', () => {
     const [bar, hint] = [group('top_bar', 0), group('hint', 3)];
     const text = group('top_bar_text', 1, '10');
-    let out = applyHud([], { groups: [hint, bar, text], removed: [] });
+    let out = applyHud([], { groups: [hint, bar, text], moved: [], removed: [] });
     expect(out.map((g) => g.name)).toEqual(['top_bar', 'top_bar_text', 'hint']);
     const text2 = group('top_bar_text', 1, '11');
-    out = applyHud(out, { groups: [text2], removed: ['hint'] });
+    out = applyHud(out, { groups: [text2], moved: [], removed: ['hint'] });
     expect(out).toEqual([bar, text2]);
     expect(out[0]).toBe(bar);
+  });
+
+  it('shifts a moved group and keeps its parts', () => {
+    const hint = group('hint', 3, 'x');
+    const out = applyHud([hint], { groups: [], moved: [{ name: 'hint', offset: [5, -3] }, { name: 'gone', offset: [1, 1] }], removed: [] });
+    expect(out[0].offset).toEqual([5, -3]);
+    expect(out[0].parts).toBe(hint.parts);
   });
 });

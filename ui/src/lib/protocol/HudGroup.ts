@@ -12,4 +12,9 @@ layer: number,
 /**
  * `hud_scale`: the group is drawn `scale` times larger about `anchor` (1: as it is).
  */
-anchor: [number, number], scale: number, parts: Array<Part>, };
+anchor: [number, number], scale: number, 
+/**
+ * The parts' shift in game canvas pixels (a [`HudMove`] changes it); the scale is about the
+ * shifted anchor.
+ */
+offset: [number, number], parts: Array<Part>, };

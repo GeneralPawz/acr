@@ -132,17 +132,17 @@ describe('Ui', () => {
       stage: { menu: canvas, game: canvas },
       hud: {
         groups: [
-          { name: 'hint', layer: 3, anchor: [30, 40], scale: 2, parts: [fill] },
-          { name: 'top_bar', layer: 0, anchor: [0, 0], scale: 1, parts: [fill] },
+          { name: 'hint', layer: 3, anchor: [30, 40], scale: 2, offset: [0, 0], parts: [fill] },
+          { name: 'top_bar', layer: 0, anchor: [0, 0], scale: 1, offset: [0, 0], parts: [fill] },
         ],
-        removed: [],
+        moved: [], removed: [],
       },
     });
     await Promise.resolve();
     const groups = [...container.querySelectorAll<HTMLElement>('[data-acr-hud-group]')];
     expect(groups.map((g) => g.dataset.acrHudGroup)).toEqual(['top_bar', 'hint']);
     expect(groups[0].style.transform).toBe('');
-    expect(groups[1].style.transform).toBe('scale(2)');
+    expect(groups[1].style.transform).toBe('translate(0px, 0px) scale(2)');
     expect(groups[1].style.transformOrigin).toBe('30px 40px');
     // No interface outside the running game.
     model.receive({ t: 'view', rev: 2, mode: 'menus' });
