@@ -376,6 +376,14 @@ A sequence of `[SECTION]`s (same lexical rules). `NATIONS.LST` names the 15 nati
 `NEUTRAL`, `NEW` (animals, neutral buildings, ships), `FUNNY`, `TESCOCO` hold extra
 objects. Object ids carry the nation suffix: `EngPik(EN)`.
 
+Only the files of `NATIONS.LST` are loaded (#473): 0x4ea7f0 reads `Nations.lst` (the path
+string is at 0x644d50) into the name table at 0x237543c, and 0x60e4a0 calls the loader 0x60e7f0
+for each listed entry in list order, skipping entries named `-`. Stale copies in the archives
+(`TEXT\IROKEZ.NDS`, `FUNNY.NDS`) are never read; the Iroquois' `IroLut(IR)` and `IroTam(IR)`
+are therefore not enabled at the start but by `IroLut(IR)ENABLE` / `IroTam(IR)ENABLE`.
+`SimAssets` and the HUD's build menu (`hud::produce::Nations`) read the same list, so the
+catalog's type numbers follow it (saves of version 4 and older are refused for that reason).
+
 | section | grammar | content |
 |---|---|---|
 | `[MEMBERS]` | `ID NAME` per line | object id → `.MD` `NAME` |

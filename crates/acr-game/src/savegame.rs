@@ -12,7 +12,7 @@
 //! zigzag-encoded, byte strings as length + bytes):
 //!
 //! ```text
-//! "ACRS" | version | name | unix time | local time: year month day hour minute second
+//! "ACRS" | version (5; older saves are refused, #473) | name | unix time | local time: year month day hour minute second
 //! setup: kind (0 mission: id name map script texts difficulty campaign? [index mission]
 //!              1 random map: seed landscape ground resources minerals size climate)
 //!        players: count, per player: name nation colour team control (0 human, 1 + difficulty)
@@ -59,7 +59,10 @@ use crate::ui::setup::{BlankSetup, Control, Difficulty, Ground, MapSize, Mission
 use crate::ui::{GameKind, GameSetup};
 
 const MAGIC: &[u8; 4] = b"ACRS";
-const VERSION: u64 = 4;
+const VERSION: u64 = 5;
+/// Older saves hold object type numbers of the catalog before it followed `NATIONS.LST`
+/// (#473); they would replay with the wrong types, so they are refused.
+const OLDEST_VERSION: u64 = 5;
 
 /// An input of the diplomacy panel, given to DipServer between two ticks.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -703,7 +706,7 @@ impl<'a> Reader<'a> {
             return Err(err("not a savegame"));
         }
         let version = self.u()?;
-        if !(1..=VERSION).contains(&version) {
+        if !(OLDEST_VERSION..=VERSION).contains(&version) {
             return Err(err("unsupported version"));
         }
         let name = self.bytes()?;
@@ -1197,14 +1200,6 @@ mod tests {
         let mut bad = one.encode();
         *bad.last_mut().unwrap() = 99;
         assert!(SaveGame::decode(&bad).is_err());
-        // A version 3 save has no trailer (flag, rough, no patches, no inputs): a plain field.
-        let mut plain = save.clone();
-        plain.setup.kind = GameKind::Blank(Default::default());
-        plain.log = Log::default();
-        let mut old = plain.encode();
-        old[4] = 3;
-        old.truncate(old.len() - 4);
-        assert_eq!(SaveGame::decode(&old).unwrap(), plain);
     }
 
     #[test]
@@ -1238,9 +1233,8 @@ mod tests {
     }
 
     #[test]
-    fn reads_version_1_saves_without_diplomacy() {
-        let (w, _, mut log, _) = play(40);
-        log.diplomacy.clear();
+    fn refuses_saves_of_older_versions() {
+        let (w, _, log, _) = play(40);
         let save = SaveGame {
             name: b"alt".to_vec(),
             time: SaveTime::default(),
@@ -1253,16 +1247,11 @@ mod tests {
             groups: Vec::new(),
         };
         let mut bytes = save.encode();
-        // Version 1 had no diplomacy section and no rules: drop the version, the empty count
-        // and the rules.
-        assert_eq!(bytes[4], 4);
-        bytes[4] = 1;
-        assert_eq!(bytes.split_off(bytes.len() - 4), [0, 0, 0, 0]);
-        assert_eq!(bytes.pop(), Some(0));
-        let cut = bytes.len() - 4;
-        assert_eq!(bytes[cut..], [0, 0, 0, 0]);
-        bytes.remove(cut);
+        assert_eq!(bytes[4], 5);
         assert_eq!(SaveGame::decode(&bytes).unwrap(), save);
+        bytes[4] = 4;
+        assert!(SaveGame::decode(&bytes).is_err());
+        assert!(SaveInfo::peek(&bytes).is_none());
     }
 
     #[test]
@@ -1290,14 +1279,8 @@ mod tests {
         save.setup.rules.formation_attack = false;
         save.setup.rules.dart_fire = false;
         save.setup.rules.aimed_fire = false;
-        let mut bytes = save.encode();
+        let bytes = save.encode();
         assert_eq!(SaveGame::decode(&bytes).unwrap(), save);
-        // A version 2 save has no rules (and no editor trailer: flag, rough, patches, inputs):
-        // the original ones.
-        bytes[4] = 2;
-        assert_eq!(bytes.split_off(bytes.len() - 4), [0, 0, 0, 0]);
-        assert_eq!(bytes.pop(), Some(1));
-        assert_eq!(SaveGame::decode(&bytes).unwrap().setup.rules, acr_sim::Rules::default());
     }
 
     #[test]

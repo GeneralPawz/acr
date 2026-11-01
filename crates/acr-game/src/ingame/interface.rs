@@ -6,6 +6,7 @@ use std::collections::HashMap;
 use std::rc::Rc;
 use std::time::Duration;
 
+use acr_formats::defs::NationList;
 use acr_formats::raster::Image;
 use acr_sim::world::EntityId;
 use acr_sim::{Command, TypeId, Unit};
@@ -543,8 +544,11 @@ impl InGame {
     /// Reads the nation files once they are loaded.
     fn nations(&mut self, ctx: &Ctx) -> Option<Rc<Nations>> {
         if self.interface.nations.is_none() {
-            let paths: Vec<String> =
-                ctx.lib.list("").into_iter().filter(|p| p.ends_with(".NDS") && p != "WEAPON.NDS").collect();
+            if !ctx.lib.settled("NATIONS.LST") {
+                return None;
+            }
+            // Only the files of NATIONS.LST, in the order the simulation reads them.
+            let paths = ctx.lib.bytes("NATIONS.LST").map(|b| NationList::parse(&b).files()).unwrap_or_default();
             let mut files = Vec::new();
             for p in &paths {
                 if !ctx.lib.settled(p) {

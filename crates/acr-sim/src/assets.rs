@@ -7,7 +7,7 @@
 
 use std::collections::BTreeMap;
 
-use acr_formats::defs::{NationDef, OrderGroups, OrderList, SpriteResources, UnitDef, name_list};
+use acr_formats::defs::{NationDef, NationList, OrderGroups, OrderList, SpriteResources, UnitDef, name_list};
 use acr_formats::m3d::SpriteGroup;
 use acr_formats::normalize_path;
 use acr_formats::sprite_list::SpriteList;
@@ -22,6 +22,7 @@ const ORDER_GROUPS: &str = "ORD_GROUPS.LST";
 const NRES: &str = "NRES.DAT";
 const ECONOMY: &str = "ECONOMY.TXT";
 const MORALE: &str = "MORALE.DAT";
+const NATION_LIST: &str = "NATIONS.LST";
 const WEAPONS: &str = "WEAPON.NDS";
 const WEAPON_ANIMS: &str = "WEAPON.ADS";
 const TEXTURES: &str = "TEXTURES.LST";
@@ -51,20 +52,10 @@ pub struct SimAssets {
 }
 
 impl SimAssets {
-    /// The files to read first. `paths` are all game paths (to find the `.NDS` files).
-    pub fn start(&mut self, paths: &[String]) -> Vec<String> {
-        let mut nations: Vec<String> = paths
-            .iter()
-            .filter(|p| {
-                let n = normalize_path(p);
-                n.ends_with(".NDS") && n != "WEAPON.NDS"
-            })
-            .cloned()
-            .collect();
-        nations.sort();
-        self.nations = nations.clone();
+    /// The files to read first. Nation files follow once `NATIONS.LST` is read.
+    pub fn start(&mut self, _paths: &[String]) -> Vec<String> {
         let mut first: Vec<String> =
-            [NAME_LIST, ORDERS, ORDER_GROUPS, NRES, ECONOMY, MORALE, WEAPONS, WEAPON_ANIMS, TEXTURES]
+            [NATION_LIST, NAME_LIST, ORDERS, ORDER_GROUPS, NRES, ECONOMY, MORALE, WEAPONS, WEAPON_ANIMS, TEXTURES]
                 .iter()
                 .map(|p| (*p).to_owned())
                 .collect();
@@ -72,7 +63,6 @@ impl SimAssets {
             first.push(format!("{name}.LST"));
             first.push(format!("{name}.RSR"));
         }
-        first.extend(nations);
         for p in &first {
             self.pending.insert(normalize_path(p), ());
         }
@@ -91,6 +81,16 @@ impl SimAssets {
             return Vec::new();
         }
         let Some(bytes) = bytes else { return Vec::new() };
+        if key == NATION_LIST {
+            // Only the listed files are nations; the archives hold stale ones too (0x4ea7f0).
+            // The catalog follows the list order (0x60e4a0).
+            let more = NationList::parse(bytes).files();
+            self.nations.clone_from(&more);
+            for p in &more {
+                self.pending.insert(normalize_path(p), ());
+            }
+            return more;
+        }
         if key == NAME_LIST {
             let more: Vec<String> = name_list(bytes)
                 .into_iter()
@@ -181,13 +181,15 @@ impl SimAssets {
 mod tests {
     use super::*;
 
+    const LIST: &[u8] = b"2\r\nIR Iroquois IROKEZ.NDS (IR)\r\n- - - (XX)\r\n1\r\nCO Cossacks COS.NDS (CO)\r\n";
+
     #[test]
     fn asks_for_definitions_after_the_name_list() {
         let mut a = SimAssets::default();
-        let first = a.start(&["ENG.NDS".to_owned(), "WEAPON.NDS".to_owned(), "X.MD".to_owned()]);
+        let first = a.start(&[]);
         // WEAPON.NDS is read once, as the weapon table, not as a nation.
-        assert!(first.contains(&"ENG.NDS".to_owned()) && first.iter().filter(|p| *p == "WEAPON.NDS").count() == 1);
-        assert!(!a.nations.contains(&"WEAPON.NDS".to_owned()));
+        assert_eq!(first.iter().filter(|p| *p == "WEAPON.NDS").count(), 1);
+        assert!(a.add_file("NATIONS.LST", Some(LIST)).contains(&"IROKEZ.NDS".to_owned()));
         let more = a.add_file("NMLIST.TXT", Some(b"EngMus\r\n"));
         assert_eq!(more, ["EngMus.MD"]);
         assert!(a.wants("ENGMUS.MD"));
@@ -195,8 +197,30 @@ mod tests {
         for p in first {
             a.add_file(&p, Some(b""));
         }
+        a.add_file("IROKEZ.NDS", Some(b""));
         a.add_file("EngMus.MD", Some(b"NAME EngMus\r\n"));
         assert!(a.ready());
         assert_eq!(a.build().catalog.find("EngMus(EN)"), None);
+    }
+
+    #[test]
+    fn loads_only_the_nations_in_the_list() {
+        let mut a = SimAssets::default();
+        // Stale copies in the archives (`TEXT\IROKEZ.NDS`, `FUNNY.NDS`) are not asked for.
+        let first = a.start(&["IROKEZ.NDS".into(), "TEXT\\IROKEZ.NDS".into(), "FUNNY.NDS".into()]);
+        assert!(first.iter().all(|p| !p.ends_with("IROKEZ.NDS") && p != "FUNNY.NDS"));
+        let list = b"2\r\nIR Iroquois IROKEZ.NDS (IR)\r\nEN England ENG.NDS (EN)\r\n";
+        let more = a.add_file("NATIONS.LST", Some(list));
+        assert_eq!(more, ["IROKEZ.NDS", "ENG.NDS"]);
+        assert_eq!(a.nations, more);
+        assert!(!a.wants("FUNNY.NDS") && !a.wants("TEXT\\IROKEZ.NDS"));
+    }
+
+    #[test]
+    fn loads_no_nations_without_a_list() {
+        let mut a = SimAssets::default();
+        a.start(&["ENG.NDS".into()]);
+        assert!(a.add_file("NATIONS.LST", None).is_empty());
+        assert!(a.nations.is_empty());
     }
 }
