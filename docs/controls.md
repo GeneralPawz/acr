@@ -248,6 +248,11 @@ Under the window ACR's own controls:
 | Kanonen: sofort nachladen | AN: every cannon is reloaded before each tick, so it fires as soon as it is aimed (a test switch; starts AUS) |
 | Ich steuere | which player's units the mouse selects and commands; a click goes to the next player (neutral included) that has living units |
 
+Touch skin (docs/webui.md "Test editor"): the window is not drawn. A button of the top bar and a swipe left from
+the right screen edge open a drawer with the same colours, nation list, cells and controls; a long press stands in for
+the right click (a unit's levels, a colour's team), a tap on the map places as before. An army size and "Aufstellen"
+close the drawer; a chip under the resources shows what a tap on the map places and stops it.
+
 Moving and sizing (ACR's own; the original's window is fixed; `ingame/editor/frame.rs`): the title row
 holds a handle (two columns of dots, "Editor verschieben") and a "_" button ("Editor minimieren"); the
 bottom-right corner holds a grip ("Editor Groesse"). Dragging the handle moves the window and the box of

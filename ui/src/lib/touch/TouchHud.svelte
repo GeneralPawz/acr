@@ -11,7 +11,9 @@
   import { glyph as glyphArt } from '../icons/glyphs';
   import { ctrlClick, intent, leftClick } from './intents';
   import { STOPS, nearestStop, speedOf, ticksPerSecond } from './speed';
+  import EditorDrawer from './EditorDrawer.svelte';
   import Sprite from './Sprite.svelte';
+  import { EDGE_PX, classify } from './swipe';
 
   const { bridge, model } = ui();
 
@@ -28,6 +30,31 @@
   const touch = $derived(model.touch);
   const selection = $derived(touch?.icons.filter((i) => i.role === 'select') ?? []);
   const commands = $derived(touch?.icons.filter((i) => i.role !== 'select') ?? []);
+
+  // The test editor's drawer (transient: open or closed is the page's own state); the bar's height places it.
+  const editor = $derived(model.editor);
+  let editorOpen = $state(false);
+  let barHeight = $state(0);
+  // Not an editor game any more: the drawer goes with it.
+  $effect(() => {
+    if (!editor) editorOpen = false;
+  });
+
+  // A finger that starts in the edge strip and travels left opens the drawer; any other touch there does nothing.
+  let edge: { id: number; x: number; y: number } | null = null;
+  function edgeDown(e: PointerEvent) {
+    edge = { id: e.pointerId, x: e.clientX, y: e.clientY };
+    (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
+  }
+  function edgeMove(e: PointerEvent) {
+    if (!edge || edge.id !== e.pointerId) return;
+    const got = classify(edge, { x: e.clientX, y: e.clientY }, 'open');
+    if (got === 'open') editorOpen = true;
+    if (got !== 'none') edge = null;
+  }
+  function edgeUp() {
+    edge = null;
+  }
 
   // The resource panel's fold, like the minimap's (transient: per session, the page's own state).
   let resourcesOpen = $state(true);
@@ -133,11 +160,26 @@
     intent(bridge, 'minimap', { t: 'minimap_at', uv: uv(e), button: 'left' });
   }
 
+  /** Escape (Android's back gesture arrives as Escape) closes the level list, else the drawer, instead of
+   * reaching the game, which would open its menu. */
+  function escape(e: KeyboardEvent) {
+    if (!editorOpen || e.key !== 'Escape') return;
+    e.stopImmediatePropagation();
+    e.preventDefault();
+    if (e.type !== 'keydown') return;
+    if (editor && editor.levels.length > 0) intent(bridge, 'editor/close', leftClick);
+    else editorOpen = false;
+  }
+
   onMount(() => {
     const update = () => (size = { width: window.innerWidth, height: window.innerHeight });
     window.addEventListener('resize', update);
+    window.addEventListener('keydown', escape, true);
+    window.addEventListener('keyup', escape, true);
     return () => {
       window.removeEventListener('resize', update);
+      window.removeEventListener('keydown', escape, true);
+      window.removeEventListener('keyup', escape, true);
       clearTimeout(hintTimer);
       clearTimeout(pressTimer);
     };
@@ -180,18 +222,24 @@
     data-acr-size={klass}
     style:--cell="{cell}px"
     style:--cols={columns}
+    style:--bar-h="{barHeight}px"
   >
     {#if speedOpen}
       <button class="scrim" aria-label="close" data-acr-hit onclick={() => (speedOpen = false)}></button>
     {/if}
     <div class="upper">
-    <header class="top" data-acr-hit>
+    <header class="top" data-acr-hit bind:clientHeight={barHeight}>
       {#if hasResources}
         <button class="fold toggle" aria-label="resources" aria-expanded={resourcesOpen} data-acr-id="bar/resources" onclick={() => (resourcesOpen = !resourcesOpen)}>
           <span class="bar-glyph"><Glyph name={resourcesOpen ? 'resources-open' : 'resources-closed'} /></span>
         </button>
       {/if}
       <div class="buttons">
+        {#if editor}
+          <button class="bar" aria-label="editor" aria-expanded={editorOpen} data-acr-id="bar/editor" onclick={() => (editorOpen = !editorOpen)}>
+            <span class="bar-glyph"><Glyph name="editor" /></span>
+          </button>
+        {/if}
         <button class="bar" aria-label="speed" aria-expanded={speedOpen} data-acr-id="bar/speed" onclick={() => (speedOpen = !speedOpen)}>
           <span class="bar-glyph"><Glyph name="speed" /></span>
         </button>
@@ -241,6 +289,13 @@
       </ul>
     {/if}
 
+    {#if editor?.armed && !editorOpen}
+      <div class="placing" data-acr-touch="placing" data-acr-hit>
+        <button class="what" data-acr-id="placing/open" onclick={() => (editorOpen = true)}>{editor.armed}</button>
+        <button class="stop" aria-label="stop" data-acr-id="editor/stop" onclick={() => tapBar('editor/stop')}>×</button>
+      </div>
+    {/if}
+
     {#if touch.minimap && mapImage}
       <div class="minimap" data-acr-touch="minimap" data-acr-hit>
         {#if mapOpen}
@@ -272,6 +327,26 @@
     {/if}
 
     </div>
+
+    {#if editor && !editorOpen}
+      <div
+        class="edge"
+        role="presentation"
+        data-acr-touch="edge"
+        data-acr-hit
+        style:--edge="{EDGE_PX}px"
+        onpointerdown={edgeDown}
+        onpointermove={edgeMove}
+        onpointerup={edgeUp}
+        onpointercancel={edgeUp}
+      >
+        <span class="tab"></span>
+      </div>
+    {/if}
+
+    {#if editor && editorOpen}
+      <EditorDrawer view={editor} onclose={() => (editorOpen = false)} />
+    {/if}
 
     {#if hint}
       <div class="hint" role="status" data-acr-touch="hint">
@@ -573,6 +648,58 @@
   .over {
     position: absolute;
     inset: 0;
+  }
+  /* What a tap on the map places while the drawer is closed: its name opens the drawer, the cross stops placing. */
+  .placing {
+    display: flex;
+    align-self: flex-start;
+    margin-left: var(--pad);
+    color: #f3dc9c;
+    background: rgb(30 19 9 / 0.86);
+    border: 1px solid #8a6a32;
+    border-radius: 6px;
+    box-shadow: 0 3px 10px rgb(0 0 0 / 0.5);
+    pointer-events: auto;
+  }
+  .placing button {
+    min-height: 44px;
+    padding: 0 12px;
+    font: 400 17px/1.1 var(--touch-body);
+    color: inherit;
+    background: none;
+    border: 0;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .placing .stop {
+    min-width: 44px;
+    padding: 0;
+    font-size: 26px;
+    border-left: 1px solid #5b4126;
+  }
+  /* The strip at the right edge that starts the opening swipe; Android hands the page touches only inside data-acr-hit. */
+  .edge {
+    position: absolute;
+    z-index: 3;
+    top: 50%;
+    right: 0;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    box-sizing: border-box;
+    width: calc(var(--edge) + env(safe-area-inset-right));
+    height: min(200px, 40vh);
+    transform: translateY(-50%);
+    touch-action: none;
+    pointer-events: auto;
+  }
+  .edge .tab {
+    width: 4px;
+    height: 40px;
+    margin-right: 3px;
+    background: #e2c27a;
+    border-radius: 2px 0 0 2px;
+    box-shadow: 0 0 4px rgb(0 0 0 / 0.6);
   }
   .icon.selected {
     border-color: #ffc840;

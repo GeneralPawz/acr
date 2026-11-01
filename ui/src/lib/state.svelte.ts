@@ -2,6 +2,7 @@ import type { Bridge } from './bridge';
 import { applyHud, applyWidgets, isSnapshot } from './patch';
 import type { CanvasView } from './protocol/CanvasView';
 import type { CursorView } from './protocol/CursorView';
+import type { EditorView } from './protocol/EditorView';
 import type { HudGroup } from './protocol/HudGroup';
 import type { Mode } from './protocol/Mode';
 import type { ScreenPatch } from './protocol/ScreenPatch';
@@ -27,6 +28,8 @@ export class UiState {
   hud = $state.raw<HudGroup[]>([]);
   /** The touch skin's view of the interface (the last `touch` topic). */
   touch = $state.raw<TouchHud | null>(null);
+  /** The test editor's drawer (the last `editor` topic); `null`: not an editor game. */
+  editor = $state.raw<EditorView | null>(null);
   /** Game protocol version of the last `Hello`. */
   protocol = $state.raw<number | null>(null);
   /** The player's `ui_skin` of the last `Hello`. */
@@ -74,6 +77,7 @@ export class UiState {
     if (patch.stage != null) this.stage = patch.stage;
     if (patch.cursor !== undefined) this.cursor = patch.cursor;
     if (patch.touch != null) this.touch = patch.touch;
+    if (patch.editor !== undefined) this.editor = patch.editor;
     if (patch.hud != null) this.hud = applyHud(snapshot ? [] : this.hud, patch.hud);
     if (patch.screen != null) {
       const { widgets, ...info } = patch.screen;

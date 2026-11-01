@@ -13,6 +13,8 @@ the DevTools protocol):
    back gesture sends it) goes back, two levels from the random map to the main menu;
 2. the start of the game, by tapping its start button;
 3. a unit: one tap on it selects it, a long press on the ground orders it to walk there;
+4. the test editor (#494): a blank editor game, a swipe left from the right edge opens its drawer, a cell is
+   armed, a swipe right closes it, a tap on the free map places the units, the bar button toggles it;
 
 and checks on the way that the page chose the touch skin, that no element lies outside the viewport (the
 menu sheets scroll vertically by design: their content is exempt from the vertical test), that every
@@ -127,6 +129,9 @@ class Run:
         )
         self.page = self.ctx.new_page()
         self.page.on("console", lambda m: m.type == "error" and self.errors.append(m.text))
+        # The game says why it refused an intent with a warning (`UiState.receive`).
+        self.refused = []
+        self.page.on("console", lambda m: m.type == "warning" and "refused" in m.text and self.refused.append(m.text))
         self.page.on("pageerror", lambda e: self.errors.append(str(e)))
         self.page.add_init_script(
             "localStorage.setItem('acr-settings', %s);" % json.dumps(base64.b64encode(SETTINGS.encode()).decode())
@@ -186,6 +191,18 @@ class Run:
         send("touchEnd", 0)
         time.sleep(0.15)
 
+    def hswipe(self, x0, x1, y, steps=10):
+        """A finger drag along a row from x0 to x1 (CSS pixels), the way the edge swipe of the editor drawer goes."""
+        send = lambda kind, x: self.cdp.send(
+            "Input.dispatchTouchEvent", {"type": kind, "touchPoints": [{"x": x, "y": y, "id": 9}] if kind != "touchEnd" else []}
+        )
+        send("touchStart", x0)
+        for i in range(1, steps + 1):
+            send("touchMove", x0 + (x1 - x0) * i / steps)
+            time.sleep(0.012)
+        send("touchEnd", x1)
+        time.sleep(0.2)
+
     def reach(self, locator):
         """Scrolls the sheet with touch swipes until the control is in view and a finger would land on it."""
         el = locator.element_handle()
@@ -233,6 +250,99 @@ class Run:
         time.sleep(seconds)
         self.cdp.send("Input.dispatchTouchEvent", {"type": "touchEnd", "touchPoints": []})
         time.sleep(0.5)
+
+
+DRAWER = "[data-acr-touch=editor]"
+# Whether the drawer is within its size, leaves the map's left strip free, and has only targets of 44 CSS pixels each way.
+DRAWER_LAYOUT = """() => {
+  const d = document.querySelector('[data-acr-touch=editor]'), r = d.getBoundingClientRect(), w = window.innerWidth;
+  const probe = document.elementFromPoint(10, window.innerHeight / 2);
+  const small = [...d.querySelectorAll('button')].filter((b) => { const q = b.getBoundingClientRect(); return q.width > 0 && (q.width < 43.5 || q.height < 43.5); })
+    .map((b) => (b.dataset.acrId || b.className) + ':' + Math.round(b.getBoundingClientRect().width) + 'x' + Math.round(b.getBoundingClientRect().height));
+  return { width: r.width, right: w - r.right, top: r.top, bar: document.querySelector('header.top').getBoundingClientRect().bottom,
+           free: probe !== null && probe.closest('[data-acr-touch=editor]') === null, small, buttons: d.querySelectorAll('button').length };
+}"""
+
+
+def play_editor(run, size):
+    """The test editor's drawer (#494): a blank editor game, the right-edge swipe opens it, a cell is armed, a swipe to
+    the right closes it, a tap on the free map places the units, the bar button toggles it."""
+    page, (w, h) = run.page, size
+    run.drive({"cmd": "start", "blank": {"editor": True}})
+    run.wait("() => document.querySelector('[data-acr-id=\"bar/editor\"]')", "the editor's bar button")
+    time.sleep(2.0)
+    run.shot("e1-editor-closed")
+    edge = page.locator("[data-acr-touch=edge]").bounding_box()
+    y = edge["y"] + edge["height"] / 2
+    run.hswipe(w - 8, w - 8 - 70, y)
+    try:
+        page.wait_for_selector(DRAWER, timeout=4000)
+        opened = True
+    except Exception:
+        opened = False
+    run.report["editor_swipe_open"] = opened
+    if not opened:
+        run.shot("e2-failed")
+        return
+    time.sleep(0.6)
+    run.shot("e2-drawer-open")
+    layout = page.evaluate(DRAWER_LAYOUT)
+    run.report["editor_width"] = layout["width"] <= min(0.88 * w, 420) + 0.5 and layout["free"] and abs(layout["top"] - layout["bar"]) < 1.5
+    run.report["editor_targets"] = not layout["small"] and layout["buttons"] > 10
+    run.report["editor_layout"] = layout
+    run.audit("editor drawer")
+    # The list: the nation, then the second page of the cells (the drawer scrolls itself).
+    page.locator('[data-acr-id="drawer/nations"]').tap()
+    time.sleep(0.5)
+    run.shot("e3-nations")
+    page.locator('[data-acr-id="editor/nation/2"]').tap()
+    time.sleep(0.8)
+    cell = page.locator(DRAWER + ' [data-acr-id^="editor/unit/"]').first
+    before = len(run.drive({"cmd": "state", "units": True})["state"]["units"])
+    cell.tap()
+    # The game runs a few frames a second under SwiftShader: the picked cell lights when the view comes back.
+    try:
+        page.wait_for_selector(DRAWER + " .cell.on", timeout=20000)
+    except Exception:
+        pass
+    run.shot("e4-armed")
+    run.report["editor_armed"] = page.locator(DRAWER + " .cell.on").count() == 1
+    run.report["editor_refused"] = run.refused[:5]
+    box = page.locator(DRAWER).bounding_box()
+    run.hswipe(box["x"] + 40, box["x"] + 150, size[1] / 2)
+    try:
+        page.wait_for_selector(DRAWER, state="detached", timeout=4000)
+        closed = True
+    except Exception:
+        closed = False
+    time.sleep(0.4)
+    run.shot("e5-closed-armed")
+    chip = page.locator("[data-acr-touch=placing]").count() == 1
+    # A tap on the free map places the picked type.
+    free = "([x, y]) => { const e = document.elementFromPoint(x, y); return !!e && e.closest('[data-acr-viewport]') !== null; }"
+    spots = [(w * fx, h * fy) for fx in (0.5, 0.3, 0.7) for fy in (0.5, 0.4, 0.6)]
+    spots = [p for p in spots if page.evaluate(free, list(p))]
+    page.touchscreen.tap(*spots[0])
+    placed = False
+    for _ in range(40):
+        time.sleep(0.5)
+        if len(run.drive({"cmd": "state", "units": True})["state"]["units"]) > before:
+            placed = True
+            break
+    run.shot("e6-placed")
+    run.report["editor_placed"] = bool(closed and chip and placed)
+    # The bar button opens and closes the drawer.
+    button = page.locator('[data-acr-id="bar/editor"]')
+    button.tap()
+    time.sleep(0.6)
+    on = page.locator(DRAWER).count() == 1
+    button.tap()
+    try:
+        page.wait_for_selector(DRAWER, state="detached", timeout=4000)
+        off = True
+    except Exception:
+        off = False
+    run.report["editor_button"] = on and off
 
 
 def play(browser, url, name, size, shots, timeout_s, prefix):
@@ -422,6 +532,14 @@ def play(browser, url, name, size, shots, timeout_s, prefix):
         run.shot(step)
         run.audit(step)
     run.report["grids"] = grids
+    # The editor on a page of its own: a game started over a running one leaves the menus' stack under it, and the
+    # game then takes no intents (`the interface is not shown`).
+    ed = Run(browser, url, name, size, shots, timeout_s, prefix)
+    play_editor(ed, size)
+    run.report.update({k: v for k, v in ed.report.items() if k.startswith("editor")})
+    run.report["steps"] += ed.report["steps"]
+    run.errors += ed.errors
+    ed.ctx.close()
     run.report["errors"] = run.errors[:20]
     sheets = run.report["sheets"]
     run.report["passed"] = bool(
@@ -440,6 +558,12 @@ def play(browser, url, name, size, shots, timeout_s, prefix):
         and all(w >= 44 and h >= 44 for w, h in run.report["back_arrow"])
         and (options["overflow"] <= 0 or options["scrollTop"] > 0)
         and (random_map["overflow"] <= 0 or random_map["scrollTop"] > 0)
+        and run.report.get("editor_swipe_open")
+        and run.report.get("editor_width")
+        and run.report.get("editor_targets")
+        and run.report.get("editor_armed")
+        and run.report.get("editor_placed")
+        and run.report.get("editor_button")
         and all(not s["outside"] for s in run.report["steps"])
         and all(not s["small"] for s in run.report["steps"])
     )
