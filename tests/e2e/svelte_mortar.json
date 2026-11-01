@@ -1,0 +1,23 @@
+{
+  "name": "svelte_mortar",
+  "description": "The mortars rule's zone mode under the classic skin (#328): the selected mortar's four icons are part of the command panel group the UI draws, the zone icon arms the mode, a press and drag on the map sets a zone (radius by the drag), the zone shows in state, and the fire icon starts the fire; the zone's ring on the map is a world overlay the engine keeps",
+  "args": ["--ui", "classic"],
+  "steps": [
+    {"cmd": "start", "blank": {"ground": "grass", "mortars": true}},
+    {"cmd": "camera", "x": 7680, "y": 7680},
+    {"cmd": "spawn", "type": "ArtMrt(EN)", "owner": 0, "x": 7680, "y": 7680, "dir": 64},
+    {"cmd": "wait", "ticks": 5},
+    {"cmd": "drag", "around": {"owner": 0, "type": "ArtMrt(EN)"}},
+    {"cmd": "view", "expect": [
+      {"path": "view.hud.groups.3.name", "eq": "commands"},
+      {"path": "view.hud.groups.3.parts", "len_ge": 6}
+    ]},
+    {"cmd": "click", "label": "Zielzone setzen", "note": "the icon's hint"},
+    {"cmd": "drag", "from": [512, 300], "to": [560, 300]},
+    {"cmd": "wait", "ticks": 3},
+    {"cmd": "state", "units": true, "owner": 0, "detail": true, "expect": {"path": "state.units.0.mortar.zones", "len_ge": 1}},
+    {"cmd": "click", "label": "Feuer", "note": "the fire icon"},
+    {"cmd": "wait", "ticks": 3},
+    {"cmd": "state", "units": true, "owner": 0, "detail": true, "expect": {"path": "state.units.0.mortar.firing", "eq": true}}
+  ]
+}
