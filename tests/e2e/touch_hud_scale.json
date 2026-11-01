@@ -1,7 +1,7 @@
 {
   "name": "touch_hud_scale",
   "description": "hud_scale (#448) at a phone-like window (1584x720, canvas scale 0.9375, screen 1690x768): with the panels 1.8 times larger the command panel grows up and right from the bottom-left corner, so the Fort icon (slot 0) moves from (182, 630) to (306, 519.6) canvas pixels (the single type's box is pulled to the left edge) and is 72 wide; a finger on its old place picks nothing, a finger on the scaled icon picks the Fort",
-  "args": ["--size", "1584x720"],
+  "args": ["--size", "1584x720", "--ui", "engine"],
   "steps": [
     {"cmd": "start", "random": {"nation": 1, "seed": 5}},
     {"cmd": "wait", "ticks": 200},

@@ -1,6 +1,7 @@
 {
   "name": "touch_endless",
   "description": "Touch mode (#438): a long press on a production icon is the Ctrl+click, an endless order (count 1200, the infinity sign)",
+  "args": ["--ui", "engine"],
   "steps": [
     {"cmd": "start", "random": {"nation": 1, "seed": 5}},
     {"cmd": "wait", "ticks": 200},

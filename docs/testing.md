@@ -56,7 +56,7 @@ native only; the browser build has a scene subset of it ("Browser" below).
 | `--drive-gpu` (`ACR_DRIVE_GPU=1`) | a hidden window with a GPU, for `screenshot` |
 | `--size WxH` | the window size the game lays out for (default 1024x768) |
 | `--dialogs auto\|report` | the dialog policy at the start (default `auto`) |
-| `--ui engine\|classic\|touch` | the Svelte UI (docs/webui.md): `classic` makes the driver announce itself as a UI that draws every screen the view model can describe, enables `view` and `ui_send`, and resolves every asset a published view refers to after each answer; an asset that cannot be made, or a screen with a broken asset, fails the command (`ok: false`). `touch` is refused by the `ready` line until the touch skin exists (default `engine`: no UI). With `--drive-gpu` the engine leaves the claimed screens undrawn, as in the browser |
+| `--ui engine\|classic\|touch` | the Svelte UI (docs/webui.md): `classic` makes the driver announce itself as a UI that draws every screen the view model can describe, enables `view` and `ui_send`, and resolves every asset a published view refers to after each answer; an asset that cannot be made, or a screen with a broken asset, fails the command (`ok: false`). `touch` connects the same way and sends clicks on widgets the tree names as intents (docs/webui.md "Intents": the answer has `intent`; a refused intent fails the command) and leaves the HUD no pixels (default `engine`: no UI). With `--drive-gpu` the engine leaves the claimed screens undrawn, as in the browser |
 
 There are no movies. The game only advances while a request needs it, in fixed steps as
 fast as it can: one simulation tick per frame in a running game, one menu tick (1/60 s)
@@ -109,7 +109,7 @@ its label to appear.
 | `{"cmd": "text", "text": "e2e"}` | types into the focused input box |
 | `{"cmd": "wheel", "lines": -1}` | mouse wheel |
 | `{"cmd": "view"}` | `--ui classic`: the Svelte UI's whole view model as `view`, one `ViewPatch` (mode, stage, screen with every widget's parts, cursor, the interface's `hud` groups) |
-| `{"cmd": "ui_send", "msg": {"t": "pointer", ...}}` | `--ui classic`: a `FromUi` message as if the page had sent it (raw pointer, wheel, key, `resync`); a message that does not parse, or one before the UI is connected, is an error |
+| `{"cmd": "ui_send", "msg": {"t": "pointer", ...}}` | `--ui classic|touch`: a `FromUi` message as if the page had sent it (raw pointer, wheel, key, `resync`, an `intent`); a message that does not parse, or one before the UI is connected, is an error |
 | `{"cmd": "wait", "ticks": 100}` | also `"frames": n`, `"until": {...}` (all must hold), `"timeout": frames` (6000) |
 | `{"cmd": "state"}` | see below; `state.map_objects` counts the map's trees, stones, holes and others (`World::objects`, which the editor's Natur list adds to); `"units": true` lists every object, `"owner": n` and `"type": "Mus"` filter, `"visible_only": true` respects the fog, `"detail": true` adds each object's orders, animation and frame, stances, reload counter (`delay`), the owner's characteristics of the type (`adv`: life, damage and pause per attack index), direction and switches, and the listed objects' `activity` |
 | `{"cmd": "command", "command": {"type": "move", "units": [1, 2], "x": 3000, "y": 9000}}` | a simulation command for setup (below) |
