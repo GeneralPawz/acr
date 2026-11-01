@@ -7,7 +7,7 @@ and their rules in [docs/ui.md](ui.md) stay as they are, the headless driver and
 run on them, and the Svelte app draws a view model Rust publishes and sends raw input back.
 
 What exists now (#317, #322, browser part): the protocol, the bridge, the classic skin, the main menu,
-the player name, the options, the campaigns, the single missions, the load dialog of the main menu, the random map setup, the loading screen and the connection screen of multiplayer (`Placeholder`), and (#325) the HUD's top bar, "M" drop-down, hints, messages and cursor over the running game (#326), and (#325) the dialogs over the running game: the game menu, the options with their "Weitere Optionen" and ACR rule pages, the save dialog and the load dialog of the game menu, the mission's message boxes, choices and history. Every other screen is still drawn by the engine, under the UI's input overlay.
+the player name, the options, the campaigns, the single missions, the load dialog of the main menu, the random map setup, the loading screen and the connection screen of multiplayer (`Placeholder`), and (#325) the HUD's top bar, "M" drop-down, hints, messages and cursor over the running game (#326), the minimap, command panel, unit stats, unit panel and army list (#327), and (#325) the dialogs over the running game: the game menu, the options with their "Weitere Optionen" and ACR rule pages, the save dialog and the load dialog of the game menu, the mission's message boxes, choices and history. Every other screen is still drawn by the engine, under the UI's input overlay.
 
 ## Parts
 
@@ -48,7 +48,7 @@ and clippy never need Bun.
   publishes after each frame's advance (`WebUi::publish`): only changed topics (`mode`, `loading`,
   `stage`, `screen`, `cursor`, `hud`), at most one message a frame, `rev` growing by one. A gap makes the UI
   send `resync`; the answer carries every topic. Scope `ui.bridge` of the profiler.
-- **Claiming:** the registry (`ui/src/screens/registry.ts`: `MainMenu`, `PlayerName`, `Options`, `Campaigns`, `SingleMission`, `LoadGame`, `RandomMap`, `Placeholder`, `Loading`, `GameMenu`, `GameOptions`, `SaveGameDialog`, `MessageWindow`, `HistoryWindow`, and `HUD`: `TopBar`, `DropDown`, `Hints`, `Messages`) is announced in `ready` (`screens`, `hud`).
+- **Claiming:** the registry (`ui/src/screens/registry.ts`: `MainMenu`, `PlayerName`, `Options`, `Campaigns`, `SingleMission`, `LoadGame`, `RandomMap`, `Placeholder`, `Loading`, `GameMenu`, `GameOptions`, `SaveGameDialog`, `MessageWindow`, `HistoryWindow`, and `HUD`: `TopBar`, `DropDown`, `Hints`, `Messages`, `Minimap`, `CommandPanel`, `UnitStats`, `ArmyList`) is announced in `ready` (`screens`, `hud`).
   `Ui::set_external` makes the engine skip exactly the screens the UI claims, and the cursor, but only
   while `view::screen` can describe the screen completely; otherwise the screen goes on being drawn by
   the engine (`engine_drawn: true`), never half.
@@ -181,6 +181,41 @@ a second, 227 bytes a second; the mouse sweeping over the resource values (a hin
 5.6 KB (the whole group on each hover change), 17 KB/s. The page's frame intervals stay at the 16.7 ms vsync (median) in every phase;
 the resource values of a game that gathers resend the 700 bytes of `top_bar_text` when one changes.
 
+## The HUD II: minimap, command panel, stats, army list (#327)
+
+Same rules as above (`hud::Claim`, transparent host, whole canvas scale, diffing before resolving); four more parts in
+`ready.hud`, each a `Claim` flag, and the groups they add (layer, low first; the top bar's and the later ones moved up):
+
+| Part | Groups (layer) | Draws |
+|---|---|---|
+| `Minimap` | `minimap` (0), `minimap_frame` (1), `minimap_view` (2) | the map image alone; the two player-coloured lines and the `Border` frame; the camera rectangle (or the free camera's footprint) and the formation mark of the army icon under the mouse |
+| `CommandPanel` | `commands` (3) | the type boxes, the command, production and build-menu icons (counts, endless marks as fills, pressed offset, gray `GRAY.SET` icons, half-transparent disabled ones) and the market's plaques |
+| `UnitStats` | `stats` (4), `unit_panel` (6) | the numbers of the single selected type (life, attacks, shield, protections, reload bar, kills, info lines; split out of the command panel's draws, `Layer::Stats`) and the unit side panel (key U) with its portrait; the game panel (key I) stays with the engine (`Layer::GamePanel`, never claimed) |
+| `ArmyList` | `army` (5) | the army icons |
+
+No protocol type was added: the minimap and the portrait are textures the engine composes (`Sprite::Image`), which the page fetches
+as a PNG asset, `image/<name>/<version>` (`AssetCache::add_image`, the last three versions kept); the part is an ordinary
+`Part::Sprite` whose url carries the version, so a group is resent when its draws are the same but an image is new (`SentGroup.images`).
+The gray icons are `remap/<player>/<gp>/<frame>/<table>/<row>` (`Sprite::GameFrameRemap`). The minimap gets a new version at
+most four times a second (`MINIMAP_EVERY`, `WebUi::set_image`; the driver takes every one), and is composed without the camera
+rectangle when the UI claims it (`Hud::set_ui_camera`), so a scrolling camera only changes the four fills of `minimap_view` and never
+recomposes or refetches the image; unit dots (2 x 2) and the fog stay in the image, one 240 x 240 picture instead of hundreds of parts.
+The driver's asset check skips image versions a newer one replaced (`newest_images`). The `hud_scale` zoom (anchor, scale, corner pull)
+is the section's, as before. Input stays the viewport's: Rust hit-tests the icons, the minimap and the army list.
+
+Scenario `svelte_hud_panels` (and `produce_unit`, `endless_production`, `build_site`, `formation`, `formation_group`, `army_list`,
+`attack_ground` under `--ui classic`): the minimap's image and camera group, a selection filling the panel and the stats, a minimap click moving the camera.
+
+Parity (`ui_parity.py`, the blank grass field with ten peasants picked by a double click, 1024x768, dpr 1; all claimed parts drawn by the page): `CommandPanel`
+100.000%, `UnitStats` (one peasant) 100.000%, `UnitPanel` (key U, the portrait) 100.000%, `Minimap` 100.000%, layout 0 px each. `ArmyList` has
+no pixel run: the list needs a formation, and the officers' formation icons stay disabled on the blank field (a mission map cannot be started by the
+browser's driver); its icons are the command panel's `draw_icon`, and `army_list` passes under `--ui classic`.
+
+Patch size and rate (`ui_patches.py`, new phases: forty peasants patrolling, ten selected): 6 patches a second, 3.5 KB/s (median 257 bytes: a count or
+the camera, the new minimap picture is one 150 byte group and an asset fetch four times a second); the mouse moving over the command panel
+12.7 patches a second, 5.2 KB/s. With the minimap and its frame in one group it was 12.8 KB/s. The page's frame intervals in these phases are 33 ms
+(median) with the UI and with `?ui=engine`: the walking units cost SwiftShader, not the UI.
+
 ## Native host spike (Android, #333)
 
 `tools/android/build-webview-spike.sh` builds the example `crates/acr-game/examples/webview_spike_android.rs`
@@ -227,5 +262,5 @@ webview, the `capture` and `shrink` modes, a soft keyboard (the popup is not foc
 
 ## Not yet
 
-The touch skin, the rest of the HUD (the minimap, the command and army panels, the side panels, the pause text, the diplomacy panel), the native webview host (`wry`, spike on Windows), the other screens, and the start screen's layout for other screen ratios
+The touch skin, the rest of the HUD (the game panel, the pause text, the diplomacy panel), the native webview host (`wry`, spike on Windows), the other screens, and the start screen's layout for other screen ratios
 (#316 section 8).

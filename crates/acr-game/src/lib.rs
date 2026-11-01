@@ -500,6 +500,9 @@ impl Game {
                 // Mission pages, hints and the end of the game over the interface.
                 layers.push((game.screen_canvas(), game.engine_overlay(&self.ui.ctx())));
                 for (name, image) in images {
+                    if let Some(web) = &mut self.webui {
+                        web.set_image(name, image.clone());
+                    }
                     self.ui.set_image(name, image);
                 }
                 self.ui.set_game_cursor(cursor);

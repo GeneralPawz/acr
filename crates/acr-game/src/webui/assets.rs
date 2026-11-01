@@ -7,6 +7,8 @@
 //! | `frame/<menu\|game\|sprite>/<player>/<gp>/<frame>` | PNG of a sprite frame (its bounding box) |
 //! | `font/<set>/<FontId>.png` / `.json` | glyph atlas / metrics |
 //! | `text/<set>/<FontId>/<fade>/<hex bytes>` | PNG of a whole string, the exact fallback |
+//! | `remap/<player>/<gp>/<frame>/<table>/<row>` | PNG of a game frame through a colour table (gray icons) |
+//! | `image/<name>/<version>` | PNG of an image the engine made (the minimap, the portrait) |
 //!
 //! Failures are errors, never placeholders: a bad path, a missing file or a file that does not
 //! decode.
@@ -77,6 +79,22 @@ pub enum Resolved {
 #[derive(Default)]
 pub struct AssetCache {
     atlases: HashMap<(u8, String), font_atlas::Atlas>,
+    /// The engine's dynamic images by name: the last versions, newest last.
+    images: HashMap<String, Vec<(u32, Image)>>,
+}
+
+/// Versions of a dynamic image kept, for the UI that still asks for the one before.
+const KEEP_VERSIONS: usize = 3;
+
+impl AssetCache {
+    /// Records `image` as `version` of `name`.
+    pub fn add_image(&mut self, name: &str, version: u32, image: Image) {
+        let versions = self.images.entry(name.to_owned()).or_default();
+        versions.push((version, image));
+        if versions.len() > KEEP_VERSIONS {
+            versions.remove(0);
+        }
+    }
 }
 
 /// A rasterized sprite with the offset of its top-left pixel from the sprite's origin.
@@ -150,6 +168,14 @@ pub fn frame_url(palette: FramePalette, player: u8, gp: &str, frame: usize) -> S
     format!("frame/{}/{player}/{}/{frame}", palette.name(), encode(gp))
 }
 
+pub fn remap_url(player: u8, gp: &str, frame: usize, table: &str, row: u8) -> String {
+    format!("remap/{player}/{}/{frame}/{}/{row}", encode(gp), encode(table))
+}
+
+pub fn image_url(name: &str, version: u32) -> String {
+    format!("image/{}/{version}", encode(name))
+}
+
 pub fn text_url(set: u8, font: FontId, fade: u8, text: &[u8]) -> String {
     let hex: String = text.iter().map(|b| format!("{b:02x}")).collect();
     format!("text/{set}/{}/{fade}/{hex}", font.0)
@@ -173,6 +199,34 @@ pub fn frame_image(
     let file = lib.sprites(gp).ok_or_else(|| missing(lib, gp))?;
     let colors = lib.palette(&palette_path).ok_or_else(|| missing(lib, &palette_path))?;
     rasterize_frame_as(&file, frame, &colors, player)
+        .map(Some)
+        .ok_or_else(|| AssetError::NotFound(format!("{gp} has no drawable frame {frame}")))
+}
+
+/// A game frame whose colours go through row `row` of the 256-byte table `table`
+/// (`Sprite::GameFrameRemap`). `None` while its files load.
+pub fn remap_image(
+    lib: &Library,
+    player: u8,
+    gp: &str,
+    frame: usize,
+    table: &str,
+    row: u8,
+) -> Result<Option<Placed>, AssetError> {
+    let palette_path = FramePalette::Sprite.path(gp);
+    for path in [gp, palette_path.as_str(), table] {
+        lib.want(path);
+    }
+    if ![gp, palette_path.as_str(), table].iter().all(|p| lib.settled(p)) {
+        return Ok(None);
+    }
+    let file = lib.sprites(gp).ok_or_else(|| missing(lib, gp))?;
+    let colors = lib.palette(&palette_path).ok_or_else(|| missing(lib, &palette_path))?;
+    let bytes = lib.bytes(table).ok_or_else(|| missing(lib, table))?;
+    let base = usize::from(row) * 256;
+    let remapped =
+        acr_formats::Palette(std::array::from_fn(|i| colors.rgb(bytes.get(base + i).copied().unwrap_or(i as u8))));
+    rasterize_frame_as(&file, frame, &remapped, player)
         .map(Some)
         .ok_or_else(|| AssetError::NotFound(format!("{gp} has no drawable frame {frame}")))
 }
@@ -266,6 +320,26 @@ pub fn resolve(lib: &Library, fonts: &Fonts, cache: &mut AssetCache, path: &str)
                 Some(image) => ready(Some(image), &format!("{gp} frame {frame}")),
                 None => Ok(Resolved::Pending),
             }
+        }
+        ["remap", player, gp, frame, table, row] => {
+            let player: u8 = player.parse().map_err(|_| bad(path))?;
+            let frame: usize = frame.parse().map_err(|_| bad(path))?;
+            let row: u8 = row.parse().map_err(|_| bad(path))?;
+            let (gp, table) = (decode(gp).ok_or_else(|| bad(path))?, decode(table).ok_or_else(|| bad(path))?);
+            match remap_image(lib, player, &gp, frame, &table, row)? {
+                Some(image) => ready(Some(image), &format!("{gp} frame {frame} through {table}")),
+                None => Ok(Resolved::Pending),
+            }
+        }
+        ["image", name, version] => {
+            let name = decode(name).ok_or_else(|| bad(path))?;
+            let version: u32 = version.parse().map_err(|_| bad(path))?;
+            let image = cache
+                .images
+                .get(&name)
+                .and_then(|v| v.iter().find(|(n, _)| *n == version))
+                .ok_or_else(|| AssetError::NotFound(format!("{name} has no version {version}")))?;
+            Ok(Resolved::Ready(AssetBody::Png(png(&image.1)?)))
         }
         ["font", set, file] => {
             let set: u8 = set.parse().ok().filter(|s| *s <= 1).ok_or_else(|| bad(path))?;

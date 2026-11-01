@@ -47,6 +47,8 @@ struct Placed {
 #[derive(Default)]
 pub struct Resolver {
     placed: HashMap<Sprite, Option<Placed>>,
+    /// The version of each dynamic image the UI can fetch (`image/<name>/<version>`).
+    pub image_versions: HashMap<&'static str, u32>,
 }
 
 /// Cached sprites before the cache starts over.
@@ -83,6 +85,10 @@ impl Resolver {
                 assets::frame_image(lib, FramePalette::Sprite, *player, gp, *frame)?.map(Some),
                 assets::frame_url(FramePalette::Sprite, *player, gp, *frame),
             ),
+            Sprite::GameFrameRemap { gp, frame, player, table, row } => (
+                assets::remap_image(lib, *player, gp, *frame, table, *row)?.map(Some),
+                assets::remap_url(*player, gp, *frame, table, *row),
+            ),
             Sprite::Text { font, text } => {
                 (assets::text_image(lib, fonts, 1, *font, 0, text)?, assets::text_url(1, *font, 0, text))
             }
@@ -104,6 +110,18 @@ impl Resolver {
         Ok(placed)
     }
 
+    /// The versions of the dynamic images `draws` show, in order: a group whose draws are the same
+    /// but for a new image has to be sent again.
+    pub fn image_stamp(&self, draws: &[Draw]) -> Vec<u32> {
+        draws
+            .iter()
+            .filter_map(|d| match d.sprite {
+                Sprite::Image(name) => Some(self.image_versions.get(name).copied().unwrap_or(0)),
+                _ => None,
+            })
+            .collect()
+    }
+
     /// The parts for `draws`, in order.
     pub fn parts(&mut self, lib: &Library, fonts: &Fonts, draws: &[Draw]) -> Result<Vec<Part>, Failure> {
         let mut parts = Vec::with_capacity(draws.len());
@@ -119,6 +137,13 @@ impl Resolver {
                 Sprite::Text { font, text } => (font, 1, text, 0),
                 Sprite::GameText { font, text } => (font, 0, text, 0),
                 Sprite::GameTextFaded { font, text, fade } => (font, 0, text, *fade),
+                Sprite::Image(name) => {
+                    // The engine's own texture: the UI fetches the version the engine made last.
+                    let version = *self.image_versions.get(name).ok_or(Failure::Pending)?;
+                    let url = assets::image_url(name, version);
+                    parts.push(Part::Sprite { url, x: d.x, y: d.y, w: d.size[0], h: d.size[1], alpha: d.alpha, clip });
+                    continue;
+                }
                 _ => {
                     if let Some(p) = self.place(lib, fonts, &d.sprite)? {
                         let [x, y] = [d.x + p.offset[0], d.y + p.offset[1]];

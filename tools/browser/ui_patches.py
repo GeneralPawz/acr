@@ -85,6 +85,16 @@ def main():
         out.append(phase(page, "sweep over the map", a.seconds, lambda n: mouse.move(100 + (n * 9) % 800, 200 + (n * 5) % 300)))
         page.drive({"cmd": "click", "pos": [275, 17]})
         out.append(phase(page, "drop-down open, mouse over its rows", a.seconds, lambda n: mouse.move(276, 60 + (n * 3) % 220)))
+        page.drive({"cmd": "click", "pos": [275, 17]})
+        # Forty peasants walking back and forth (the minimap's dots move), ten of them selected (the
+        # panel's counts and numbers); then the camera rectangle moving over the minimap.
+        page.drive({"cmd": "camera", "x": 7680, "y": 7680})
+        for i in range(40):
+            page.drive({"cmd": "spawn", "type": "Kri", "owner": 0, "x": 7600 + 30 * (i % 8), "y": 7600 + 30 * (i // 8),
+                        "dir": 64, "pose": "walk", "walk": 300, "patrol": True})
+        page.drive({"cmd": "click", "pos": [512, 384], "double": True})
+        out.append(phase(page, "40 units walking, a selection", a.seconds, lambda n: mouse.move(512, 300)))
+        out.append(phase(page, "the same, mouse over the command panel", a.seconds, lambda n: mouse.move(60 + (n * 5) % 250, 650)))
         browser.close()
     json.dump(out, sys.stdout, indent=1)
     print()

@@ -75,6 +75,8 @@ struct Sent {
 /// the shift since, and what was sent.
 struct SentGroup {
     draws: Vec<Draw>,
+    /// The versions of the dynamic images the draws show.
+    images: Vec<u32>,
     offset: [i32; 2],
     group: HudGroup,
 }
@@ -113,7 +115,12 @@ pub const OVER_GAME: &[&str] =
 
 /// The parts of the in-game interface the UI can claim (`Ready::hud`), over the same transparent
 /// canvas as [`OVER_GAME`].
-pub const HUD_PARTS: &[&str] = &["TopBar", "DropDown", "Hints", "Messages"];
+pub const HUD_PARTS: &[&str] =
+    &["TopBar", "DropDown", "Hints", "Messages", "Minimap", "CommandPanel", "UnitStats", "ArmyList"];
+
+/// The minimap image changes with every unit that moves; the UI gets a new one at most this often
+/// (the camera rectangle is a group of its own and follows every frame).
+const MINIMAP_EVERY: std::time::Duration = std::time::Duration::from_millis(250);
 
 pub struct WebUi {
     send: Sender,
@@ -125,6 +132,9 @@ pub struct WebUi {
     hud: Vec<String>,
     /// Every screen the view model can describe is the UI's (the test driver's classic skin).
     claim_all: bool,
+    /// Dynamic images (minimap, portrait) the engine made and the UI has not been given yet.
+    pending_images: HashMap<&'static str, acr_formats::raster::Image>,
+    minimap_at: Option<web_time::Instant>,
     /// Why the last description failed on an asset (anything but files still loading).
     pub error: Option<String>,
     rev: u64,
@@ -156,6 +166,8 @@ impl WebUi {
             claimed,
             hud,
             claim_all: false,
+            pending_images: HashMap::new(),
+            minimap_at: None,
             error: None,
             rev: 0,
             sent: Sent::default(),
@@ -180,7 +192,41 @@ impl WebUi {
     pub fn hud_claim(&self, scale: f32) -> Claim {
         let whole = scale.fract() == 0.0;
         let has = |part: &str| self.claim_all || (self.transparent && whole && self.hud.iter().any(|p| p == part));
-        Claim { top_bar: has("TopBar"), drop_down: has("DropDown"), hints: has("Hints"), messages: has("Messages") }
+        Claim {
+            top_bar: has("TopBar"),
+            drop_down: has("DropDown"),
+            hints: has("Hints"),
+            messages: has("Messages"),
+            minimap: has("Minimap"),
+            commands: has("CommandPanel"),
+            stats: has("UnitStats"),
+            army: has("ArmyList"),
+        }
+    }
+
+    /// An image the engine drew into a texture (the minimap, the portrait), for the UI to fetch as
+    /// `image/<name>/<version>`. The minimap gets a new version at most four times a second
+    /// ([`MINIMAP_EVERY`]; the driver's classic skin takes every one), the others at once.
+    pub fn set_image(&mut self, name: &'static str, image: acr_formats::raster::Image) {
+        self.pending_images.insert(name, image);
+    }
+
+    fn adopt_images(&mut self) {
+        let now = web_time::Instant::now();
+        let due = self.claim_all || self.minimap_at.is_none_or(|t| now.duration_since(t) >= MINIMAP_EVERY);
+        for name in self.pending_images.keys().copied().collect::<Vec<_>>() {
+            let slow = name == crate::hud::MINIMAP_IMAGE;
+            if slow && !due {
+                continue;
+            }
+            if slow {
+                self.minimap_at = Some(now);
+            }
+            let image = self.pending_images.remove(name).expect("listed above");
+            let version = self.resolver.image_versions.entry(name).or_insert(0);
+            *version += 1;
+            self.cache.add_image(name, *version, image);
+        }
     }
 
     /// The UI wants everything again.
@@ -243,6 +289,7 @@ impl WebUi {
         acr_sim::prof_scope!("ui.bridge");
         let mut patch = ViewPatch { rev: self.rev + 1, ..Default::default() };
         let mut changed = false;
+        self.adopt_images();
 
         if self.sent.mode != Some(mode) {
             self.sent.mode = Some(mode);
@@ -330,7 +377,8 @@ impl WebUi {
         let mut moves = Vec::new();
         for g in groups {
             names.push(g.name);
-            if let Some(old) = sent.get(g.name).filter(|o| o.group.scale == g.zoom.scale)
+            let images = self.resolver.image_stamp(&g.draws);
+            if let Some(old) = sent.get(g.name).filter(|o| o.group.scale == g.zoom.scale && o.images == images)
                 && let Some(d) = shift(&old.draws, &g.draws)
                 && (g.zoom.scale == 1.0
                     || (0..2).all(|i| (g.zoom.anchor[i] - old.group.anchor[i] - d[i] as f32).abs() < 1e-3))
@@ -350,11 +398,11 @@ impl WebUi {
                 parts,
             };
             patch.groups.push(group.clone());
-            updates.push((g.name, g.draws, group));
+            updates.push((g.name, g.draws, images, group));
         }
         // Nothing is recorded unless every group could be made: a retry sends them all.
-        for (name, draws, group) in updates {
-            sent.insert(name.to_owned(), SentGroup { draws, offset: [0, 0], group });
+        for (name, draws, images, group) in updates {
+            sent.insert(name.to_owned(), SentGroup { draws, images, offset: [0, 0], group });
         }
         for (name, offset) in moves {
             if let Some(old) = sent.get_mut(name) {
@@ -412,6 +460,22 @@ impl WebUi {
         self.sent.widgets = widgets.into_iter().map(|w| (w.id.clone(), w)).collect();
         Some(ScreenPatch { name, stack, in_game, busy, engine_drawn, hint, widgets: widgets_patch })
     }
+}
+
+/// Drops the dynamic images (`image/<name>/<version>`) that a newer version of the same name
+/// replaced: the page drops those patches' pictures unseen, and the cache keeps only the last few.
+pub fn newest_images(paths: &mut Vec<String>) {
+    let version = |p: &str| {
+        p.strip_prefix("image/")
+            .and_then(|r| r.rsplit_once('/'))
+            .map(|(n, v)| (n.to_owned(), v.parse::<u32>().unwrap_or(0)))
+    };
+    let mut newest: HashMap<String, u32> = HashMap::new();
+    for (n, v) in paths.iter().filter_map(|p| version(p)) {
+        let e = newest.entry(n).or_default();
+        *e = (*e).max(v);
+    }
+    paths.retain(|p| version(p).is_none_or(|(n, v)| newest[&n] == v));
 }
 
 /// The asset paths (below `/asset/v1/`) a patch's widgets and cursor refer to: what the page
@@ -579,6 +643,48 @@ mod tests {
     }
 
     #[test]
+    fn a_new_image_resends_a_group_with_the_same_draws() {
+        use crate::hud::MINIMAP_IMAGE;
+        use crate::hud::zoom::Zoom;
+        use crate::ui::draw::Rect;
+        let mut web = WebUi::new(Box::new(|_| {}), Host::Web, vec![], vec![], [1.0; 2], 1.0);
+        let ui = ui_with_menu();
+        let map = || Claimed {
+            name: "minimap",
+            layer: 0,
+            zoom: Zoom::NONE,
+            draws: vec![Draw::image(MINIMAP_IMAGE, Rect::new(767, 512, 240, 240))],
+        };
+        let image = |v: u8| acr_formats::raster::Image { width: 1, height: 1, rgba: vec![v, 0, 0, 255] };
+        // No image yet: the group waits.
+        assert!(matches!(web.hud_patch(&ui, vec![map()]), Err(view::Failure::Pending)));
+        web.set_image(MINIMAP_IMAGE, image(1));
+        web.adopt_images();
+        let p = web.hud_patch(&ui, vec![map()]).unwrap().unwrap();
+        let acr_ui_protocol::Part::Sprite { url, w, h, .. } = &p.groups[0].parts[0] else { panic!() };
+        assert_eq!((url.as_str(), *w, *h), ("image/hud%3Aminimap/1", 240, 240));
+        assert!(web.hud_patch(&ui, vec![map()]).unwrap().is_none());
+        // The images come at most four times a second: the next one waits.
+        web.set_image(MINIMAP_IMAGE, image(2));
+        web.adopt_images();
+        assert!(web.hud_patch(&ui, vec![map()]).unwrap().is_none());
+        web.minimap_at = web.minimap_at.map(|t| t - MINIMAP_EVERY);
+        web.adopt_images();
+        let p = web.hud_patch(&ui, vec![map()]).unwrap().unwrap();
+        assert!(
+            matches!(&p.groups[0].parts[0], acr_ui_protocol::Part::Sprite { url, .. } if url == "image/hud%3Aminimap/2")
+        );
+        // The page can fetch both versions, and nothing else.
+        let (lib, fonts) = ui.assets();
+        for (path, ok) in
+            [("image/hud%3Aminimap/1", true), ("image/hud%3Aminimap/2", true), ("image/hud%3Aminimap/3", false)]
+        {
+            let got = assets::resolve(lib, fonts, &mut web.cache, path);
+            assert_eq!(matches!(got, Ok(assets::Resolved::Ready(_))), ok, "{path}");
+        }
+    }
+
+    #[test]
     fn a_group_that_only_moved_goes_out_as_a_shift() {
         use crate::hud::font;
         use crate::hud::zoom::Zoom;
@@ -621,10 +727,11 @@ mod tests {
 
     #[test]
     fn the_interface_is_the_uis_only_where_it_named_it_on_a_transparent_host() {
-        let hud = || vec!["TopBar".to_owned(), "Hints".to_owned()];
+        let hud = || vec!["TopBar".to_owned(), "Hints".to_owned(), "Minimap".to_owned(), "ArmyList".to_owned()];
         let web = WebUi::new(Box::new(|_| {}), Host::Web, vec![], hud(), [1.0; 2], 1.0);
-        assert_eq!(web.hud_claim(1.0), Claim { top_bar: true, hints: true, ..Claim::default() });
-        assert_eq!(web.hud_claim(2.0), Claim { top_bar: true, hints: true, ..Claim::default() });
+        let some = Claim { top_bar: true, hints: true, minimap: true, army: true, ..Claim::default() };
+        assert_eq!(web.hud_claim(1.0), some);
+        assert_eq!(web.hud_claim(2.0), some);
         // A fractional canvas scale (1920 x 1080: 1.40625) leaves the HUD to the engine (#464).
         assert_eq!(web.hud_claim(1.40625), Claim::default());
         let native = WebUi::new(Box::new(|_| {}), Host::Native, vec![], hud(), [1.0; 2], 1.0);

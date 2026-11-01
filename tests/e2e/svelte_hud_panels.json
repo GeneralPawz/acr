@@ -1,0 +1,27 @@
+{
+  "name": "svelte_hud_panels",
+  "description": "The classic skin draws the minimap, the command panel, the unit stats and the army list of #327 (docs/webui.md 'The HUD II'): the minimap is an image the page fetches plus the camera rectangle as a group of its own, a selection fills the command panel, a minimap click moves the camera rectangle",
+  "args": ["--ui", "classic"],
+  "steps": [
+    {"cmd": "start", "random": {"nation": 1, "seed": 5}},
+    {"cmd": "wait", "ticks": 200},
+    {"cmd": "view", "expect": [
+      {"path": "view.hud.groups.0.name", "eq": "minimap"},
+      {"path": "view.hud.groups.0.parts.0.url", "contains": "image/hud%3Aminimap/"},
+      {"path": "view.hud.groups.0.parts", "len_eq": 1},
+      {"path": "view.hud.groups.1.name", "eq": "minimap_frame"},
+      {"path": "view.hud.groups.2.name", "eq": "minimap_view"},
+      {"path": "view.hud.groups.2.parts", "len_ge": 4},
+      {"path": "view.hud.groups.3.name", "eq": "commands"}
+    ], "capture": {"camera_x": "view.hud.groups.2.parts.0.rect.0"}},
+    {"cmd": "drag", "around": {"owner": 0, "type": "Kri"}},
+    {"cmd": "view", "expect": [
+      {"path": "view.hud.groups.3.name", "eq": "commands"},
+      {"path": "view.hud.groups.3.parts", "len_ge": 10},
+      {"path": "view.hud.groups.4.name", "eq": "stats"},
+      {"path": "view.hud.groups.4.parts", "len_ge": 4}
+    ], "note": "the selected peasants: boxes, icons with counts, and the type's numbers"},
+    {"cmd": "click", "pos": [790, 530]},
+    {"cmd": "view", "expect": {"path": "view.hud.groups.2.parts.0.rect.0", "ne": "${camera_x}"}, "note": "a click on the minimap moved the camera"}
+  ]
+}

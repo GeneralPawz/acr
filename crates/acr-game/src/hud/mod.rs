@@ -63,17 +63,40 @@ pub struct Claim {
     pub hints: bool,
     /// The mission's hint lines, the central text and the end of the game.
     pub messages: bool,
+    /// The minimap: its map image (terrain, unit dots, fog) with the frame, and the camera
+    /// rectangle and the formation mark as a group of their own.
+    pub minimap: bool,
+    /// The command panel: the type boxes, the command and production icons, the market's plaques.
+    pub commands: bool,
+    /// The numbers of the selected type (life, attacks, protections, reload) and the unit panel
+    /// with the portrait.
+    pub stats: bool,
+    /// The army list's icons.
+    pub army: bool,
 }
 
 impl Claim {
-    pub const ALL: Claim = Claim { top_bar: true, drop_down: true, hints: true, messages: true };
+    pub const ALL: Claim = Claim {
+        top_bar: true,
+        drop_down: true,
+        hints: true,
+        messages: true,
+        minimap: true,
+        commands: true,
+        stats: true,
+        army: true,
+    };
 
     pub fn claims(self, layer: Layer) -> bool {
         match layer {
             Layer::TopBar => self.top_bar,
             Layer::DropDown => self.drop_down,
             Layer::Hint => self.hints,
-            _ => false,
+            Layer::Minimap | Layer::MinimapFrame | Layer::MinimapView => self.minimap,
+            Layer::Commands => self.commands,
+            Layer::Stats | Layer::UnitPanel => self.stats,
+            Layer::Army => self.army,
+            Layer::GamePanel => false,
         }
     }
 }
@@ -81,10 +104,20 @@ impl Claim {
 /// The parts of [`Hud::draw`], in drawing order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Layer {
+    /// The map image alone: a new one goes out on its own.
     Minimap,
+    /// The player-coloured lines and the border frame around it.
+    MinimapFrame,
+    /// The camera rectangle and the formation mark over the minimap.
+    MinimapView,
     Commands,
+    /// The numbers of a single selected type, over the command panel.
+    Stats,
     Army,
-    Panel,
+    /// The unit panel (portrait, values).
+    UnitPanel,
+    /// The game panel (its widgets draw things the protocol has no part for).
+    GamePanel,
     TopBar,
     DropDown,
     Hint,
@@ -113,19 +146,26 @@ pub fn claimed(section: Section) -> Vec<Claimed> {
     let Section { layer, zoom, draws } = section;
     let group = |name, layer, draws| Claimed { name, layer, zoom, draws };
     match layer {
+        Layer::Minimap => vec![group("minimap", 0, draws)],
+        Layer::MinimapFrame => vec![group("minimap_frame", 1, draws)],
+        Layer::MinimapView => vec![group("minimap_view", 2, draws)],
+        Layer::Commands => vec![group("commands", 3, draws)],
+        Layer::Stats => vec![group("stats", 4, draws)],
+        Layer::Army => vec![group("army", 5, draws)],
+        Layer::UnitPanel => vec![group("unit_panel", 6, draws)],
+        Layer::GamePanel => Vec::new(),
         Layer::TopBar => {
             let (text, frames): (Vec<Draw>, Vec<Draw>) = draws.into_iter().partition(Draw::is_text);
-            vec![group("top_bar", 0, frames), group("top_bar_text", 1, text)]
+            vec![group("top_bar", 7, frames), group("top_bar_text", 8, text)]
         }
-        Layer::DropDown => vec![group("drop_down", 2, draws)],
-        Layer::Hint => vec![group("hint", 3, draws)],
-        _ => Vec::new(),
+        Layer::DropDown => vec![group("drop_down", 9, draws)],
+        Layer::Hint => vec![group("hint", 10, draws)],
     }
 }
 
 /// The messages of the mission over the interface, a claimed group like the others.
 pub fn messages_group(draws: Vec<Draw>) -> Claimed {
-    Claimed { name: "messages", layer: 4, zoom: Zoom::NONE, draws }
+    Claimed { name: "messages", layer: 11, zoom: Zoom::NONE, draws }
 }
 
 /// The smallest layout size (`RealLx`, `RealLy`); [`Hud::set_screen`] sets the real one.
@@ -535,6 +575,8 @@ pub struct Hud {
     pub life_bars: bool,
     minimap_dirty: bool,
     last_minimap: Option<MinimapState>,
+    /// An external UI draws the camera rectangle over the minimap image, which then has none.
+    ui_camera: bool,
     /// The side panel (`0x1100a74`), keys U and I.
     pub panel: Panel,
     /// The inaccessible areas are drawn (`0x90d905`, key Q).
@@ -567,6 +609,7 @@ impl Default for Hud {
             life_bars: false,
             minimap_dirty: true,
             last_minimap: None,
+            ui_camera: false,
             panel: Panel::None,
             locks: false,
             transparent: false,
@@ -759,6 +802,15 @@ impl Hud {
         Placement::new(self.large_minimap, self.screen, view.camera, view.view)
     }
 
+    /// Whether an external UI draws the camera rectangle ([`Claim::minimap`]): the image is then
+    /// composed without it, so the camera moving does not recompose the image.
+    pub fn set_ui_camera(&mut self, on: bool) {
+        if self.ui_camera != on {
+            self.ui_camera = on;
+            self.minimap_dirty = true;
+        }
+    }
+
     /// The minimap image if it changed since the last call.
     pub fn minimap_image(&mut self, ctx: &Ctx, view: &View) -> Option<acr_formats::raster::Image> {
         let map = self.minimap.as_ref()?;
@@ -770,12 +822,13 @@ impl Hud {
             (view.view[0] as i32).max(1),
             (view.view[1] as i32).max(1),
         );
-        let state = (placement, view.dots.clone(), Some(camera), view.fog.clone(), view.frame);
+        let (camera, frame) = if self.ui_camera { (None, None) } else { (Some(camera), view.frame) };
+        let state = (placement, view.dots.clone(), camera, view.fog.clone(), frame);
         if !self.minimap_dirty && self.last_minimap.as_ref() == Some(&state) {
             return None;
         }
         let fog = view.fog.as_deref().map(Vec::as_slice);
-        let image = minimap::compose(map, &placement, &view.dots, fog, Some(camera), view.frame, &palette);
+        let image = minimap::compose(map, &placement, &view.dots, fog, camera, frame, &palette);
         self.last_minimap = Some(state);
         self.minimap_dirty = false;
         Some(image)
@@ -1099,9 +1152,12 @@ impl Hud {
         // icons and the unit stats over them (0x607f50, called at 0x5aa278), so the reload
         // bar at x = 173..176 lies on the boxes' joint; then the resource panel (0x4ecc50).
         if self.minimap.is_some() {
-            let mut out = Vec::new();
-            self.draw_minimap(ctx, view, &palette, &mut out);
-            layers.push(Section { layer: Layer::Minimap, zoom: self.zoom(Group::Minimap, view), draws: out });
+            let (mut image, mut out, mut over) = (Vec::new(), Vec::new(), Vec::new());
+            self.draw_minimap(ctx, view, &palette, &mut image, &mut out, &mut over);
+            let zoom = self.zoom(Group::Minimap, view);
+            layers.push(Section { layer: Layer::Minimap, zoom, draws: image });
+            layers.push(Section { layer: Layer::MinimapFrame, zoom, draws: out });
+            layers.push(Section { layer: Layer::MinimapView, zoom, draws: over });
         }
         let screen = self.screen;
         let mut out = Vec::new();
@@ -1114,13 +1170,16 @@ impl Hud {
             let pressed = self.pressed && mouse.is_some_and(|m| r.contains(m));
             draw_icon(ctx, icon, r.x0, r.y0, pressed, &palette, &mut out);
         }
+        let mut numbers = Vec::new();
         if let (Some(stats), Some(_)) = (&view.stats, &data) {
-            draw_stats(ctx, stats, &palette, screen, &mut out);
+            draw_stats(ctx, stats, &palette, screen, &mut numbers);
         }
         if let Some(market) = view.market {
             draw_market(ctx, market, screen, &mut out);
         }
-        layers.push(Section { layer: Layer::Commands, zoom: self.zoom(Group::Commands, view), draws: out });
+        let zoom = self.zoom(Group::Commands, view);
+        layers.push(Section { layer: Layer::Commands, zoom, draws: out });
+        layers.push(Section { layer: Layer::Stats, zoom, draws: numbers });
         // The army icons, the last set 0x5a9fa0 draws (0x5aa394).
         let mut out = Vec::new();
         let mouse = self.mouse_in(Group::Army, view);
@@ -1131,8 +1190,12 @@ impl Hud {
         }
         layers.push(Section { layer: Layer::Army, zoom: self.zoom(Group::Army, view), draws: out });
         let mut panel = Vec::new();
+        let mut layer = Layer::GamePanel;
         match (self.panel, &view.unit_info) {
-            (Panel::Unit, Some(info)) => self.unit_panel.draw(ctx, info, view.morale.as_ref(), &palette, &mut panel),
+            (Panel::Unit, Some(info)) => {
+                layer = Layer::UnitPanel;
+                self.unit_panel.draw(ctx, info, view.morale.as_ref(), &palette, &mut panel)
+            }
             (Panel::Game, _) => {
                 self.game_panel.draw_frame(ctx, &mut panel);
                 panel.extend(view.game_page.iter().cloned());
@@ -1142,7 +1205,7 @@ impl Hud {
         }
         let dx = self.panel_dx();
         layers.push(Section {
-            layer: Layer::Panel,
+            layer,
             zoom: self.zoom(Group::Panel, view),
             draws: panel.into_iter().map(|d| d.translated(dx, 0)).collect(),
         });
@@ -1162,9 +1225,20 @@ impl Hud {
         layers
     }
 
-    fn draw_minimap(&self, ctx: &Ctx, view: &View, palette: &Palette, out: &mut Vec<Draw>) {
-        let r = self.placement(view).rect;
-        out.push(Draw::image(MINIMAP_IMAGE, r));
+    /// The map image in `image`, its frame in `out`; the camera and the formation mark, which
+    /// change on their own, in `over`.
+    fn draw_minimap(
+        &self,
+        ctx: &Ctx,
+        view: &View,
+        palette: &Palette,
+        image: &mut Vec<Draw>,
+        out: &mut Vec<Draw>,
+        over: &mut Vec<Draw>,
+    ) {
+        let placement = self.placement(view);
+        let r = placement.rect;
+        image.push(Draw::image(MINIMAP_IMAGE, r));
         // Two lines in the player's colour around it, then the "Border" frame (0x4c155c).
         let inner = palette_rgba(palette, color::PLAYER + 4 * (view.player % 8));
         let outer = palette_rgba(palette, color::PLAYER + 4 * (view.player % 8) + 1);
@@ -1178,7 +1252,6 @@ impl Hud {
             .mouse_in(Group::Army, view)
             .and_then(|m| Self::army_icons(view).find(|i| Self::army_rect(i.slot).contains(m)).and_then(|i| i.mark));
         if let Some([px, py]) = mark {
-            let placement = self.placement(view);
             let x = r.x0 + 1 + px - placement.offset[0];
             let y = r.y0 + 1 + py - placement.offset[1];
             let c = palette_rgba(palette, nearest(palette, color::BRACKETS));
@@ -1195,7 +1268,29 @@ impl Hud {
             ] {
                 line(&mut lines, c, (x + x0, y + y0), (x + x1, y + y1));
             }
-            out.extend(lines.into_iter().map(|d| d.clipped(r)));
+            over.extend(lines.into_iter().map(|d| d.clipped(r)));
+        }
+        if self.ui_camera {
+            let mut lines = Vec::new();
+            let white = palette_rgba(palette, minimap::WHITE);
+            let shift = |[x, y]: [i32; 2]| (r.x0 + x - placement.offset[0], r.y0 + y - placement.offset[1]);
+            if let Some(corners) = view.frame {
+                for i in 0..4 {
+                    line(&mut lines, white, shift(corners[i]), shift(corners[(i + 1) % 4]));
+                }
+            } else {
+                let c = Rect::new(
+                    view.camera[0].floor() as i32,
+                    view.camera[1].floor() as i32,
+                    (view.view[0] as i32).max(1),
+                    (view.view[1] as i32).max(1),
+                );
+                let (x0, y0) = shift([c.x0, c.y0]);
+                let (x1, y1) = shift([c.x1, c.y1]);
+                outline(&mut lines, Rect { x0, y0, x1, y1 }, white);
+            }
+            // Behind the formation mark, inside the map image as the engine bakes it.
+            over.splice(0..0, lines.into_iter().map(|d| d.clipped(r)));
         }
     }
 
@@ -1952,9 +2047,12 @@ mod tests {
             Section { layer: Layer::TopBar, zoom: Zoom::NONE, draws: vec![fill.clone(), text.clone(), fill.clone()] };
         let groups = claimed(section);
         let names: Vec<_> = groups.iter().map(|g| (g.name, g.layer, g.draws.len())).collect();
-        assert_eq!(names, [("top_bar", 0, 2), ("top_bar_text", 1, 1)]);
-        assert!(claimed(Section { layer: Layer::Minimap, zoom: Zoom::NONE, draws: vec![fill] }).is_empty());
+        assert_eq!(names, [("top_bar", 7, 2), ("top_bar_text", 8, 1)]);
+        let map = claimed(Section { layer: Layer::Minimap, zoom: Zoom::NONE, draws: vec![fill.clone()] });
+        assert_eq!(map.iter().map(|g| (g.name, g.layer)).collect::<Vec<_>>(), [("minimap", 0)]);
+        assert!(claimed(Section { layer: Layer::GamePanel, zoom: Zoom::NONE, draws: vec![fill] }).is_empty());
         assert!(Claim::ALL.claims(Layer::Hint) && !Claim::default().claims(Layer::TopBar));
-        assert!(!Claim::ALL.claims(Layer::Commands));
+        assert!(Claim::ALL.claims(Layer::Commands) && !Claim::ALL.claims(Layer::GamePanel));
+        assert!(!Claim::default().claims(Layer::Army));
     }
 }

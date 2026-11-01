@@ -9,19 +9,19 @@
     {"cmd": "hud_scale", "scale": 1.8},
     {"cmd": "move", "pos": [321, 521]},
     {"cmd": "view", "expect": [
-      {"path": "view.hud.groups.0.name", "eq": "top_bar"},
-      {"path": "view.hud.groups.2.name", "eq": "hint"},
-      {"path": "view.hud.groups.2.scale", "gt": 1.799},
-      {"path": "view.hud.groups.2.scale", "lt": 1.801},
-      {"path": "view.hud.groups.2.anchor.0", "gt": 330},
-      {"path": "view.hud.groups.2.anchor.0", "lt": 380}
+      {"path": "view.hud.groups.6.name", "eq": "top_bar"},
+      {"path": "view.hud.groups.8.name", "eq": "hint"},
+      {"path": "view.hud.groups.8.scale", "gt": 1.799},
+      {"path": "view.hud.groups.8.scale", "lt": 1.801},
+      {"path": "view.hud.groups.8.anchor.0", "gt": 330},
+      {"path": "view.hud.groups.8.anchor.0", "lt": 380}
     ], "note": "the anchor is the mouse in canvas pixels (window / 0.9375)"},
     {"cmd": "top_bar", "mode": "touch"},
     {"cmd": "move", "pos": [700, 300]},
     {"cmd": "view", "expect": [
-      {"path": "view.hud.groups.0.name", "eq": "top_bar"},
-      {"path": "view.hud.groups.1.name", "eq": "top_bar_text"},
-      {"path": "view.hud.groups.1.parts", "len_ge": 2}
+      {"path": "view.hud.groups.6.name", "eq": "top_bar"},
+      {"path": "view.hud.groups.7.name", "eq": "top_bar_text"},
+      {"path": "view.hud.groups.7.parts", "len_ge": 2}
     ], "note": "pause and escape glyphs: the touch bar has no resource values until its panel opens"}
   ]
 }

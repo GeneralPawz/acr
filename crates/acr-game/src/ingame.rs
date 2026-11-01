@@ -637,6 +637,7 @@ impl InGame {
 
     /// What an external UI draws of the interface ([`crate::hud::Claim`]); the engine leaves it out.
     pub fn set_hud_claim(&mut self, claim: crate::hud::Claim) {
+        self.interface.hud.set_ui_camera(claim.minimap);
         self.interface.claim = claim;
     }
 

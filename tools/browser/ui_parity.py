@@ -74,11 +74,22 @@ ROUTES.update({
 # and the touch bar, at the window sizes and settings of `HUD_SETTINGS`), the "M" drop-down (its button), a hint (`hover`: the mouse stays over the iron value) and the mission's messages (Ctrl+Space shows the leader chords for 100 ticks). The mouse waits mid-screen otherwise: in a corner it would scroll the map.
 # Pixels are counted over the part's `HUD_AREAS` box (a hint's starts below the cursor, which the engine
 # draws and a page screenshot does not show). They are `game` for the driver's tree, which has no widget of them.
+PEASANTS = [{"cmd": "camera", "x": 7680, "y": 7680}] + [
+    {"cmd": "spawn", "type": "Kri", "owner": 0, "x": 7680 + 40 * (i % 5), "y": 7680 + 40 * (i // 5), "dir": 64}
+    for i in range(10)
+]
+UNIT_PANEL = [{"press": "u"}]
 ROUTES.update({
     "TopBar": [BLANK, {"hover": [512, 400]}],
     "DropDown": [BLANK, [275, 17], {"hover": [512, 400]}],
     "Hints": [BLANK, {"hover": [800, 17]}],
     "Messages": [BLANK, {"hover": [512, 400]}, {"press": "Control+Space"}],
+    # #327: ten peasants (`Kri`) on the blank field, picked by a double click (the map stands still), or a
+    # squad of soldiers for the army list; the mouse waits over the field.
+    "CommandPanel": [BLANK] + PEASANTS + [{"cmd": "click", "pos": [512, 384], "double": True}, {"hover": [512, 300]}],
+    "UnitStats": [BLANK] + PEASANTS[:1] + [{"cmd": "click", "pos": [512, 384]}, {"hover": [512, 300]}],
+    "Minimap": [BLANK] + PEASANTS + [{"cmd": "click", "pos": [512, 384], "double": True}, {"hover": [512, 300]}],
+    "UnitPanel": [BLANK] + PEASANTS[:2] + [{"cmd": "click", "pos": [512, 384]}] + UNIT_PANEL + [{"hover": [512, 300]}],
     "TopBarWide": [BLANK, {"hover": [960, 540]}],
     "TopBarCentered": [BLANK, {"hover": [960, 540]}],
     "TopBarTouch": [BLANK, {"hover": [792, 360]}],
@@ -97,6 +108,10 @@ HUD_AREAS = {
     "DropDown": "190,40,180,250",
     "Hints": "816,49,104,32",
     "Messages": "0,558,1024,32",
+    "CommandPanel": "0,598,560,170",
+    "UnitStats": "0,598,260,170",
+    "Minimap": "760,505,264,263",
+    "UnitPanel": "700,40,324,330",
     "TopBarWide": "0,0,1920,44",
     "TopBarCentered": "0,0,1920,44",
     "TopBarTouch": "0,0,1584,70",
@@ -107,7 +122,7 @@ HUD_AREAS = {
 SCREEN_OF = {
     "CampaignMissions": "SingleMission", "RandomMapCombo": "RandomMap", "GameOptionsMore": "GameOptions",
     "GameOptionsRules": "GameOptions", "GameLoadGame": "LoadGame",
-    "TopBar": "game", "DropDown": "game", "Hints": "game", "Messages": "game", "TopBarWide": "game",
+    "TopBar": "game", "CommandPanel": "game", "UnitStats": "game", "Minimap": "game", "UnitPanel": "game", "DropDown": "game", "Hints": "game", "Messages": "game", "TopBarWide": "game",
     "TopBarCentered": "game", "TopBarTouch": "game", "TopBarTouchOpen": "game",
 }
 
@@ -223,6 +238,8 @@ class Page:
                 # The mouse stays here for the screenshot (a hint needs it over its target).
                 self.hover = step["hover"]
                 self.page.mouse.move(*self.hover)
+            elif isinstance(step, dict) and "sleep" in step:
+                time.sleep(step["sleep"])
             elif isinstance(step, dict) and "press" in step:
                 # A message box takes no driver request but `ui`: the key goes in like a player's.
                 self.page.keyboard.press(step["press"])
