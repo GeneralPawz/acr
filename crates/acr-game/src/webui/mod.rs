@@ -8,13 +8,16 @@
 //! - [`bundle`]: the built UI, embedded in the executable.
 //! - [`assets`]: pictures and fonts decoded from the player's files for the UI.
 //! - [`font_atlas`]: glyph atlases of the original fonts. [`keys`]: DOM keys as winit keys.
-//! - `web`: the browser's exports (wasm only).
+//! - `web`: the browser's exports (wasm only). `native`: the desktop webview host (feature
+//!   `webview-gtk`, Linux).
 
 pub mod assets;
 pub mod bundle;
 pub mod font_atlas;
 pub mod input;
 pub mod keys;
+#[cfg(all(feature = "webview-gtk", target_os = "linux"))]
+pub mod native;
 pub mod view;
 #[cfg(target_arch = "wasm32")]
 pub mod web;
@@ -51,7 +54,35 @@ fn sender(game: &crate::Game) -> Option<Sender> {
         web::sender()
     }
     #[cfg(not(target_arch = "wasm32"))]
-    game.ui_outbox.clone().map(|out| Box::new(move |m: &str| out.borrow_mut().push(m.to_owned())) as Sender)
+    {
+        #[cfg(all(feature = "webview-gtk", target_os = "linux"))]
+        if let Some(host) = &game.native_host {
+            return Some(host.sender());
+        }
+        game.ui_outbox.clone().map(|out| Box::new(move |m: &str| out.borrow_mut().push(m.to_owned())) as Sender)
+    }
+}
+
+/// Whether the desktop build shows the Svelte UI's menus in a webview: the `native_ui` setting says
+/// `svelte`, this build has a host (`webview-gtk` on Linux) and the bundle is embedded. Anything
+/// else is the engine's UI, with a log line when `svelte` was asked for.
+#[cfg(not(any(target_arch = "wasm32", target_os = "android")))]
+pub fn native_ui_active(setting: crate::ui::settings::NativeUi) -> bool {
+    native_ui_gate(setting, cfg!(all(feature = "webview-gtk", target_os = "linux")), bundle::PRESENT)
+}
+
+#[cfg(not(any(target_arch = "wasm32", target_os = "android")))]
+fn native_ui_gate(setting: crate::ui::settings::NativeUi, host_built: bool, bundle: bool) -> bool {
+    use crate::ui::settings::NativeUi;
+    if setting != NativeUi::Svelte {
+        return false;
+    }
+    if !host_built {
+        log::warn!("settings: native_ui=svelte needs a build with the webview-gtk feature (Linux); the engine draws");
+    } else if !bundle {
+        log::warn!("settings: native_ui=svelte needs the embedded Svelte bundle (ui/dist); the engine draws");
+    }
+    host_built && bundle
 }
 
 /// What the UI was last told, to send only changes.
@@ -138,6 +169,9 @@ pub struct WebUi {
     transparent: bool,
     /// Screens the UI draws itself.
     claimed: Vec<String>,
+    /// The UI draws the current screen (as of the last [`WebUi::publish`]); a native host shows its
+    /// webview exactly then.
+    shown: bool,
     /// Parts of the in-game interface the UI draws itself ([`HUD_PARTS`]).
     hud: Vec<String>,
     /// Every screen the view model can describe is the UI's (the test driver's classic skin).
@@ -174,6 +208,7 @@ impl WebUi {
             send,
             transparent: host == Host::Web,
             claimed,
+            shown: false,
             hud,
             claim_all: false,
             pending_images: HashMap::new(),
@@ -187,6 +222,11 @@ impl WebUi {
             viewport: (viewport, dpr),
             mods: Default::default(),
         }
+    }
+
+    /// Whether the UI draws the current screen, as of the last [`WebUi::publish`].
+    pub fn shown(&self) -> bool {
+        self.shown
     }
 
     /// The UI draws every screen it can describe, whatever it announced.
@@ -340,7 +380,10 @@ impl WebUi {
             }
         };
         let drawn_here: Vec<String> = described.iter().map(|s| s.name.clone()).collect();
-        ui.set_external(Some(External { screens: drawn_here, cursor: true }));
+        self.shown = !drawn_here.is_empty();
+        // A transparent layer shows the cursor over the game too; an opaque webview only while it
+        // covers the window, else the engine's cursor is the one.
+        ui.set_external(Some(External { screens: drawn_here, cursor: self.transparent || self.shown }));
         if let Some(screen) = self.screen_patch(described, ui) {
             patch.screen = Some(screen);
             changed = true;
@@ -615,6 +658,26 @@ mod tests {
         assert!(!native.draws(&screen("GameMenu", true)));
         web.claim_everything();
         assert!(web.draws(&screen("Elsewhere", true)));
+    }
+
+    #[test]
+    #[cfg(not(any(target_arch = "wasm32", target_os = "android")))]
+    fn the_native_ui_needs_the_setting_a_host_and_the_bundle() {
+        use crate::ui::settings::NativeUi::{Engine, Svelte};
+        assert!(!native_ui_gate(Engine, true, true));
+        assert!(!native_ui_gate(Svelte, false, true), "no host in this build");
+        assert!(!native_ui_gate(Svelte, true, false), "no bundle");
+        assert!(native_ui_gate(Svelte, true, true));
+    }
+
+    #[test]
+    fn nothing_is_shown_until_the_ui_draws_a_screen() {
+        let mut web = WebUi::new(Box::new(|_| {}), Host::Native, vec!["MainMenu".into()], vec![], [1.0; 2], 1.0);
+        assert!(!web.shown());
+        let mut ui = ui_with_menu();
+        web.publish(&mut ui, Mode::Menus, None, Some([1024.0, 768.0]), Vec::new());
+        // Nothing is built: the engine draws, and its cursor stays.
+        assert!(!web.shown());
     }
 
     #[test]

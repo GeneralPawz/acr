@@ -101,6 +101,12 @@ pub struct Game {
     webui: Option<webui::WebUi>,
     /// Where the driver collects the UI's messages (`--ui classic`), in place of a page.
     ui_outbox: Option<webui::Outbox>,
+    /// `native_ui=svelte` is in effect: the window gets the webview host once the GPU is ready.
+    #[cfg(all(feature = "webview-gtk", target_os = "linux"))]
+    native_ui: bool,
+    /// The webview that shows the Svelte UI's full-screen menus (`webui::native`).
+    #[cfg(all(feature = "webview-gtk", target_os = "linux"))]
+    native_host: Option<webui::native::Host>,
     mode: Mode,
     audio: music::Audio,
     suspension: suspend::Suspension,
@@ -155,6 +161,10 @@ impl Game {
             ui: ui::Ui::new(&paths),
             webui: None,
             ui_outbox: None,
+            #[cfg(all(feature = "webview-gtk", target_os = "linux"))]
+            native_ui: false,
+            #[cfg(all(feature = "webview-gtk", target_os = "linux"))]
+            native_host: None,
             mode: Mode::Intro,
             audio: music::Audio::new(&paths),
             suspension: Default::default(),
@@ -201,6 +211,13 @@ impl Game {
         );
     }
 
+    /// The `native_ui=svelte` setting is in effect ([`webui::native_ui_active`]): the window gets
+    /// the webview that shows the Svelte UI's full-screen menus.
+    #[cfg(all(feature = "webview-gtk", target_os = "linux"))]
+    pub fn enable_native_ui(&mut self) {
+        self.native_ui = true;
+    }
+
     /// Answers the Svelte UI's waiting asset requests and publishes what changed.
     fn publish_webui(&mut self) {
         let Some(mut web) = self.webui.take() else { return };
@@ -218,6 +235,12 @@ impl Game {
             _ => Vec::new(),
         };
         web.publish(&mut self.ui, mode, loading, size, hud);
+        // The webview covers the window exactly while the UI draws the screen; the movies and
+        // the game are the engine's.
+        #[cfg(all(feature = "webview-gtk", target_os = "linux"))]
+        if let Some(host) = &mut self.native_host {
+            host.show(web.shown() && !matches!(self.mode, Mode::Intro));
+        }
         self.webui = Some(web);
     }
 
@@ -1007,6 +1030,16 @@ impl ApplicationHandler<Event> for Game {
                 let sprites = SpriteRenderer::new(&gpu.device, gpu.config.format);
                 let upscaler = Upscaler::new(&gpu.device, gpu.config.format);
                 self.graphics = Some(Graphics { gpu, images, sprites, upscaler });
+                #[cfg(all(feature = "webview-gtk", target_os = "linux"))]
+                if self.native_ui
+                    && self.native_host.is_none()
+                    && let Some(window) = &self.window
+                {
+                    match webui::native::Host::new(window, self.proxy.clone()) {
+                        Ok(host) => self.native_host = Some(host),
+                        Err(e) => log::error!("webui: no native host, the engine draws: {e}"),
+                    }
+                }
                 self.sync_render_scale();
                 if let Some(window) = &self.window {
                     let size = window.inner_size();
@@ -1067,6 +1100,16 @@ impl ApplicationHandler<Event> for Game {
                 if let Some(g) = &mut self.graphics {
                     g.gpu.resize(size.width, size.height);
                 }
+                #[cfg(all(feature = "webview-gtk", target_os = "linux"))]
+                if let (Some(host), Some(window)) = (&self.native_host, &self.window) {
+                    host.resize(window);
+                }
+            }
+            #[cfg(all(feature = "webview-gtk", target_os = "linux"))]
+            WindowEvent::ScaleFactorChanged { .. } => {
+                if let (Some(host), Some(window)) = (&self.native_host, &self.window) {
+                    host.resize(window);
+                }
             }
             WindowEvent::CursorMoved { position, .. } => {
                 let position = self.to_render(position);
@@ -1113,6 +1156,11 @@ impl ApplicationHandler<Event> for Game {
     }
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        // The webview's input and IPC are GTK events, which this loop does not wake for.
+        #[cfg(all(feature = "webview-gtk", target_os = "linux"))]
+        if self.native_host.is_some() {
+            webui::native::pump();
+        }
         self.touch_tick(event_loop);
         #[cfg(not(target_arch = "wasm32"))]
         if self.driver.is_some() {
@@ -1125,6 +1173,11 @@ impl ApplicationHandler<Event> for Game {
         }
         // Capped: sleep until the next frame is due instead of asking for it at once (#440).
         match self.pacing.wait(web_time::Instant::now()) {
+            // A shown webview needs the loop awake often enough to pump GTK.
+            #[cfg(all(feature = "webview-gtk", target_os = "linux"))]
+            Some(wait) if self.native_host.as_ref().is_some_and(|h| h.visible()) => event_loop.set_control_flow(
+                ControlFlow::WaitUntil(web_time::Instant::now() + wait.min(std::time::Duration::from_millis(8))),
+            ),
             Some(wait) => event_loop.set_control_flow(ControlFlow::WaitUntil(web_time::Instant::now() + wait)),
             None => {
                 event_loop.set_control_flow(ControlFlow::Wait);

@@ -56,16 +56,38 @@ fn run(drive: Option<crate::drive::Options>) -> Result<(), String> {
     };
     log::info!("game data: {}", dir.display());
     let assets = ExtraFiles::new(NativeAssets::open(&dir)?, &dir);
-    let event_loop = crate::event_loop()?;
-    let mut game = Game::new(event_loop.create_proxy(), Box::new(assets));
-    // `ACR_SAVE_DIR` keeps savegames and player profiles of test runs out of the game folder.
-    let save_root = std::env::var_os("ACR_SAVE_DIR").map(PathBuf::from).unwrap_or_else(|| dir.clone());
-    game.set_saves(Box::new(acr_app::saves::FolderSaves::new(&save_root)));
-    game.set_profiles(Box::new(acr_app::saves::FolderSaves::files(&save_root, "Players", "txt")));
     // The options: `settings.txt` next to the remembered game folder, or in `ACR_SETTINGS_DIR`
     // (for runs side by side). The driver uses the defaults unless `ACR_SETTINGS_DIR` is set.
     let settings_dir = std::env::var_os("ACR_SETTINGS_DIR").map(PathBuf::from);
     let settings_dir = if drive.is_some() { settings_dir } else { settings_dir.or_else(data_dir) };
+    // The webview host decides the windowing system (X11), so the setting is read before the
+    // event loop exists.
+    let native_ui = settings_dir.as_deref().is_some_and(native_ui_wanted);
+    #[cfg(all(feature = "webview-gtk", target_os = "linux"))]
+    let (event_loop, native_ui) = if native_ui {
+        match crate::webui::native::prepare().and_then(|()| crate::webui::native::event_loop()) {
+            Ok(event_loop) => (event_loop, true),
+            Err(e) => {
+                log::error!("webui: no native host, the engine draws: {e}");
+                (crate::event_loop()?, false)
+            }
+        }
+    } else {
+        (crate::event_loop()?, false)
+    };
+    #[cfg(not(all(feature = "webview-gtk", target_os = "linux")))]
+    let event_loop = crate::event_loop()?;
+    let mut game = Game::new(event_loop.create_proxy(), Box::new(assets));
+    #[cfg(all(feature = "webview-gtk", target_os = "linux"))]
+    if native_ui {
+        game.enable_native_ui();
+    }
+    #[cfg(not(all(feature = "webview-gtk", target_os = "linux")))]
+    let _ = native_ui;
+    // `ACR_SAVE_DIR` keeps savegames and player profiles of test runs out of the game folder.
+    let save_root = std::env::var_os("ACR_SAVE_DIR").map(PathBuf::from).unwrap_or_else(|| dir.clone());
+    game.set_saves(Box::new(acr_app::saves::FolderSaves::new(&save_root)));
+    game.set_profiles(Box::new(acr_app::saves::FolderSaves::files(&save_root, "Players", "txt")));
     match settings_dir {
         Some(settings) => {
             let place = settings.join("settings.txt").display().to_string();
@@ -84,6 +106,13 @@ fn run(drive: Option<crate::drive::Options>) -> Result<(), String> {
     log::info!("event loop ended: {ended:?}");
     log::logger().flush();
     ended
+}
+
+/// Whether the `native_ui` setting of the `settings.txt` in `dir` asks for the Svelte UI and this
+/// build can show it ([`crate::webui::native_ui_active`]).
+fn native_ui_wanted(dir: &Path) -> bool {
+    let Ok(text) = std::fs::read_to_string(dir.join("settings.txt")) else { return false };
+    crate::webui::native_ui_active(crate::ui::settings::Settings::decode(&text).native_ui)
 }
 
 /// ACR's own files from outside the game folder, which take precedence over the game folder's
