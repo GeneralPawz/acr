@@ -55,7 +55,13 @@ ROUTES = {
 BLANK = {"cmd": "start", "blank": {"ground": "grass"}}
 MENU = [BLANK, {"cmd": "key", "key": "F12"}]
 MORE = MENU + ["Spieleinstellungen", "Weitere Optionen »"]
+# The briefing of the first single mission is a MessageWindow; once OK, the "M" drop-down's last row
+# (UM_HIST, 0x4c6cb0) opens the history. The mission loads in the page (seconds), so a route waits; the
+# message box takes only `ui` of the driver, so Enter dismisses it.
+BRIEFING = ["Einzelspieler", "Einzelmission", "OK", "Die Indianeraufstände.", "Mission spielen!"]
 ROUTES.update({
+    "MessageWindow": BRIEFING,
+    "HistoryWindow": BRIEFING + [{"wait_screen": "MessageWindow"}, {"press": "Enter"}, {"wait_screen": "game"}, [275, 17], [276, 288]],
     "GameMenu": MENU,
     "GameOptions": MENU + ["Spieleinstellungen"],
     "GameOptionsMore": MORE,
@@ -132,10 +138,25 @@ class Page:
     def tree(self):
         return self.drive({"cmd": "ui", "all": True})["ui"]
 
+    def wait_screen(self, screen):
+        """Until the driver's tree is at `screen` and built (`game`: no dialog)."""
+        end = time.time() + self.timeout_s
+        while time.time() < end:
+            tree = self.tree()
+            if tree["screen"] == screen and tree["built"] and not tree["busy"]:
+                return
+            time.sleep(0.2)
+        raise SystemExit("the screen %s did not come up (at %s)" % (screen, tree["screen"]))
+
     def show(self, screen, route):
         """Brings `screen` up and waits until it is built and the page is quiet."""
         for step in route:
-            if isinstance(step, dict):
+            if isinstance(step, dict) and "wait_screen" in step:
+                self.wait_screen(step["wait_screen"])
+            elif isinstance(step, dict) and "press" in step:
+                # A message box takes no driver request but `ui`: the key goes in like a player's.
+                self.page.keyboard.press(step["press"])
+            elif isinstance(step, dict):
                 self.drive(step)
             else:
                 self.drive({"cmd": "click", "pos": step} if isinstance(step, list) else {"cmd": "click", "label": step})

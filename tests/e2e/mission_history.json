@@ -1,0 +1,22 @@
+{
+  "name": "mission_history",
+  "description": "After a mission's briefing, the 'M' drop-down offers the mission history (UM_HIST, #325): its window shows the briefing, Zurück and Weiter stay at the ends, Schließen goes back to the game",
+  "args": ["--dialogs", "report"],
+  "steps": [
+    {"cmd": "click", "label": "Einzelspieler"},
+    {"cmd": "click", "label": "Einzelmission"},
+    {"cmd": "click", "label": "OK", "expect": {"screen": "SingleMission"}},
+    {"cmd": "click", "label": "Die Indianeraufstände.", "expect": {"path": "target.kind", "eq": "row"}},
+    {"cmd": "click", "label": "Mission spielen!"},
+    {"cmd": "wait", "until": {"dialog": "MessageWindow"}, "timeout": 3000},
+    {"cmd": "click", "label": "OK", "expect": {"screen": "game"}},
+    {"cmd": "click", "pos": [275, 17], "note": "the M button opens the drop-down"},
+    {"cmd": "click", "pos": [276, 288], "note": "its tenth row, UM_HIST", "expect": {"screen": "HistoryWindow"}},
+    {"cmd": "ui", "expect": [
+      {"path": "ui.widgets.0.label", "eq": "Letzte Nachrichten"},
+      {"path": "ui.widgets.3.label", "contains": "Ein wildes und großes Land"}
+    ]},
+    {"cmd": "click", "label": "Zurück", "expect": {"screen": "HistoryWindow"}, "note": "the only entry: stays"},
+    {"cmd": "click", "label": "Schließen", "expect": {"screen": "game"}}
+  ]
+}

@@ -140,6 +140,9 @@ pub trait Screen {
     fn take_sounds(&mut self) -> Vec<String> {
         Vec::new()
     }
+    /// What the screen draws under its dialog's widgets that is no widget (the choice window's
+    /// paper box); an external UI draws it as a picture of its own.
+    fn backdrop(&self, _ctx: &Ctx, _out: &mut Vec<Draw>) {}
     /// A dialog over the running game: drawn with the game's palette.
     fn in_game(&self) -> bool {
         false

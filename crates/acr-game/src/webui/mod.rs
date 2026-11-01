@@ -74,7 +74,8 @@ struct Waiting {
 /// over the game's canvas (the page of the browser build; a native webview that only draws opaque
 /// full-screen menus could not, #333, #319). Every other `Screen::in_game` screen stays with the
 /// engine even when the UI's registry names it.
-pub const OVER_GAME: &[&str] = &["GameMenu", "GameOptions", "SaveGameDialog", "LoadGame"];
+pub const OVER_GAME: &[&str] =
+    &["GameMenu", "GameOptions", "SaveGameDialog", "LoadGame", "MessageWindow", "ChoiceWindow", "HistoryWindow"];
 
 pub struct WebUi {
     send: Sender,

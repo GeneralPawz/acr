@@ -552,7 +552,7 @@ screens it claims are DOM (`[data-acr-id]`, `[data-acr-hover]`), all input is fo
 each screen and also compares every `[data-acr-id]` element's rect with the `ui` tree's rect of the
 same id (at most 1 px); it writes `runs/ui-parity/<screen>/{engine,svelte,diff}.png` and `report.json`
 (`pixels`, `layout`, `passed`) and exits 1 when a screen fails. The screens' routes (labels to click
-from the main menu) are its `ROUTES`; a screen adds one when it joins the registry. A route item is a label, an `[x, y]` position, a driver request (a dict); the dialogs over the game start the blank grass field (the game stands still under them, both captures show the same frame) and count the pixels over the dialog's box (`--rect` of `ui-diff`). In headless Chromium without a GPU the game needs
+from the main menu) are its `ROUTES`; a screen adds one when it joins the registry. A route item is a label, an `[x, y]` position, a driver request (a dict), `{"wait_screen": name}` or `{"press": key}`; the dialogs over the game start the blank grass field (the game stands still under them, both captures show the same frame) and count the pixels over the dialog's box (`--rect` of `ui-diff`). The browser's driver answers only `ui` while a message box is open: dismiss it with `press`. In headless Chromium without a GPU the game needs
 WebGPU on SwiftShader: `--enable-unsafe-webgpu --enable-unsafe-swiftshader
 --use-webgpu-adapter=swiftshader --enable-features=Vulkan,WebGPU`. The UI's own tests are
 `cd ui && bun run check && bun run test` (not `bun test`, which is Bun's own runner).
@@ -592,7 +592,7 @@ A `jev_check` step asks Jev whether the current `ui` and `state` match a sentenc
 "min": 0.7}`. Below `min` it fails with "needs reasoning"; without a key it is skipped.
 
 The scenarios: `menu_random_map` (menus to a random map game), `mission_briefing` (a
-single mission's briefing blocks the game until OK), `ingame_options` (the game menu's options: Abbruch drops a change, OK keeps it), `build_site` (drag-select peasants,
+single mission's briefing blocks the game until OK), `mission_history` (the "M" drop-down's history window after the briefing), `ingame_options` (the game menu's options: Abbruch drops a change, OK keeps it), `build_site` (drag-select peasants,
 HUD build icon, placement: the site appears at once and is paid), `produce_unit` (build
 the Fort, queue a soldier, send peasants in, the soldier comes out), `formation` (officer
 → line formation → fusiliers: one formation of officer, drummer, flag bearer and

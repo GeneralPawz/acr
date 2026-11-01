@@ -64,10 +64,11 @@ pub(crate) fn serve_requests(game: &mut Game, event_loop: &ActiveEventLoop) {
         game.mode = Mode::Menus;
         return;
     }
-    if !crate::drive::web_ready(game) {
+    let Some(line) = REQUESTS.with_borrow(|q| q.front().cloned()) else { return };
+    if !crate::drive::web_ready(game, &line) {
         return;
     }
-    let Some(line) = REQUESTS.with_borrow_mut(VecDeque::pop_front) else { return };
+    REQUESTS.with_borrow_mut(VecDeque::pop_front);
     let answer = crate::drive::web_request(game, event_loop, &line);
     ANSWERS.with_borrow_mut(|a| a.push(answer.to_string()));
 }
