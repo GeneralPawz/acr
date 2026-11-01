@@ -48,7 +48,7 @@ and clippy never need Bun.
   publishes after each frame's advance (`WebUi::publish`): only changed topics (`mode`, `loading`,
   `stage`, `screen`, `cursor`, `hud`), at most one message a frame, `rev` growing by one. A gap makes the UI
   send `resync`; the answer carries every topic. Scope `ui.bridge` of the profiler.
-- **Claiming:** the registry (`ui/src/screens/registry.ts`: `MainMenu`, `PlayerName`, `Options`, `Campaigns`, `SingleMission`, `LoadGame`, `RandomMap`, `Placeholder`, `Loading`, `GameMenu`, `GameOptions`, `SaveGameDialog`, `MessageWindow`, `HistoryWindow`, and `HUD`: `TopBar`, `DropDown`, `Hints`, `Messages`, `Minimap`, `CommandPanel`, `UnitStats`, `ArmyList`) is announced in `ready` (`screens`, `hud`).
+- **Claiming:** the registry (`ui/src/screens/registry.ts`: `MainMenu`, `PlayerName`, `Options`, `Campaigns`, `SingleMission`, `LoadGame`, `RandomMap`, `Placeholder`, `Loading`, `GameMenu`, `GameOptions`, `SaveGameDialog`, `MessageWindow`, `HistoryWindow`, and `HUD`: `TopBar`, `DropDown`, `Hints`, `Messages`, `Minimap`, `CommandPanel`, `UnitStats`) is announced in `ready` (`screens`, `hud`).
   `Ui::set_external` makes the engine skip exactly the screens the UI claims, and the cursor, but only
   while `view::screen` can describe the screen completely; otherwise the screen goes on being drawn by
   the engine (`engine_drawn: true`), never half.
@@ -207,7 +207,7 @@ Scenario `svelte_hud_panels` (and `produce_unit`, `endless_production`, `build_s
 `attack_ground` under `--ui classic`): the minimap's image and camera group, a selection filling the panel and the stats, a minimap click moving the camera.
 
 Parity (`ui_parity.py`, the blank grass field with ten peasants picked by a double click, 1024x768, dpr 1; all claimed parts drawn by the page): `CommandPanel`
-100.000%, `UnitStats` (one peasant) 100.000%, `UnitPanel` (key U, the portrait) 100.000%, `Minimap` 100.000%, layout 0 px each. `ArmyList` has
+100.000%, `UnitStats` (one peasant) 100.000%, `UnitPanel` (key U, the portrait) 100.000%, `Minimap` 100.000%, layout 0 px each. `ArmyList` is not in the registry yet and stays engine-drawn (#467): it has
 no pixel run: the list needs a formation, and the officers' formation icons stay disabled on the blank field (a mission map cannot be started by the
 browser's driver); its icons are the command panel's `draw_icon`, and `army_list` passes under `--ui classic`.
 
