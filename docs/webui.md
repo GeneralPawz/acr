@@ -169,6 +169,12 @@ whole string): `TopBarWide` (1920x1080, scale 1.40625) 96.669%, `TopBarCentered`
 page; `svelte_hud_scale` checks its group) and the cursor (a screenshot has no system cursor; the viewport's CSS cursor was
 read back).
 
+Patch size and rate (`tools/browser/ui_patches.py`, swiftshader, 1024x768, blank field, six seconds each): idle 0.3 patches
+a second, 227 bytes a second; the mouse sweeping over the resource values (a hint that moves with it) 20 patches a second of
+1.8 KB, 34 KB/s; over the map 1 patch (61 bytes); the drop-down open with the mouse over its rows 3 patches a second of
+5.6 KB (the whole group on each hover change), 17 KB/s. The page's frame intervals stay at the 16.7 ms vsync (median) in every phase;
+the resource values of a game that gathers resend the 700 bytes of `top_bar_text` when one changes.
+
 ## Native host spike (Android, #333)
 
 `tools/android/build-webview-spike.sh` builds the example `crates/acr-game/examples/webview_spike_android.rs`
