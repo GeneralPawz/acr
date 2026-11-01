@@ -209,6 +209,10 @@ impl Screen for MainMenu {
         self.menu.take_sounds()
     }
 
+    fn back_params(&self) -> &'static [i32] {
+        &[item::BACK]
+    }
+
     fn busy(&self) -> bool {
         self.slide.is_some()
     }

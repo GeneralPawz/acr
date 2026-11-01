@@ -1,0 +1,36 @@
+/* The touch skin's type and palette (docs/webui.md "Touch skin"): IM Fell English and its small
+   capitals (SIL OFL 1.1, public/licenses/IM-Fell-OFL.txt), Latin subset, and the gold and brown of
+   the original's art. The classic skin never loads or uses them. */
+@font-face {
+  font-family: 'IM Fell English';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url(../../../node_modules/@fontsource/im-fell-english/files/im-fell-english-latin-400-normal.woff2) format('woff2');
+}
+@font-face {
+  font-family: 'IM Fell English SC';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url(../../../node_modules/@fontsource/im-fell-english-sc/files/im-fell-english-sc-latin-400-normal.woff2) format('woff2');
+}
+
+.acr-ui[data-acr-skin='touch'] {
+  --touch-body: 'IM Fell English', 'Iowan Old Style', Georgia, serif;
+  --touch-caps: 'IM Fell English SC', 'IM Fell English', Georgia, serif;
+  --touch-gold: #e2c27a;
+  --touch-gold-dim: #b08d4c;
+  --touch-ink: #2a1809;
+  --touch-ink-soft: #5a3f22;
+  --touch-leather: #2b1b0e;
+  --touch-parchment: #d9c295;
+  --touch-shade: rgb(18 10 4 / 0.55);
+  --touch-line: rgb(226 194 122 / 0.28);
+  font-family: var(--touch-body);
+  font-size: 17px;
+  line-height: 1.3;
+  font-kerning: normal;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}

@@ -664,6 +664,11 @@ impl InGame {
         std::mem::take(&mut self.interface.claimed)
     }
 
+    /// The touch skin's pieces of this frame, when the UI asked for them.
+    pub fn take_touch_view(&mut self) -> Option<crate::hud::touch_skin::TouchView> {
+        self.interface.touch_view.take()
+    }
+
     /// Left button: press starts a selection, release selects by click or rectangle.
     pub fn on_left(&mut self, pressed: bool) {
         let Some(at) = self.cursor else { return };

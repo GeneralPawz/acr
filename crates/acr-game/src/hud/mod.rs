@@ -14,6 +14,7 @@ pub mod minimap;
 pub mod panels;
 pub mod produce;
 pub mod touch;
+pub mod touch_skin;
 pub mod zoom;
 
 use std::rc::Rc;
@@ -78,6 +79,9 @@ pub struct Claim {
     pub game_panel: bool,
     /// The test editor's window: the placing window and the battle view, wherever it was moved to.
     pub editor: bool,
+    /// The touch skin lays the interface out itself: [`Hud::touch_view`] is built each frame
+    /// (the groups above are claimed all the same, the minimap's among them).
+    pub touch: bool,
 }
 
 impl Claim {
@@ -92,6 +96,7 @@ impl Claim {
         army: true,
         game_panel: true,
         editor: true,
+        touch: false,
     };
 
     pub fn claims(self, layer: Layer) -> bool {

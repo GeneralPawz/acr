@@ -236,6 +236,83 @@ pub fn remap_image(
         .ok_or_else(|| AssetError::NotFound(format!("{gp} has no drawable frame {frame}")))
 }
 
+/// Side of a cell of the 9-slice sources (`nine/`): the frames of `BORDER.GP` are 64 pixels
+/// wide with the line through their middle.
+pub const NINE_CELL: u32 = 64;
+
+/// The frames of `BORDER.GP` for a 9-slice, in the order top left, top, top right, left, right,
+/// bottom left, bottom, bottom right (`BOX_CORNERS` of the HUD, 0x668580).
+const NINE_BOX: [usize; 8] = [0, 9, 2, 12, 14, 6, 11, 8];
+
+/// `cells` (see [`NINE_BOX`]) pasted into a 3 x 3 grid of [`NINE_CELL`] pixels, the middle left
+/// empty: the source of a CSS `border-image` with `slice` [`NINE_CELL`].
+pub fn nine_grid(cells: &[Placed; 8]) -> Image {
+    let side = NINE_CELL * 3;
+    let mut out = Image::new(side, side);
+    for (i, (image, offset)) in cells.iter().enumerate() {
+        // The middle cell (4) is skipped in the numbering of the grid.
+        let cell = if i < 4 { i } else { i + 1 } as u32;
+        let (ox, oy) = (
+            i64::from(cell % 3 * NINE_CELL) + i64::from(offset[0]),
+            i64::from(cell / 3 * NINE_CELL) + i64::from(offset[1]),
+        );
+        for y in 0..image.height {
+            for x in 0..image.width {
+                let (dx, dy) = (ox + i64::from(x), oy + i64::from(y));
+                if !(0..i64::from(side)).contains(&dx) || !(0..i64::from(side)).contains(&dy) {
+                    continue;
+                }
+                let from = ((y * image.width + x) * 4) as usize;
+                let to = ((dy as u32 * side + dx as u32) * 4) as usize;
+                out.rgba[to..to + 4].copy_from_slice(&image.rgba[from..from + 4]);
+            }
+        }
+    }
+    out
+}
+
+/// The game's box frame as a 9-slice source (`nine/box.png`); `None` while its files load.
+pub fn nine_box(lib: &Library) -> Result<Option<Image>, AssetError> {
+    let mut cells = Vec::with_capacity(NINE_BOX.len());
+    for frame in NINE_BOX {
+        match frame_image(lib, FramePalette::Game, 0, "BORDER.GP", frame)? {
+            Some(cell) => cells.push(cell),
+            None => return Ok(None),
+        }
+    }
+    let cells: [Placed; 8] = cells.try_into().expect("eight frames");
+    Ok(Some(nine_grid(&cells)))
+}
+
+/// Side of the clean parchment patch cut from the main menu's map (`nine/parchment.png`).
+const PARCHMENT_PATCH: u32 = 128;
+/// Where it lies in frame 4 of `MAINMENU.GP`: a stretch of the paper without ink or folds.
+const PARCHMENT_AT: [u32; 2] = [24, 120];
+
+/// The paper of the main menu's map as a seamless tile (`nine/parchment.png`): a clean patch of
+/// `MAINMENU.GP` mirrored into a 2 x 2 block, so that the edges meet. `None` while its files load.
+pub fn parchment(lib: &Library) -> Result<Option<Image>, AssetError> {
+    let Some((map, _)) = frame_image(lib, FramePalette::Menu, 0, "INTERF2\\MAINMENU.GP", 4)? else { return Ok(None) };
+    let side = PARCHMENT_PATCH;
+    let [ox, oy] = PARCHMENT_AT;
+    if map.width < ox + side || map.height < oy + side {
+        return Err(AssetError::Decode(format!(
+            "MAINMENU.GP frame 4 is {}x{}, too small for the paper",
+            map.width, map.height
+        )));
+    }
+    let mut out = Image::new(side * 2, side * 2);
+    for y in 0..side * 2 {
+        for x in 0..side * 2 {
+            let (sx, sy) = (if x < side { x } else { side * 2 - 1 - x }, if y < side { y } else { side * 2 - 1 - y });
+            let from = (((oy + sy) * map.width + ox + sx) * 4) as usize;
+            let to = ((y * side * 2 + x) * 4) as usize;
+            out.rgba[to..to + 4].copy_from_slice(&map.rgba[from..from + 4]);
+        }
+    }
+    Ok(Some(out))
+}
+
 /// A bitmap as an image; `None` while it loads.
 pub fn bitmap_image(lib: &Library, path: &str) -> Result<Option<Placed>, AssetError> {
     lib.want(path);
@@ -326,6 +403,14 @@ pub fn resolve(lib: &Library, fonts: &Fonts, cache: &mut AssetCache, path: &str)
                 None => Ok(Resolved::Pending),
             }
         }
+        ["nine", "box.png"] => match nine_box(lib)? {
+            Some(image) => ready(Some((image, [0, 0])), "the box frame"),
+            None => Ok(Resolved::Pending),
+        },
+        ["nine", "parchment.png"] => match parchment(lib)? {
+            Some(image) => ready(Some((image, [0, 0])), "the parchment"),
+            None => Ok(Resolved::Pending),
+        },
         ["remap", player, gp, frame, table, row] => {
             let player: u8 = player.parse().map_err(|_| bad(path))?;
             let frame: usize = frame.parse().map_err(|_| bad(path))?;
@@ -404,13 +489,39 @@ mod tests {
     }
 
     #[test]
+    fn the_nine_grid_puts_each_frame_in_its_cell() {
+        let cell = |shade: u8| -> Placed {
+            let mut image = Image::new(2, 2);
+            image.rgba.iter_mut().for_each(|b| *b = shade);
+            (image, [1, 1])
+        };
+        let cells: [Placed; 8] = std::array::from_fn(|i| cell(i as u8 + 1));
+        let grid = nine_grid(&cells);
+        assert_eq!((grid.width, grid.height), (192, 192));
+        let at = |cx: u32, cy: u32| grid.rgba[(((cy * NINE_CELL + 1) * grid.width + cx * NINE_CELL + 1) * 4) as usize];
+        // Row by row, the middle cell empty.
+        assert_eq!(
+            [at(0, 0), at(1, 0), at(2, 0), at(0, 1), at(1, 1), at(2, 1), at(0, 2), at(1, 2), at(2, 2)],
+            [1, 2, 3, 4, 0, 5, 6, 7, 8]
+        );
+    }
+
+    #[test]
     fn bad_paths_fail_with_400() {
         let lib = Library::new(&[]);
         let fonts = Fonts::default();
         let mut cache = AssetCache::default();
-        for path in
-            ["", "nope", "bmp", "frame/x/0/a/1", "frame/menu/0/a/b", "font/1/NoSuchFont.png", "font/7/fonG60w.png"]
-        {
+        for path in [
+            "",
+            "nope",
+            "bmp",
+            "frame/x/0/a/1",
+            "frame/menu/0/a/b",
+            "font/1/NoSuchFont.png",
+            "font/7/fonG60w.png",
+            "nine/other.png",
+            "nine/parchment",
+        ] {
             let e = resolve(&lib, &fonts, &mut cache, path).err().unwrap_or_else(|| panic!("{path}"));
             assert_eq!(e.status(), 400, "{path}");
         }
@@ -425,6 +536,12 @@ mod tests {
         let mut cache = AssetCache::default();
         assert!(matches!(resolve(&lib, &fonts, &mut cache, "bmp/A.BMP"), Ok(Resolved::Pending)));
         assert_eq!(lib.take_requests(), vec!["A.BMP".to_owned()]);
+        // The parchment waits for the map's frames, and is absent without them.
+        let mut lib = Library::new(&["INTERF2\\MAINMENU.GP".to_owned()]);
+        assert!(matches!(resolve(&lib, &fonts, &mut cache, "nine/parchment.png"), Ok(Resolved::Pending)));
+        assert!(lib.take_requests().contains(&"INTERF2\\MAINMENU.GP".to_owned()));
+        let none = Library::new(&[]);
+        assert_eq!(resolve(&none, &fonts, &mut cache, "nine/parchment.png").err().map(|e| e.status()), Some(404));
     }
 
     #[test]

@@ -1,6 +1,7 @@
 {
   "name": "touch_mine_placement",
   "description": "A mine can only stand on a deposit by touch too (#489): a double tap on the outline over open grass places nothing and pays nothing, a double tap near the deposit puts the site on the deposit's position",
+  "args": ["--ui", "engine"],
   "steps": [
     {"cmd": "start", "map": "Missions/COLUMB/Columb1/columb1.m3d", "note": "Spain; the first Columbus mission, whose peasants stand on open grass"},
     {"cmd": "wait", "ticks": 200, "note": "the first census enables the buildings"},

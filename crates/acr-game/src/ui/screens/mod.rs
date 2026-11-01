@@ -115,6 +115,8 @@ impl Menu {
 
     /// The standard title of a screen: `fon40y5`, centred at (512, 18).
     pub fn title(&mut self, ctx: &Ctx, id: &str) -> WidgetId {
-        self.text(ctx, 512, 18, id, font::TITLE, Align::Center)
+        let title = self.text(ctx, 512, 18, id, font::TITLE, Align::Center);
+        self.d.set_key(title, "title");
+        title
     }
 }

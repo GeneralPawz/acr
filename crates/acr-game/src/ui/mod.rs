@@ -157,6 +157,18 @@ pub trait Screen {
     fn dialog(&self) -> Option<&dialog::Dialog> {
         None
     }
+    /// The `param`s of the widgets that go back: what its Escape key and its back or cancel
+    /// button report (the touch skin's back).
+    fn back_params(&self) -> &'static [i32] {
+        &[dialog::CANCEL]
+    }
+    /// The widget that goes back now, if the screen shows one.
+    fn back_widget(&self) -> Option<dialog::WidgetId> {
+        if self.busy() {
+            return None;
+        }
+        self.dialog()?.back_widget(self.back_params())
+    }
     /// The screen's type name, e.g. `MainMenu`, for the test driver.
     fn name(&self) -> &'static str {
         let full = std::any::type_name::<Self>();
@@ -549,6 +561,15 @@ impl Ui {
         }
         top.screen.dialog().ok_or(dialog::Reject::Screen)?.check(&intent)?;
         Ok(self.input(Input::Intent(intent)))
+    }
+
+    /// The touch skin's back: the top screen's own back or cancel widget, pressed as a click
+    /// (what its Escape key chooses). [`dialog::Reject::NoBack`] if it shows none.
+    pub fn back(&mut self) -> Result<Action, dialog::Reject> {
+        let top = self.stack.last().filter(|e| e.built).ok_or(dialog::Reject::Screen)?;
+        let widget = top.screen.back_widget().ok_or(dialog::Reject::NoBack)?;
+        let name = top.screen.name();
+        self.intent(name, dialog::Intent::Activate(widget))
     }
 
     fn collect_sounds(&mut self) {

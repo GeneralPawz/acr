@@ -1,5 +1,7 @@
 //! Player options edited in the options screen (0x5c9740).
 
+use acr_ui_protocol::SkinSetting;
+
 /// Where the test editor's window stands (`editor_window`): the top-left corner of its box, the
 /// box's size as `ingame::editor::frame::Frame` counts it, and whether it is folded.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -190,6 +192,29 @@ pub struct Settings {
     /// the game itself stays engine-drawn. Read at start; needs the `webview-gtk` feature and the
     /// embedded bundle, else the engine draws.
     pub native_ui: NativeUi,
+    /// ACR (#332): `ui_skin=auto|classic|touch` (auto by default): which skin of the Svelte UI
+    /// draws. `auto` is the classic skin with a fine pointer on a wide viewport (a desktop
+    /// keeps what it has) and the touch skin on a phone or tablet (docs/webui.md "Touch skin").
+    /// A UI setting without an options row; the engine's own UI ignores it.
+    pub ui_skin: SkinSetting,
+}
+
+/// The `ui_skin` value `value` names.
+pub fn parse_skin(value: &str) -> Option<SkinSetting> {
+    match value {
+        "auto" => Some(SkinSetting::Auto),
+        "classic" => Some(SkinSetting::Classic),
+        "touch" => Some(SkinSetting::Touch),
+        _ => None,
+    }
+}
+
+fn skin_name(skin: SkinSetting) -> &'static str {
+    match skin {
+        SkinSetting::Auto => "auto",
+        SkinSetting::Classic => "classic",
+        SkinSetting::Touch => "touch",
+    }
 }
 
 /// Who draws the menus on desktop (`native_ui` in `settings.txt`).
@@ -352,6 +377,7 @@ impl Default for Settings {
             power_save: None,
             render_scale: None,
             native_ui: NativeUi::Engine,
+            ui_skin: SkinSetting::Auto,
         }
     }
 }
@@ -432,11 +458,16 @@ impl Settings {
         } else {
             format!("native_ui={}\n", self.native_ui.name())
         };
+        let ui_skin = if self.ui_skin == SkinSetting::Auto {
+            String::new()
+        } else {
+            format!("ui_skin={}\n", skin_name(self.ui_skin))
+        };
         format!(
             "sound_volume={}\nmusic_volume={}\nmusic_mode={}\ngame_mode={}\nscroll_speed={}\nframe_time={}\n\
              resolution={}\nrecord={}\nrecord_file={hex}\ncontrols={controls}\nedge_scroll={}\n\
              models={models}\ncamera={camera}\ngore={gore}\ncorpse_minutes={}\ncorpse_decay={}\nhit_locations={}\nbody_spacing={}\nmortars={}\ncorpse_piles={}\ncannon_fire={}\nformation_attack={}\nanimal_give_up={}\ndart_fire={}\naimed_fire={}\nshadows={}\nlod={}\nmaterial_detail={}\nwind={}\nmap_models={}\nwater={}\n\
-             ground={}\nground_cover={}\nbattlefield_marks={}\nweather={}\nsea_state={}\naim_guides={}\ncenter_top_bar={}\n{top_bar}{hud_scale}{native_ui}graphics={}\nframe_cap={}\n{}{}{}{}{}{}",
+             ground={}\nground_cover={}\nbattlefield_marks={}\nweather={}\nsea_state={}\naim_guides={}\ncenter_top_bar={}\n{top_bar}{hud_scale}{native_ui}{ui_skin}graphics={}\nframe_cap={}\n{}{}{}{}{}{}",
             self.sound_volume,
             self.music_volume,
             self.music_mode,
@@ -589,6 +620,12 @@ impl Settings {
                         NativeUi::Engine
                     })
                 }
+                "ui_skin" => {
+                    s.ui_skin = parse_skin(value).unwrap_or_else(|| {
+                        log::warn!("settings: unknown ui_skin value {value:?} (auto, classic or touch), using auto");
+                        SkinSetting::Auto
+                    })
+                }
                 "hud_scale" => s.hud_scale = crate::hud::zoom::parse(value),
                 "weather" => s.weather = Weather::parse(value).unwrap_or_default(),
                 "sea_state" => s.sea_state = SeaState::parse(value).unwrap_or_default(),
@@ -707,6 +744,7 @@ mod tests {
             power_save: Some(true),
             render_scale: Some(RenderScale::P85),
             native_ui: NativeUi::Svelte,
+            ui_skin: SkinSetting::Touch,
         };
         assert_eq!(Settings::decode(&s.encode()), s);
         // The removed "Spotify mitmischen" (music_mode=2) reads as no music.
@@ -766,6 +804,11 @@ group_move=off"
         assert!(!Settings::default().encode().contains("native_ui"));
         assert_eq!(Settings::decode("native_ui=svelte").native_ui, NativeUi::Svelte);
         assert_eq!(Settings::decode("native_ui=html").native_ui, NativeUi::Engine);
+        assert_eq!(Settings::default().ui_skin, SkinSetting::Auto);
+        assert!(!Settings::default().encode().contains("ui_skin"));
+        assert_eq!(Settings::decode("ui_skin=classic").ui_skin, SkinSetting::Classic);
+        assert_eq!(Settings::decode("ui_skin=touch").ui_skin, SkinSetting::Touch);
+        assert_eq!(Settings::decode("ui_skin=phone").ui_skin, SkinSetting::Auto);
         assert_eq!(Settings::decode("weather=fog").weather, Weather::Fog);
         assert_eq!(Settings::decode("weather=hail").weather, Weather::Off);
         assert_eq!(Settings::decode("sea_state=storm").sea_state, SeaState::Storm);

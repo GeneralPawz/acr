@@ -4,9 +4,47 @@
   import GameViewport from './GameViewport.svelte';
   import Stage from './Stage.svelte';
   import { ui } from './context';
+  import { pixelRatio } from './pixels';
+  import { resolveSkin } from './skin';
+  import TouchHud from './touch/TouchHud.svelte';
+  import TouchMenu from './touch/TouchMenu.svelte';
 
-  const { model } = ui();
-  let dpr = $state(window.devicePixelRatio || 1);
+  const { bridge, model } = ui();
+  let dpr = $state(pixelRatio());
+  // The page, for the skin: CSS pixels and whether the primary pointer is a finger.
+  const coarse = window.matchMedia?.('(pointer: coarse)');
+  let page = $state({ width: window.innerWidth, height: window.innerHeight, coarse: coarse?.matches ?? false });
+  const skin = $derived(resolveSkin(model.skinSetting, page));
+  // The 9-slice source of the original's frame, from the player's files.
+  // and the paper and painting of the touch skin's sheets, as CSS `url()`s.
+  let art = $state<Record<string, string>>({});
+
+  // The game learns the skin once it has answered (it knows the player's `ui_skin`), and
+  // whenever the page changes it: the touch skin takes the interface's pixels away from the game.
+  $effect(() => {
+    if (model.protocol !== null) bridge.send({ t: 'skin', skin });
+  });
+
+  const ART = {
+    '--acr-nine': 'nine/box.png',
+    '--acr-parchment': 'nine/parchment.png',
+    '--acr-backdrop': 'bmp/INTERF2%5CBACKGROUND_MAIN_MENU.BMP',
+  };
+  $effect(() => {
+    if (skin !== 'touch') return;
+    let live = true;
+    for (const [name, path] of Object.entries(ART)) {
+      bridge.assetUrl(path).then(
+        (url) => {
+          if (live) art[name] = `url(${url})`;
+        },
+        (e) => console.error(`${path}:`, e),
+      );
+    }
+    return () => {
+      live = false;
+    };
+  });
 
   // The DOM shows a screen only when the game says it leaves the screen to the UI; the
   // loading screen stays while the game loads. In mode `game` only a dialog over the running game
@@ -20,21 +58,36 @@
 
   onMount(() => {
     const update = () => {
-      dpr = window.devicePixelRatio || 1;
+      dpr = pixelRatio();
+      page = { width: window.innerWidth, height: window.innerHeight, coarse: coarse?.matches ?? false };
     };
     window.addEventListener('resize', update);
-    return () => window.removeEventListener('resize', update);
+    coarse?.addEventListener?.('change', update);
+    return () => {
+      window.removeEventListener('resize', update);
+      coarse?.removeEventListener?.('change', update);
+    };
   });
 </script>
 
-<div class="acr-ui" data-acr-mode={model.mode}>
-  {#if model.mode === 'game' && model.hud.length > 0}
-    <Hud {dpr} />
+<div class="acr-ui" data-acr-mode={model.mode} data-acr-skin={skin} style={Object.entries(art).map(([k, v]) => `${k}:${v}`).join(";")}>
+  {#if skin === 'touch'}
+    <GameViewport {dpr} touch />
+    {#if model.mode === 'game'}
+      <TouchHud />
+    {/if}
+    {#if shown}
+      <TouchMenu />
+    {/if}
+  {:else}
+    {#if model.mode === 'game' && model.hud.length > 0}
+      <Hud {dpr} />
+    {/if}
+    {#if shown}
+      <Stage {dpr} />
+    {/if}
+    <GameViewport {dpr} />
   {/if}
-  {#if shown}
-    <Stage {dpr} />
-  {/if}
-  <GameViewport {dpr} />
 </div>
 
 <style>

@@ -9,6 +9,7 @@ const widget = (id: string, hover = false): WidgetView => ({
   kind: 'button',
   rect: [0, 0, 10, 10],
   enabled: true,
+  shown: true,
   hover,
   parts: [],
 });

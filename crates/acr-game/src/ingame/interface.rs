@@ -185,6 +185,8 @@ pub enum HudIntent<'a> {
     Icon { id: &'a str, right: bool },
     /// A point of the minimap, `uv` from its top-left corner.
     Minimap { uv: [f32; 2], right: bool },
+    /// A button of the top bar (`bar/menu`, `bar/pause`).
+    Bar { id: &'a str },
 }
 
 /// Interface state of the game screen.
@@ -195,6 +197,8 @@ pub struct State {
     /// The parts of the interface an external UI draws, and what it is to draw this frame.
     pub(super) claim: hud::Claim,
     pub(super) claimed: Vec<hud::Claimed>,
+    /// The touch skin's pieces of the last frame (`hud::Claim::touch`).
+    pub(super) touch_view: Option<hud::touch_skin::TouchView>,
     /// The Pause key (op 0x46) stopped the simulation.
     pub paused: bool,
     /// Control groups 0..9.
@@ -299,6 +303,7 @@ impl Default for State {
             cursor_loaded: false,
             claim: hud::Claim::default(),
             claimed: Vec::new(),
+            touch_view: None,
             paused: false,
             groups: vec![Vec::new(); 10],
             markers: Vec::new(),
@@ -1463,7 +1468,9 @@ impl InGame {
                 frame: rally.frame,
                 slot: rally.slot,
                 selected: self.interface.rally_mode,
-                hint: ctx.texts.get(&rally.hint).to_vec(),
+                // `COMMENT.TXT` `SDS_Str` (the key sits beside `GOATTA` and `PATROL` in dmcr.exe);
+                // the `NRES.DAT` hint name `Set_concentration_point` has no text.
+                hint: ctx.texts.get("SDS_Str").to_vec(),
                 action: Some(HudCommand::Rally),
                 ..Icon::default()
             });
@@ -2129,6 +2136,11 @@ impl InGame {
         self.post_hints(ctx);
         let view = self.build_view(ctx, window);
         let hud_layers = self.interface.hud.draw(ctx, &view);
+        self.interface.touch_view =
+            if self.interface.claim.touch { self.interface.hud.touch_view(ctx, &view) } else { None };
+        if let Some(touch) = &mut self.interface.touch_view {
+            touch.speed = 100 - self.frame_time.clamp(0, 100);
+        }
         let mut hud_draws = Vec::new();
         self.dip_draw(ctx, &mut hud_draws);
         if self.interface.paused && self.mission.ended.is_none() {
@@ -2635,6 +2647,14 @@ impl InGame {
                     self.hud_right_event(&event);
                     return Ok(GameMouse::None);
                 }
+                Ok(self.hud_left_event(event, [window[0] / 2.0, window[1] / 2.0]).unwrap_or(GameMouse::None))
+            }
+            HudIntent::Bar { id } => {
+                let event = match id {
+                    "bar/menu" => HudEvent::GameMenu,
+                    "bar/pause" => HudEvent::TogglePause,
+                    _ => return Err(Reject::NoWidget),
+                };
                 Ok(self.hud_left_event(event, [window[0] / 2.0, window[1] / 2.0]).unwrap_or(GameMouse::None))
             }
             HudIntent::Minimap { uv, right } => {

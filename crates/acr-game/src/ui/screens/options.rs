@@ -175,6 +175,10 @@ impl Screen for Options {
         }
     }
 
+    fn back_params(&self) -> &'static [i32] {
+        &[ABORT]
+    }
+
     fn draw(&self, ctx: &Ctx, out: &mut Vec<Draw>) {
         self.menu.draw(ctx, out);
     }

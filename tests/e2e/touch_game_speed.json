@@ -1,0 +1,16 @@
+{
+  "name": "touch_game_speed",
+  "description": "Touch skin: the speed button's intent (bar/speed, set_value) sets the options' game speed slider (FPSTime = 100 - value); the view reports it, a value outside 0..=100 is refused and changes nothing",
+  "args": ["--ui", "touch"],
+  "steps": [
+    {"cmd": "start", "blank": {"ground": "grass"}},
+    {"cmd": "wait", "ticks": 5},
+    {"cmd": "view", "expect": [{"path": "view.touch.speed", "eq": 50}, {"path": "view.touch.speed_text.0", "eq": "Langsam"}, {"path": "view.touch.speed_text.1", "eq": "Schnell"}]},
+    {"cmd": "ui_send", "msg": {"t": "intent", "seq": 1, "id": "bar/speed", "action": {"t": "set_value", "value": 90}}},
+    {"cmd": "wait", "ticks": 5},
+    {"cmd": "view", "expect": {"path": "view.touch.speed", "eq": 90}},
+    {"cmd": "ui_send", "msg": {"t": "intent", "seq": 2, "id": "bar/speed", "action": {"t": "set_value", "value": 101}}, "expect": {"ok": false}},
+    {"cmd": "ui_send", "msg": {"t": "intent", "seq": 3, "id": "bar/speed", "action": {"t": "click", "button": "left"}}, "expect": {"ok": false}},
+    {"cmd": "view", "expect": {"path": "view.touch.speed", "eq": 90}}
+  ]
+}

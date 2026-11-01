@@ -234,6 +234,10 @@ impl Game {
             Mode::InGame(g) if g.ready() => g.take_claimed(),
             _ => Vec::new(),
         };
+        web.set_touch_view(match &mut self.mode {
+            Mode::InGame(g) if g.ready() => g.take_touch_view(),
+            _ => None,
+        });
         web.publish(&mut self.ui, mode, loading, size, hud);
         // The webview covers the window exactly while the UI draws the screen; the movies and
         // the game are the engine's.
@@ -507,6 +511,10 @@ impl Game {
                 game.set_scale_factor(density);
                 let scale = Canvas::fit(size).scale;
                 game.set_hud_claim(self.webui.as_ref().map(|w| w.hud_claim(scale)).unwrap_or_default());
+                // The touch skin's buttons are intents; a pixel never reaches the HUD under them.
+                if self.webui.as_ref().is_some_and(|w| w.touch()) {
+                    game.set_hud_input(false);
+                }
                 let (l, images, cursor) = game.interface(&self.ui.ctx(), size, game_dt);
                 layers = l;
                 // The "Zielhilfe" icon's switch is kept in `settings.txt` (`aim_guides`).
@@ -1218,12 +1226,35 @@ impl Game {
             TouchPhase::Moved => touch::Phase::Moved,
             TouchPhase::Ended | TouchPhase::Cancelled => touch::Phase::Ended,
         };
+        self.touch_at(touch.id, phase, [touch.location.x, touch.location.y], event_loop);
+    }
+
+    /// A finger of the Svelte UI's map (`FromUi::Touch`, window pixels): the same gestures.
+    fn ui_touch(&mut self, id: u64, phase: acr_ui_protocol::TouchPhase, at: [f32; 2], event_loop: &ActiveEventLoop) {
+        use acr_ui_protocol::TouchPhase;
+        // A finger of the UI is touch mode on every platform (a browser has one mode otherwise).
+        if self.input_mode != input_mode::InputMode::Touch {
+            self.input_mode = input_mode::InputMode::Touch;
+            if let Mode::InGame(game) = &mut self.mode {
+                game.set_input_mode(self.ui.settings(), self.input_mode);
+            }
+        }
+        let phase = match phase {
+            TouchPhase::Started => touch::Phase::Started,
+            TouchPhase::Moved => touch::Phase::Moved,
+            TouchPhase::Ended => touch::Phase::Ended,
+        };
+        let at = self.to_render(PhysicalPosition::new(f64::from(at[0]), f64::from(at[1])));
+        self.touch_at(id, phase, [at.x, at.y], event_loop);
+    }
+
+    fn touch_at(&mut self, id: u64, phase: touch::Phase, at: [f64; 2], event_loop: &ActiveEventLoop) {
         if let Some(window) = &self.window {
             self.touches.set_scale(window.scale_factor() * self.input_factor());
         }
         let paused = matches!(&self.mode, Mode::InGame(g) if g.paused());
         let now = self.touch_now();
-        let gestures = self.touches.event(touch.id, phase, [touch.location.x, touch.location.y], now, paused);
+        let gestures = self.touches.event(id, phase, at, now, paused);
         self.gestures(gestures, event_loop);
     }
 
@@ -1384,6 +1415,22 @@ impl Game {
         }
     }
 
+    /// The touch skin's speed button (`bar/speed`, `set_value`): the options' game speed slider,
+    /// `FPSTime = 100 - value`, kept and applied like the options page does.
+    fn set_game_speed(&mut self, action: &acr_ui_protocol::Action) -> Result<(), String> {
+        let acr_ui_protocol::Action::SetValue { value } = action else {
+            return Err("bar/speed takes a set_value".into());
+        };
+        if !(0..=100).contains(value) {
+            return Err(format!("the game speed is 0..=100, not {value}"));
+        }
+        let Mode::InGame(game) = &mut self.mode else { return Err("no game is running".into()) };
+        let frame_time = 100 - value;
+        self.ui.change_settings(|s| s.frame_time = frame_time);
+        game.apply_settings(self.ui.settings(), self.input_mode);
+        Ok(())
+    }
+
     /// The touch skin's widget input (`FromUi::Intent`): a HUD icon or the minimap over the
     /// running game, else a widget of the top screen. The reason if it was refused.
     fn ui_intent(
@@ -1393,9 +1440,15 @@ impl Game {
         event_loop: &ActiveEventLoop,
     ) -> Result<(), String> {
         use acr_ui_protocol::{Action, Button};
+        if id == "bar/speed" {
+            return self.set_game_speed(action);
+        }
         let hud = match (id, action) {
             ("minimap", Action::MinimapAt { uv, button }) => {
                 Some(ingame::HudIntent::Minimap { uv: *uv, right: *button == Button::Right })
+            }
+            (_, Action::Click { button: Button::Left, .. }) if id.starts_with("bar/") => {
+                Some(ingame::HudIntent::Bar { id })
             }
             (_, Action::Click { button, .. }) if id.starts_with("hud/") || id.starts_with("army/") => {
                 Some(ingame::HudIntent::Icon { id, right: *button == Button::Right })
@@ -1444,6 +1497,19 @@ impl Game {
             _ => return Err(format!("{id}: a widget does not take {action:?}")),
         };
         let action = self.ui.intent(screen, intent).map_err(|e| format!("{id}: {e}"))?;
+        self.apply(action, event_loop);
+        self.load_requested();
+        self.play_sounds();
+        Ok(())
+    }
+
+    /// The touch skin's back (`FromUi::Back`, and Escape while it is on): the top screen's own
+    /// back or cancel widget is pressed. The reason if it shows none.
+    fn ui_back(&mut self, event_loop: &ActiveEventLoop) -> Result<(), String> {
+        if !(matches!(self.mode, Mode::Menus) || self.ui.dialog_open()) {
+            return Err("no screen is shown".into());
+        }
+        let action = self.ui.back().map_err(|e| e.to_string())?;
         self.apply(action, event_loop);
         self.load_requested();
         self.play_sounds();
@@ -1541,6 +1607,14 @@ impl Game {
         }
         #[cfg(target_arch = "wasm32")]
         self.audio.start();
+        // In the touch skin Escape goes back as the header arrow does, also where the original's
+        // lists swallow the key; a screen with nothing to go back to takes the key as before.
+        if logical_key == Key::Named(NamedKey::Escape)
+            && self.webui.as_ref().is_some_and(|web| web.touch())
+            && self.ui_back(event_loop).is_ok()
+        {
+            return;
+        }
         let key = match logical_key {
             Key::Named(NamedKey::F11) => return self.toggle_fullscreen(),
             Key::Named(NamedKey::Enter) if self.alt_down() => return self.toggle_fullscreen(),
