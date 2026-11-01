@@ -292,6 +292,55 @@ HUD and its message window, webview hidden. Not measured: hiding after showing d
 transition (needs input into the window), Wayland-native windows (wry has no child webviews there),
 HiDPI scale, resize flicker, Windows and macOS hosts.
 
+## Native host (Android, #479)
+
+`native_ui=svelte` in the app's `settings.txt` (`Android/data/<package>/files`; `engine` by default, read at
+start) shows the Svelte UI on Android, **transparent over the game**. It takes effect only when the APK
+embeds the bundle (`webui::bundle::PRESENT`); otherwise the engine draws and a log line says why
+(`webui::native_ui_active`, the same gate as Linux). `engine` is exactly the behaviour without this host:
+no WebView is created. The findings of the spike below are the design:
+
+- **Hosting** (`webui/android.rs`, `tools/android/java/.../WebHost.java`): a transparent hardware-layer
+  `WebView` in a full-screen, non-focusable `PopupWindow` over the `NativeActivity` (which owns its
+  surface, so its own views are never drawn). `hasCode=true` and a 10 KB dex in the APK
+  (`tools/android/build-apk.sh` compiles `tools/android/java` with `javac` and `d8`). Rust loads the class
+  through `activity.getClassLoader().loadClass`, registers the three natives with `RegisterNatives`, and
+  every `WebView` call runs on the UI thread (`runOnUiThread`). The host is created when the game starts
+  (before the window's GPU exists) and waits for the activity's window token; the WebView lives with the
+  activity, so pause and resume only recreate winit's surface.
+- **Shared with Linux:** `webui::NativeHost` (sender, visible, show, resize) is what `Game` holds
+  (`native_host`) for both hosts; `Host::Android` in the protocol makes `WebUi::transparent` true, so
+  the claims are the browser's: the menus, `OVER_GAME` dialogs and `WebUi::hud_claim` (the registry
+  rules, and the whole-scale rule of #464) with nothing forked. The popup stays shown; `show` does nothing.
+- **Serving:** the page is `https://acr.local/android.html` (`ui/public/android.html`, transparent). Chosen:
+  `WebViewClient.shouldInterceptRequest`, not `WebViewAssetLoader` (an androidx library the APK would have to
+  carry, whose handlers answer on the loader's own thread while assets are made by the game's thread). Java
+  asks Rust (`nativeRequest(path, id)`) and the IO thread waits for `WebHost.reply` (30 s): a bundle file is
+  answered at once from `webui::bundle`; `/asset/v1/<path>` goes as `Event::UiAsset` to `webui::assets::resolve`
+  in the game's thread, status and `x-acr-error` as `ui/src/lib/bridge.ts` reads them. Requests outside
+  `https://acr.local` get a 403.
+- **Messages:** page to Rust `acr.post(json)` (`@JavascriptInterface`, a binder thread) becomes `Event::Ui`,
+  the browser's `acr_ui_send` into `webui::input`; Rust to page `evaluateJavascript` of
+  `window.__acr_ui.recv(...)` with the existing `WebUi::publish` diffs.
+- **Touch routing:** a full-screen window takes every touch, so the page reports its interactive
+  rectangles (`ui/src/lib/android.ts`, `acr.regions(csv)` in CSS pixels; the page knows it is on Android by
+  `window.acr` and `androidBridge()`). The rectangle is the stage of a screen the UI draws (`[data-acr-hit]`,
+  `Stage.svelte`): menus and dialogs. A gesture that starts inside one belongs to the page (the usual pointer
+  events, `GameViewport` sends them to `webui::input` as the browser does). Every other gesture, the map and
+  the HUD included, is forwarded by Java per finger (`nativeTouch`) as `Event::UiTouch`, which enters
+  `Game::touch_at`, the path of winit's `WindowEvent::Touch` (`touch.rs`: tap, drag, long press, two-finger
+  pan and zoom), so the engine's own hit-testing of its (undrawn) HUD stays the one. Positions are window
+  pixels, the popup being the whole display.
+- **Bridge:** `nativeBridge(assetBase, post)` takes the post function; `androidBridge()` wraps it for
+  `acr.post` and `https://acr.local/asset/v1`. The browser and Linux pages are unchanged.
+
+Verified: `cargo test -p acr-game` (the host's claims for `Host::Android`, finger phases), `bun run test`
+(regions, bridge), clippy for `aarch64-linux-android`, the APK builds with the dex and the bundle. Not
+verified (no device was reachable): everything on a phone, namely that the page loads from the intercept,
+the alpha over the game, touch alignment of the popup with the surface (cutout, bars), the forwarded
+touches against the engine's own, HUD touches, suspend and resume, rotation. A mouse over the popup is not
+forwarded as a mouse. No keyboard is available (the popup is not focusable).
+
 ## Native host spike (Linux, #333)
 
 `cargo run --release -p acr-game --features webview-gtk --example webview_spike` (needs

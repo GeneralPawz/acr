@@ -62,6 +62,14 @@ pub enum Event {
     },
     /// A message from the Svelte UI (JSON, `acr-ui-protocol`).
     Ui(String),
+    /// A finger the Svelte UI's host did not leave to the page (Android, `webui::android`): it
+    /// takes the path of the window's touches. `x`, `y` are window pixels.
+    UiTouch {
+        id: u64,
+        phase: winit::event::TouchPhase,
+        x: f64,
+        y: f64,
+    },
     /// The Svelte UI asks for an asset (`webui::assets`).
     UiAsset {
         path: String,
@@ -104,9 +112,10 @@ pub struct Game {
     /// `native_ui=svelte` is in effect: the window gets the webview host once the GPU is ready.
     #[cfg(all(feature = "webview-gtk", target_os = "linux"))]
     native_ui: bool,
-    /// The webview that shows the Svelte UI's full-screen menus (`webui::native`).
-    #[cfg(all(feature = "webview-gtk", target_os = "linux"))]
-    native_host: Option<webui::native::Host>,
+    /// The webview that shows the Svelte UI: the opaque full-screen menus on Linux
+    /// (`webui::native`), the transparent popup on Android (`webui::android`).
+    #[cfg(any(all(feature = "webview-gtk", target_os = "linux"), target_os = "android"))]
+    native_host: Option<Box<dyn webui::NativeHost>>,
     mode: Mode,
     audio: music::Audio,
     suspension: suspend::Suspension,
@@ -163,7 +172,7 @@ impl Game {
             ui_outbox: None,
             #[cfg(all(feature = "webview-gtk", target_os = "linux"))]
             native_ui: false,
-            #[cfg(all(feature = "webview-gtk", target_os = "linux"))]
+            #[cfg(any(all(feature = "webview-gtk", target_os = "linux"), target_os = "android"))]
             native_host: None,
             mode: Mode::Intro,
             audio: music::Audio::new(&paths),
@@ -218,6 +227,13 @@ impl Game {
         self.native_ui = true;
     }
 
+    /// The Android WebView host of `native_ui=svelte` (`webui::android::Host`), created before
+    /// the window exists.
+    #[cfg(target_os = "android")]
+    pub fn set_native_host(&mut self, host: Box<dyn webui::NativeHost>) {
+        self.native_host = Some(host);
+    }
+
     /// Answers the Svelte UI's waiting asset requests and publishes what changed.
     fn publish_webui(&mut self) {
         let Some(mut web) = self.webui.take() else { return };
@@ -235,9 +251,9 @@ impl Game {
             _ => Vec::new(),
         };
         web.publish(&mut self.ui, mode, loading, size, hud);
-        // The webview covers the window exactly while the UI draws the screen; the movies and
-        // the game are the engine's.
-        #[cfg(all(feature = "webview-gtk", target_os = "linux"))]
+        // An opaque webview covers the window exactly while the UI draws the screen; the movies and
+        // the game are the engine's. A transparent one ignores this and stays shown.
+        #[cfg(any(all(feature = "webview-gtk", target_os = "linux"), target_os = "android"))]
         if let Some(host) = &mut self.native_host {
             host.show(web.shown() && !matches!(self.mode, Mode::Intro));
         }
@@ -1036,7 +1052,7 @@ impl ApplicationHandler<Event> for Game {
                     && let Some(window) = &self.window
                 {
                     match webui::native::Host::new(window, self.proxy.clone()) {
-                        Ok(host) => self.native_host = Some(host),
+                        Ok(host) => self.native_host = Some(Box::new(host)),
                         Err(e) => log::error!("webui: no native host, the engine draws: {e}"),
                     }
                 }
@@ -1049,6 +1065,11 @@ impl ApplicationHandler<Event> for Game {
                 }
             }
             Event::Ui(json) => webui::input::on_message(self, event_loop, &json),
+            Event::UiTouch { id, phase, x, y } => {
+                let at = self.to_render(PhysicalPosition::new(x, y));
+                self.switch_input(input_mode::InputMode::Touch);
+                self.touch_at(id, phase, at, event_loop)
+            }
             Event::UiAsset { path, reply } => match self.webui.as_mut() {
                 Some(web) => web.request_asset(path, reply),
                 None => reply(Err(webui::AssetError::NotFound("the UI is not connected".into()))),
@@ -1212,8 +1233,19 @@ impl Game {
     /// A finger on the screen, through the touch gestures (`touch.rs`): tap, drag and long
     /// press (with a swipe: the order's arrow) work as the mouse, two fingers pan and zoom, a ▶ unpauses.
     fn touch(&mut self, touch: winit::event::Touch, event_loop: &ActiveEventLoop) {
+        self.touch_at(touch.id, touch.phase, touch.location, event_loop)
+    }
+
+    /// [`Game::touch`] for a finger `id` at `location` (render pixels).
+    fn touch_at(
+        &mut self,
+        id: u64,
+        phase: winit::event::TouchPhase,
+        location: PhysicalPosition<f64>,
+        event_loop: &ActiveEventLoop,
+    ) {
         use winit::event::TouchPhase;
-        let phase = match touch.phase {
+        let phase = match phase {
             TouchPhase::Started => touch::Phase::Started,
             TouchPhase::Moved => touch::Phase::Moved,
             TouchPhase::Ended | TouchPhase::Cancelled => touch::Phase::Ended,
@@ -1223,7 +1255,7 @@ impl Game {
         }
         let paused = matches!(&self.mode, Mode::InGame(g) if g.paused());
         let now = self.touch_now();
-        let gestures = self.touches.event(touch.id, phase, [touch.location.x, touch.location.y], now, paused);
+        let gestures = self.touches.event(id, phase, [location.x, location.y], now, paused);
         self.gestures(gestures, event_loop);
     }
 

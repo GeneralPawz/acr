@@ -23,7 +23,9 @@ adb logcat -s acr                                              # the game's log
 ```
 
 `ACR_ANDROID_ABIS="arm64-v8a x86_64"` adds the emulator's ABI. The APK is signed with a local
-debug key (`~/.android/acr-debug.keystore`, created on first use).
+debug key (`~/.android/acr-debug.keystore`, created on first use). The script builds the Svelte bundle with
+Bun (`ui/`) unless `ACR_UI_DIST` names one, embeds it, and compiles `tools/android/java` into the APK's dex
+(`hasCode=true`) for `native_ui=svelte` (docs/webui.md "Native host (Android, #479)").
 
 ## Launcher icon
 

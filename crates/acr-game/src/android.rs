@@ -83,8 +83,25 @@ impl Launcher {
             let place = settings.join("settings.txt").display().to_string();
             game.set_settings_store(Box::new(acr_app::saves::FolderSaves::files(&settings, "", "txt")), &place);
         }
+        // `native_ui=svelte` (docs/webui.md "Native host (Android, #479)"): the Svelte UI in a WebView
+        // over the game; read at start, and only with the bundle embedded.
+        if native_ui_wanted() {
+            match crate::webui::android::Host::new(&self.app, self.proxy.clone()) {
+                Ok(host) => game.set_native_host(Box::new(host)),
+                Err(e) => log::error!("webui: no native host, the engine draws: {e}"),
+            }
+        }
         Ok(game)
     }
+}
+
+/// Whether the `native_ui` setting of the app's `settings.txt` asks for the Svelte UI and this build
+/// can show it ([`crate::webui::native_ui_active`]).
+fn native_ui_wanted() -> bool {
+    let Some(text) = data_dir().and_then(|d| std::fs::read_to_string(d.join("settings.txt")).ok()) else {
+        return false;
+    };
+    crate::webui::native_ui_active(crate::ui::settings::Settings::decode(&text).native_ui)
 }
 
 impl ApplicationHandler<Event> for Launcher {

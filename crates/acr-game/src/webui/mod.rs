@@ -9,8 +9,10 @@
 //! - [`assets`]: pictures and fonts decoded from the player's files for the UI.
 //! - [`font_atlas`]: glyph atlases of the original fonts. [`keys`]: DOM keys as winit keys.
 //! - `web`: the browser's exports (wasm only). `native`: the desktop webview host (feature
-//!   `webview-gtk`, Linux).
+//!   `webview-gtk`, Linux). `android`: the Android WebView host. Both implement [`NativeHost`].
 
+#[cfg(target_os = "android")]
+pub mod android;
 pub mod assets;
 pub mod bundle;
 pub mod font_atlas;
@@ -39,8 +41,25 @@ pub type Sender = Box<dyn FnMut(&str)>;
 
 #[cfg(target_arch = "wasm32")]
 const HOST: Host = Host::Web;
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(target_os = "android")]
+const HOST: Host = Host::Android;
+#[cfg(not(any(target_arch = "wasm32", target_os = "android")))]
 const HOST: Host = Host::Native;
+
+/// A webview the game owns, over its window: the Linux child webview (`native`) or the Android
+/// popup (`android`). The game talks to either through this.
+#[cfg(any(all(feature = "webview-gtk", target_os = "linux"), target_os = "android"))]
+pub trait NativeHost {
+    /// The way to the page: one JSON message per call.
+    fn sender(&self) -> Sender;
+    /// Whether the webview is shown now.
+    fn visible(&self) -> bool;
+    /// Shows or hides the webview while the UI does (not) draw the current screen; a host whose
+    /// layer is transparent over the game stays shown.
+    fn show(&mut self, show: bool);
+    /// The window changed size or scale; a host that follows the display itself does nothing.
+    fn resize(&self, _window: &winit::window::Window) {}
+}
 
 /// Messages to the UI that the test driver collects instead of a page (`--ui classic`).
 pub type Outbox = std::rc::Rc<std::cell::RefCell<Vec<String>>>;
@@ -55,7 +74,7 @@ fn sender(game: &crate::Game) -> Option<Sender> {
     }
     #[cfg(not(target_arch = "wasm32"))]
     {
-        #[cfg(all(feature = "webview-gtk", target_os = "linux"))]
+        #[cfg(any(all(feature = "webview-gtk", target_os = "linux"), target_os = "android"))]
         if let Some(host) = &game.native_host {
             return Some(host.sender());
         }
@@ -63,22 +82,48 @@ fn sender(game: &crate::Game) -> Option<Sender> {
     }
 }
 
-/// Whether the desktop build shows the Svelte UI's menus in a webview: the `native_ui` setting says
-/// `svelte`, this build has a host (`webview-gtk` on Linux) and the bundle is embedded. Anything
-/// else is the engine's UI, with a log line when `svelte` was asked for.
-#[cfg(not(any(target_arch = "wasm32", target_os = "android")))]
-pub fn native_ui_active(setting: crate::ui::settings::NativeUi) -> bool {
-    native_ui_gate(setting, cfg!(all(feature = "webview-gtk", target_os = "linux")), bundle::PRESENT)
+/// The phase of a finger as the Android host's Java side numbers it: 0 started, 1 moved,
+/// 2 ended, 3 cancelled.
+#[cfg(any(target_os = "android", test))]
+fn touch_phase(code: i32) -> Option<winit::event::TouchPhase> {
+    use winit::event::TouchPhase;
+    match code {
+        0 => Some(TouchPhase::Started),
+        1 => Some(TouchPhase::Moved),
+        2 => Some(TouchPhase::Ended),
+        3 => Some(TouchPhase::Cancelled),
+        _ => None,
+    }
 }
 
-#[cfg(not(any(target_arch = "wasm32", target_os = "android")))]
+/// An error text as a header value: visible ASCII only (the UI reads it as `x-acr-error`).
+#[cfg(any(target_os = "android", test))]
+fn header_text(error: &str) -> String {
+    error.chars().map(|c| if c.is_ascii_graphic() || c == ' ' { c } else { '?' }).collect()
+}
+
+/// Whether the build shows the Svelte UI in a webview: the `native_ui` setting says `svelte`,
+/// this build has a host (`webview-gtk` on Linux, always on Android) and the bundle is embedded.
+/// Anything else is the engine's UI, with a log line when `svelte` was asked for.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn native_ui_active(setting: crate::ui::settings::NativeUi) -> bool {
+    native_ui_gate(
+        setting,
+        cfg!(any(all(feature = "webview-gtk", target_os = "linux"), target_os = "android")),
+        bundle::PRESENT,
+    )
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 fn native_ui_gate(setting: crate::ui::settings::NativeUi, host_built: bool, bundle: bool) -> bool {
     use crate::ui::settings::NativeUi;
     if setting != NativeUi::Svelte {
         return false;
     }
     if !host_built {
-        log::warn!("settings: native_ui=svelte needs a build with the webview-gtk feature (Linux); the engine draws");
+        log::warn!(
+            "settings: native_ui=svelte needs a build with a webview host (webview-gtk on Linux, Android); the engine draws"
+        );
     } else if !bundle {
         log::warn!("settings: native_ui=svelte needs the embedded Svelte bundle (ui/dist); the engine draws");
     }
@@ -165,7 +210,8 @@ const MINIMAP_EVERY: std::time::Duration = std::time::Duration::from_millis(250)
 
 pub struct WebUi {
     send: Sender,
-    /// The UI layer lies transparently over the game's canvas, so it can draw [`OVER_GAME`].
+    /// The UI layer lies transparently over the game's canvas (the browser page, the Android
+    /// popup), so it can draw [`OVER_GAME`] and the HUD.
     transparent: bool,
     /// Screens the UI draws itself.
     claimed: Vec<String>,
@@ -206,7 +252,7 @@ impl WebUi {
         send(&serde_json::to_string(&hello).expect("hello serializes"));
         Self {
             send,
-            transparent: host == Host::Web,
+            transparent: host != Host::Native,
             claimed,
             shown: false,
             hud,
@@ -658,10 +704,21 @@ mod tests {
         assert!(!native.draws(&screen("GameMenu", true)));
         web.claim_everything();
         assert!(web.draws(&screen("Elsewhere", true)));
+        // The Android popup is transparent over the game like the page.
+        let android = WebUi::new(Box::new(|_| {}), Host::Android, claimed(), vec![], [1.0; 2], 1.0);
+        assert!(android.draws(&screen("GameMenu", true)) && !android.draws(&screen("HistoryWindow", true)));
     }
 
     #[test]
-    #[cfg(not(any(target_arch = "wasm32", target_os = "android")))]
+    fn the_android_hosts_fingers_and_errors_are_decoded() {
+        use winit::event::TouchPhase::*;
+        assert_eq!([0, 1, 2, 3].map(touch_phase), [Some(Started), Some(Moved), Some(Ended), Some(Cancelled)]);
+        assert_eq!(touch_phase(4), None);
+        assert_eq!(header_text("fehlt: \u{e4}"), "fehlt: ?");
+    }
+
+    #[test]
+    #[cfg(not(target_arch = "wasm32"))]
     fn the_native_ui_needs_the_setting_a_host_and_the_bundle() {
         use crate::ui::settings::NativeUi::{Engine, Svelte};
         assert!(!native_ui_gate(Engine, true, true));
@@ -811,6 +868,9 @@ mod tests {
         assert_eq!(web.hud_claim(1.40625), Claim::default());
         let native = WebUi::new(Box::new(|_| {}), Host::Native, vec![], hud(), [1.0; 2], 1.0);
         assert_eq!(native.hud_claim(1.0), Claim::default());
+        let android = WebUi::new(Box::new(|_| {}), Host::Android, vec![], hud(), [1.0; 2], 1.0);
+        assert_eq!(android.hud_claim(1.0), some);
+        assert_eq!(android.hud_claim(1.40625), Claim::default(), "fractional scales stay with the engine (#464)");
         let mut all = WebUi::new(Box::new(|_| {}), Host::Native, vec![], vec![], [1.0; 2], 1.0);
         all.claim_everything();
         assert_eq!(all.hud_claim(1.40625), Claim::ALL);

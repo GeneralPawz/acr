@@ -12,6 +12,20 @@ pub fn file(path: &str) -> Option<&'static [u8]> {
     FILES.iter().find(|(name, _)| *name == path).map(|(_, bytes)| *bytes)
 }
 
+/// The content type of a bundle file, by its extension.
+pub fn mime(name: &str) -> &'static str {
+    match name.rsplit('.').next() {
+        Some("html") => "text/html",
+        Some("js") => "text/javascript",
+        Some("css") => "text/css",
+        Some("json") => "application/json",
+        Some("png") => "image/png",
+        Some("svg") => "image/svg+xml",
+        Some("woff2") => "font/woff2",
+        _ => "application/octet-stream",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -28,5 +42,13 @@ mod tests {
         }
         assert_eq!(PRESENT, !FILES.is_empty());
         assert!(file("../escape").is_none());
+    }
+
+    #[test]
+    fn bundle_files_get_their_type() {
+        assert_eq!(mime("index.html"), "text/html");
+        assert_eq!(mime("acr-ui.js"), "text/javascript");
+        assert_eq!(mime("acr-ui.css"), "text/css");
+        assert_eq!(mime("other.bin"), "application/octet-stream");
     }
 }
