@@ -116,6 +116,7 @@ dependencies = [
  "meshopt-rs",
  "naga",
  "png",
+ "pollster 1.0.1",
  "rayon",
  "serde_json",
  "wasm-bindgen",

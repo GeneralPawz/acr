@@ -1,4 +1,11 @@
 // Full-colour images (menu backgrounds, previews) drawn as scaled quads.
+//
+// The images are straight-alpha RGBA. Filtering them as they are would blend an edge texel
+// towards the black of its transparent neighbours (dark fringes at non-integer scales), so
+// the four texels of the bilinear footprint are premultiplied first and the result is
+// blended with `PREMULTIPLIED_ALPHA_BLENDING`. The fetch returns what the texture format
+// decodes to (linear for the sRGB texture, the stored value otherwise), so the product and
+// the mix happen in the same space the framebuffer blends in.
 
 struct Globals {
     screen: vec2<f32>,
@@ -7,7 +14,6 @@ struct Globals {
 
 @group(0) @binding(0) var<uniform> globals: Globals;
 @group(1) @binding(0) var image: texture_2d<f32>;
-@group(1) @binding(1) var image_sampler: sampler;
 
 struct Instance {
     @location(0) dst: vec4<f32>,   // screen px: x, y, w, h
@@ -32,7 +38,22 @@ fn vs_main(@builtin(vertex_index) vi: u32, inst: Instance) -> VsOut {
     return out;
 }
 
+fn texel(p: vec2<i32>, last: vec2<i32>) -> vec4<f32> {
+    let t = textureLoad(image, clamp(p, vec2<i32>(0), last), 0);
+    return vec4<f32>(t.rgb * t.a, t.a);
+}
+
 @fragment
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
-    return textureSample(image, image_sampler, in.uv) * in.color;
+    let size = vec2<f32>(textureDimensions(image));
+    let last = vec2<i32>(size) - vec2<i32>(1);
+    // Bilinear filtering with texel centres at half pixels, edges clamped.
+    let p = in.uv * size - vec2<f32>(0.5);
+    let base = floor(p);
+    let f = p - base;
+    let i = vec2<i32>(base);
+    let top = mix(texel(i, last), texel(i + vec2<i32>(1, 0), last), f.x);
+    let bottom = mix(texel(i + vec2<i32>(0, 1), last), texel(i + vec2<i32>(1, 1), last), f.x);
+    let c = mix(top, bottom, f.y);
+    return vec4<f32>(c.rgb * in.color.rgb * in.color.a, c.a * in.color.a);
 }
