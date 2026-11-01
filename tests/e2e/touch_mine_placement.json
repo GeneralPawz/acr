@@ -1,0 +1,32 @@
+{
+  "name": "touch_mine_placement",
+  "description": "A mine can only stand on a deposit by touch too (#489): a double tap on the outline over open grass places nothing and pays nothing, a double tap near the deposit puts the site on the deposit's position",
+  "steps": [
+    {"cmd": "start", "map": "Missions/COLUMB/Columb1/columb1.m3d", "note": "Spain; the first Columbus mission, whose peasants stand on open grass"},
+    {"cmd": "wait", "ticks": 200, "note": "the first census enables the buildings"},
+    {"cmd": "enable", "types": ["SpnRud(SP)"], "note": "the mine comes late in the tech tree"},
+    {"cmd": "map_object", "group": "deposit", "at": [[6143, 10052]], "note": "screen (760, 250) with the camera as the mission starts"},
+    {"cmd": "wait", "ticks": 1},
+    {"cmd": "state", "capture": {"wood": "state.resources.wood"}},
+    {"cmd": "select", "units": [270, 271, 272]},
+    {"cmd": "wait", "ticks": 1},
+    {"cmd": "touch", "phase": "start", "id": 1, "label": "Mine", "t": 0},
+    {"cmd": "touch", "phase": "end", "id": 1, "label": "Mine", "t": 60},
+    {"cmd": "ui", "expect": [{"path": "ui.cursor.mode", "contains": "placing"}, {"path": "ui.cursor.outline", "exists": true}]},
+    {"cmd": "touch", "phase": "start", "id": 1, "pos": [900, 420], "t": 1000},
+    {"cmd": "touch", "phase": "end", "id": 1, "pos": [900, 420], "t": 1050},
+    {"cmd": "touch", "phase": "start", "id": 1, "pos": [900, 420], "t": 1200},
+    {"cmd": "touch", "phase": "end", "id": 1, "pos": [900, 420], "t": 1250},
+    {"cmd": "wait", "ticks": 1},
+    {"cmd": "state", "expect": [{"path": "state.counts.0.sites", "len_eq": 0}, {"path": "state.resources.wood", "eq": "${wood}"}], "note": "a double tap on open grass: nothing placed, nothing paid"},
+    {"cmd": "ui", "expect": [{"path": "ui.cursor.mode", "contains": "placing"}, {"path": "ui.cursor.outline.0", "eq": 900}], "note": "and the outline stays"},
+    {"cmd": "touch", "phase": "start", "id": 1, "pos": [780, 260], "t": 3000},
+    {"cmd": "touch", "phase": "end", "id": 1, "pos": [780, 260], "t": 3050},
+    {"cmd": "ui", "expect": [{"path": "ui.cursor.outline.0", "eq": 780}, {"path": "ui.cursor.outline.1", "eq": 260}], "note": "a tap near the deposit moves the outline there"},
+    {"cmd": "touch", "phase": "start", "id": 1, "pos": [780, 260], "t": 3200},
+    {"cmd": "touch", "phase": "end", "id": 1, "pos": [780, 260], "t": 3250},
+    {"cmd": "wait", "ticks": 1},
+    {"cmd": "state", "units": true, "owner": 0, "type": "SpnRud", "expect": [{"path": "state.counts.0.sites", "len_eq": 1}, {"path": "state.resources.wood", "lt": "${wood}"}, {"path": "state.units.0.x", "eq": 6143}, {"path": "state.units.0.y", "eq": 10052}], "note": "the double tap places the site on the deposit"},
+    {"cmd": "ui", "expect": {"path": "ui.cursor.mode", "eq": "normal"}}
+  ]
+}

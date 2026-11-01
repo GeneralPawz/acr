@@ -302,10 +302,25 @@ pub fn hit(game: &mut Game, v: &Value) -> Result<Value, String> {
 pub fn map_object(game: &mut Game, v: &Value) -> Result<Value, String> {
     let Mode::InGame(g) = &mut game.mode else { return Err("no game".into()) };
     let group = v.get("group").and_then(Value::as_str).unwrap_or("tree");
+    // `"group": "deposit"`, `"resource": 1` (`economy` order: 0 wood, 1 gold, 2 stone, 3 food, 4 iron, 5 coal), `"radius": 32` (the sprite type's
+    // `[INTERNAL_SOURCE]` radius): mine deposits (`World::deposits`) where a mine may stand
+    // (`construction::site`); answers how many deposits the map has now.
+    if group == "deposit" {
+        let resource = v.get("resource").and_then(Value::as_u64).unwrap_or(1) as usize;
+        let radius = v.get("radius").and_then(Value::as_i64).unwrap_or(32) as i32;
+        let world = g.world_mut().ok_or("no world yet")?;
+        for p in v.get("at").and_then(Value::as_array).ok_or("map_object: a deposit needs \"at\"")? {
+            let (Some(x), Some(y)) = (p.get(0).and_then(Value::as_i64), p.get(1).and_then(Value::as_i64)) else {
+                return Err("map_object: \"at\" holds [x, y] pairs".into());
+            };
+            world.deposits.push(acr_sim::economy::Deposit { x: x as i32, y: y as i32, resource, radius });
+        }
+        return Ok(json!(world.deposits.len()));
+    }
     let tree = match group {
         "tree" => true,
         "stone" | "source" => false,
-        o => return Err(format!("map_object: group {o:?} is not \"tree\", \"stone\" or \"source\"")),
+        o => return Err(format!("map_object: group {o:?} is not \"tree\", \"stone\", \"source\" or \"deposit\"")),
     };
     let bare = group == "source";
     let index = v.get("index").and_then(Value::as_u64).unwrap_or(0) as u16;
@@ -348,6 +363,38 @@ pub fn map_object(game: &mut Game, v: &Value) -> Result<Value, String> {
         }
     }
     Ok(json!(ids))
+}
+
+/// `{"cmd": "enable", "types": ["SpnRud", ...]}`: the types are made available to every player
+/// as a mission script's enabling would (`Enabled`, `CondEnabled`), and their `[ACCESSCONTROL]`
+/// rules are lifted so the census keeps them so: a building they need need not be built first
+/// (the mines come late in the tech tree). Answers the type ids; an unknown id lists the
+/// types with a `PRODUCER` (the mines).
+pub fn enable(game: &mut Game, v: &Value) -> Result<Value, String> {
+    let Mode::InGame(g) = &mut game.mode else { return Err("no game".into()) };
+    let world = g.world_mut().ok_or("no world yet")?;
+    let mut ids = Vec::new();
+    for name in v.get("types").and_then(Value::as_array).ok_or("enable: missing \"types\"")? {
+        let name = name.as_str().ok_or("enable: \"types\" holds type ids")?;
+        let Some(kind) = world.catalog.find(name) else {
+            let mines: Vec<&str> = (0..world.catalog.len())
+                .map(|i| world.catalog.get(acr_sim::TypeId(i as u16)))
+                .filter(|t| t.economy.producer.is_some())
+                .map(|t| t.id.as_str())
+                .collect();
+            return Err(format!("enable: no type {name:?}; the mines are {mines:?}"));
+        };
+        ids.push(kind);
+    }
+    let catalog = std::sync::Arc::make_mut(&mut world.catalog);
+    catalog.tech.access.retain(|a| !matches!(a.target, acr_sim::tech::Element::Type(t) if ids.contains(&t)));
+    for p in &mut world.players {
+        for k in &ids {
+            let i = usize::from(k.0);
+            (p.enabled[i], p.cond_enabled[i]) = (true, true);
+        }
+    }
+    Ok(json!(ids.iter().map(|k| k.0).collect::<Vec<_>>()))
 }
 
 pub fn impact(game: &mut Game, v: &Value) -> Result<Value, String> {

@@ -1479,7 +1479,9 @@ impl InGame {
 
     /// Where the building being placed would stand at a world pixel (0x5142c2): the snapped
     /// position if it is free, else the nearest free one within 10 rings of 16 px cells
-    /// (`0x28a6f10`, approximated by square rings); `None` if there is none.
+    /// (`0x28a6f10`, approximated by square rings); `None` if there is none. A mine's sites
+    /// are those on a deposit (`construction::site`), so both the mouse and the touch outline
+    /// snap to one and are refused on open ground.
     pub(super) fn placement_site(&self, kind: TypeId, x: i32, y: i32) -> Option<(i32, i32)> {
         let world = self.world.as_ref()?;
         let site = |x: i32, y: i32| acr_sim::construction::site(world, kind, x, y).map(|p| p.pixels());

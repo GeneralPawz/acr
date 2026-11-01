@@ -74,6 +74,42 @@ fn footprint_free(w: &World, player: u8, t: &ObjectType, pos: Pos) -> bool {
     !w.units.iter().any(|u| u.living() && u.nmask & mask == 0 && u.owner != 7 && norma(u.pos.x - xc, u.pos.y - yc) < r)
 }
 
+/// `CheckMinePosition` (0x4d2100), called from 0x513b2c for a `PRODUCER` building (a mine):
+/// the deposit the site at `pos` snaps to, `None` if there is none (the placement is refused).
+///
+/// Of the 128 px cells of the sprite grid it scans a square of `2s + 1` cells per side, where
+/// `s = ((BRadius + 15)·16 >> 7) + 1`, starting at the cell of `(x − s, y − s)` (px) and going
+/// down each column in turn (0x4d2100, cell test 0x4d1fc0). In a cell the last sprite of the
+/// list with an `[INTERNAL_SOURCE]` resource (below 8, any resource: the call passes the mask
+/// 0xFF) within `norma >> 2 < radius` (the sprite type's `[INTERNAL_SOURCE]` radius) wins; the
+/// first cell that has one decides. The site moves onto the deposit's position. Not
+/// reproduced: a cell outside the grid, which the original takes as a hit that leaves the
+/// position as it is (0x4d1fc0, 0x4d20ec).
+fn mine_site(w: &World, t: &ObjectType, pos: Pos) -> Option<Pos> {
+    let (px, py) = pos.pixels();
+    let s = (((t.check_center.2 + 15) << 4) >> 7) + 1;
+    let (cx0, cy0, n) = ((px - s) >> 7, (py - s) >> 7, 2 * s + 1);
+    // (column, row) of the cell scanned first, then the later list entry.
+    let best = w
+        .deposits
+        .iter()
+        .enumerate()
+        .filter(|(_, d)| d.resource < 8 && crate::trig::norma(d.x - px, d.y - py) >> 2 < d.radius)
+        .map(|(i, d)| (d.x >> 7, d.y >> 7, i))
+        .filter(|&(cx, cy, _)| (cx0..cx0 + n).contains(&cx) && (cy0..cy0 + n).contains(&cy))
+        .min_by_key(|&(cx, cy, i)| (cx, cy, std::cmp::Reverse(i)))?;
+    let d = &w.deposits[best.2];
+    Some(Pos::from_pixels(d.x, d.y))
+}
+
+/// The position a building of type `t` asked for at world pixel `(x, y)` takes: snapped to
+/// the 16 px corner, and for a mine onto its deposit (0x513b2c). `None` if a mine has no
+/// deposit.
+fn target(w: &World, t: &ObjectType, x: i32, y: i32) -> Option<Pos> {
+    let pos = snap(t, x, y);
+    if t.economy.producer.is_some() { mine_site(w, t, pos) } else { Some(pos) }
+}
+
 /// Where a building of `kind` placed at world pixel `(x, y)` would stand, if the position
 /// passes [`place`]'s checks (the price aside). For the placement preview.
 pub fn site(w: &World, kind: TypeId, x: i32, y: i32) -> Option<Pos> {
@@ -81,7 +117,7 @@ pub fn site(w: &World, kind: TypeId, x: i32, y: i32) -> Option<Pos> {
     if !t.building || !on_map(w, x, y) {
         return None;
     }
-    let pos = snap(t, x, y);
+    let pos = target(w, t, x, y)?;
     (!lock_cells(t, pos, &t.lock_points).iter().any(|&(cx, cy)| w.map.land.check_pt(cx, cy))).then_some(pos)
 }
 
@@ -133,7 +169,7 @@ pub fn place(w: &mut World, player: u8, kind: TypeId, x: i32, y: i32) -> Option<
     }
     w.random.rando();
     w.random.rando();
-    let pos = snap(&t, x, y);
+    let pos = target(w, &t, x, y)?;
     if !footprint_free(w, player, &t, pos) {
         return None;
     }
@@ -154,7 +190,7 @@ pub fn place_free(w: &mut World, player: u8, kind: TypeId, x: i32, y: i32, stage
     if !t.building || !on_map(w, x, y) {
         return None;
     }
-    let pos = snap(&t, x, y);
+    let pos = target(w, &t, x, y)?;
     if !footprint_free(w, player, &t, pos) {
         return None;
     }

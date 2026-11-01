@@ -1867,7 +1867,8 @@ Implemented in `economy.rs`. The sources are `City::Census` (0x42e658), the upke
 - **Construction** (`construction.rs`; `CreateObject` 0x5155c5, `BuildObj`/`BuildObjLink`
   0x523c98/0x524654, `NextStage` 0x523666).
   - **Placement.** The position snaps so that `RealX + 16a` and `RealY + 32b` fall on a 16 px
-    corner. The site must lie on the map, the finished footprint must be free, no enemy
+    corner; a mine (`PRODUCER`) then moves onto the deposit `CheckMinePosition` (0x4d2100)
+    finds, and is refused without one (docs/ui.md "Placing a building"). The site must lie on the map, the finished footprint must be free, no enemy
     object (nation 7 aside) may stand within `(BRadius + 15)·16 px` of the check-point
     centre (`CheckMonstersInArea` 0x5133bc: the player's own and allied units never block),
     and the price (with `LOWCOSTRADIUS`) must be affordable; it is paid at once.

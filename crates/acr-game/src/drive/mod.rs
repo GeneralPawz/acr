@@ -1218,6 +1218,11 @@ impl Driver {
                 job.reply.insert("objects".into(), objects);
                 Ok(false)
             }
+            Request::Enable(v) => {
+                let types = bench::enable(game, &v)?;
+                job.reply.insert("enabled".into(), types);
+                Ok(false)
+            }
             Request::Profile => {
                 acr_sim::prof::enable(true);
                 let totals: serde_json::Map<String, serde_json::Value> = acr_sim::prof::take()

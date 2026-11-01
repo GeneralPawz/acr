@@ -209,7 +209,7 @@ fn unproduce_removes_an_endless_order_and_refunds_what_was_paid() {
 #[test]
 fn peasants_in_a_mine_produce_gold() {
     let (mut w, kri, _, cen) = setup();
-    w.deposits.push(Deposit { x: 2048, y: 2048, resource: GOLD });
+    w.deposits.push(Deposit { x: 2048, y: 2048, resource: GOLD, radius: 32 });
     let mine = w.spawn(cen, 0, Pos::from_pixels(2048, 2048), 0);
     economy::bind_mines(&mut w);
     assert!(w.units[mine.0 as usize].mine.is_some(), "bound to the deposit");
@@ -434,4 +434,34 @@ fn trading_moves_the_shared_rates() {
     let before = w.market.buy[sg];
     run(&mut w, 100);
     assert!(w.market.buy[sg] < before);
+}
+
+const MINE: &str = "NAME Mna\r\nBUILDING\r\nLIFE 1000\r\nLOCATION 0 0 64 64\r\nBUILDSTAGES 10\r\nPRICE 1 WOOD 100\r\n\
+    LOCKPOINTS 4 0 0 1 0 0 1 1 1\r\nBUILDLOCKPOINTS 1 0 0\r\nBUILDPOINTS 2 -2 0 3 0\r\nPRODUCER 1 GOLD 0 10\r\n[END]\r\n";
+
+/// 0x513b2c: a mine goes onto a deposit (0x4d2100) and is refused anywhere else, for the preview
+/// (`site`) and for the command alike.
+#[test]
+fn a_mine_snaps_to_a_deposit_and_is_refused_elsewhere() {
+    let (mut w, kri, skl) = builders();
+    let mut c = (*w.catalog).clone();
+    let mna = c.add(ObjectType::from_def("Mna(EN)", &UnitDef::parse(MINE.as_bytes())));
+    w.catalog = Arc::new(c);
+    w.deposits.push(Deposit { x: 3000, y: 3000, resource: GOLD, radius: 32 });
+    let builder = w.spawn(kri, 0, Pos::from_pixels(2000, 2100), 0);
+    economy::census_all(&mut w);
+    // Near the deposit (norma 60 px, below 4 * 32): the site is the deposit's position.
+    assert_eq!(acr_sim::construction::site(&w, mna, 3040, 3040), Some(Pos::from_pixels(3000, 3000)));
+    // On open grass, in the next cell and beyond the radius: no site; a store is not a mine.
+    assert_eq!(acr_sim::construction::site(&w, mna, 3400, 3000), None);
+    assert_eq!(acr_sim::construction::site(&w, mna, 3150, 3000), None, "150 px is beyond 4 * 32");
+    assert!(acr_sim::construction::site(&w, skl, 3400, 3000).is_some());
+    let wood = w.players[0].resources[WOOD];
+    w.step(&[Command::Build { player: 0, units: vec![builder], kind: mna, x: 3400, y: 3000 }]);
+    assert!(w.units.iter().all(|u| u.kind != mna), "nothing placed on open grass");
+    assert_eq!(w.players[0].resources[WOOD], wood, "and nothing paid");
+    w.step(&[Command::Build { player: 0, units: vec![builder], kind: mna, x: 3040, y: 3040 }]);
+    let site = w.units.iter().find(|u| u.kind == mna).expect("placed on the deposit");
+    assert_eq!(site.pos, Pos::from_pixels(3000, 3000));
+    assert_eq!(w.players[0].resources[WOOD], wood - 100);
 }
