@@ -254,6 +254,31 @@ Stayed with the engine:
 - **The mortar icons' parity** has no pixel run of its own: the mortars rule needs a mortar unit (`ArtMrt`) and the page's driver cannot start with the rule.
 - **Pause text:** still in the engine's overlay.
 
+## Native host spike (Linux, #333)
+
+`cargo run --release -p acr-game --features webview-gtk --example webview_spike` (needs
+`libwebkit2gtk-4.1-dev libgtk-3-dev libsoup-3.0-dev libjavascriptcoregtk-4.1-dev`; `SPIKE_AUTO=1` runs the
+scripted measurement, `SPIKE_NO_WEBVIEW=1` the baseline, `SPIKE_FIXED=r,g,b` a fixed clear colour for
+pixel checks). winit (forced to X11: wry child webviews need it, so XWayland on Wayland) + wgpu Vulkan
+clear + a transparent wry 0.57.1 child webview (WebKitGTK 2.52.6), 2026-11-01, AMD Radeon (RADV) on
+GNOME/XWayland and llvmpipe on Xvfb.
+
+| Check | Result |
+|---|---|
+| wgpu visible through transparent areas | **No.** The child X window (`XCreateSimpleWindow` in `wry::webkitgtk`) replaces the swapchain's pixels under it: black on Xvfb, black on XWayland (`xwd` of the toplevel: red clear 255,0,0 without the webview, 0,0,0 with it; the 55 % panel shows 11,11,11). X draws child windows without blending, so only a separate toplevel could be transparent. Same as tauri-apps/wry#1319 (open) |
+| resize | `set_bounds` follows; 20 resizes ran. GLX error 168 (`GLXBadWindow`) on XWayland kills winit unless the xlib error hook ignores it (the spike ignores extension errors) |
+| IPC JS to Rust, median / p99 | 1.3 / 4.4 ms (XWayland, GPU), 0.85 / 1.9 ms (Xvfb, idle); target < 2 / < 8 |
+| `evaluate_script` 4 KB at 60 Hz, 10 s | 600 of 600 received; call 0.04 ms median, 0.24 ms p99; no frame over 25 ms (XWayland) |
+| frame time, webview vs none (Present `Immediate`) | mean 0.14 vs 0.11 ms idle, 0.14 vs 0.13 ms during `evaluate_script` (XWayland) |
+| F1-F12, Alt+Enter, Escape reach Rust | reach the page (F1, F5, F11, F12, Enter, Escape, Alt+Enter, synthetic XTest on Xvfb); they do not reach winit while the page has focus, so the page forwards them |
+| pointer, click | clicks and moves on the forwarding area reach Rust (Xvfb) |
+| process memory, webview vs none | 188 + 264 MiB of WebKit processes vs 123 MiB (XWayland) |
+| custom protocol 512x512 PNG (895 KB) | 3 ms median, 4 ms p99 (XWayland, GPU) |
+| missing runtime | not measured (needs the libraries absent) |
+
+Not measured: flicker on resize and maximise, scale change (both need a person at the display), the
+frame cost on a heavy scene. The numbers on Xvfb with llvmpipe are noisy (the machine was shared).
+
 ## Native host spike (Android, #333)
 
 `tools/android/build-webview-spike.sh` builds the example `crates/acr-game/examples/webview_spike_android.rs`
@@ -300,5 +325,5 @@ webview, the `capture` and `shrink` modes, a soft keyboard (the popup is not foc
 
 ## Not yet
 
-The touch skin, the rest of the HUD (the pause text, the diplomacy panel, the world overlays), the native webview host (`wry`, spike on Windows), the other screens, and the start screen's layout for other screen ratios
+The touch skin, the rest of the HUD (the pause text, the diplomacy panel, the world overlays), the native webview host (`wry`; the Linux spike above says a transparent child webview cannot show the swapchain), the other screens, and the start screen's layout for other screen ratios
 (#316 section 8).
