@@ -308,7 +308,9 @@ def gait(poser, fps=24.0):
     evenly at the median step of the carrying frames). `flight`: share of frames with both
     feet's toe joints and ankles over their standing heights + 1 cm; `clear_m`: lowest toe
     tip of a foot that does not carry, over its standing height."""
-    arms = [a for a in _clip_armatures(poser.scene) if "foot_l" in a.pose.bones]
+    # Feet with toe joints: a horse's legs end in `foot_*` alone and have no step cycle here.
+    feet = ("foot_l", "foot_r", "toe_l", "toe_r")
+    arms = [a for a in _clip_armatures(poser.scene) if all(b in a.pose.bones for b in feet)]
     out = {}
     if not arms:
         return out
