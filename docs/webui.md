@@ -434,6 +434,12 @@ the touch skin only renders it and sends intents.
   `set_text`). The frames are CSS `border-image` 9-slice of `nine/box.png`, cut at runtime from `BORDER.GP` of the player's
   files (`assets::nine_box`, 3 x 3 cells of 64 pixels); texts are glyph images of the game's fonts, scaled; the one native
   piece is the text field of an input box (the soft keyboard), in the system font.
+- **Form layout** (`sheetBlocks` in `sheet.ts`, from the classic layout's widget rects, no per-label cases): a static text
+  immediately left of a control (same row) or directly above it is that control's caption, drawn above it; several
+  rows of the same number of controls aligned under a row of as many static texts are a table, one card per row with the
+  column headers as captions (the random map's players); a static text lying on a picture-only control is its mark (the
+  team's "X"), and a picture Rust names with a key (`color_i`, `team_i`) is a control. The text field draws its text in
+  the game font (`TextField`); the real `<input>` lies over it, invisible, as the soft keyboard's target (IME: #457).
 - **HUD** (`TouchHud`, from `ViewPatch.touch`, built by `Hud::touch_view` when the touch skin is on): the resource strip
   on top (icon cut from `ResPanel` and the number), pause and menu buttons (in one row with the strip, 44 CSS pixels tall), the minimap top right (its fold button draws a CSS minus or plus) (the classic skin's
   three minimap groups cut to the map image, folds with its button), the command grid as a bottom sheet in portrait

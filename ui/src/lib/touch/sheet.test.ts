@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { WidgetView } from '../protocol/WidgetView';
-import { DEFAULT_FONT, fitScale, fontOf, sheetItems, words } from './sheet';
+import { DEFAULT_FONT, fitScale, fontOf, sheetBlocks, sheetItems, words } from './sheet';
 
 const widget = (id: string, kind: WidgetView['kind'], rect: [number, number, number, number], extra: Partial<WidgetView> = {}): WidgetView => ({
   id,
@@ -47,5 +47,111 @@ describe('sheet', () => {
 
   it('splits a text into words', () => {
     expect(words(' a  b\nc\r\n')).toEqual(['a', 'b', 'c']);
+  });
+
+  it('keeps a named picture as a control and drops the others', () => {
+    const items = sheetItems([widget('S/0', 'picture', [0, 0, 9, 9]), widget('S/1', 'picture', [0, 20, 9, 9], { key: 'color_0' })]);
+    expect(items.map((w) => w.id)).toEqual(['S/1']);
+  });
+});
+
+describe('sheet blocks', () => {
+  const text = (id: string, rect: [number, number, number, number], label: string) => widget(id, 'text', rect, { label });
+  const combo = (id: string, rect: [number, number, number, number]) =>
+    widget(id, 'combo', rect, { value: { t: 'combo', options: ['a'], selected: 0, open: false } });
+  const ids = (blocks: ReturnType<typeof sheetBlocks>) =>
+    blocks.map((b) => (b.t === 'cell' ? b.cell.widget.id + (b.cell.caption ? '<' + b.cell.caption.id : '') + (b.cell.mark ? '+' + b.cell.mark.id : '') : b.cells.map((c) => c.widget.id + '<' + c.caption?.id)));
+
+  it('captions a control with the text left of it and the text above it', () => {
+    const blocks = sheetBlocks([
+      text('S/0', [0, 100, 50, 6], 'Landscape'),
+      combo('S/1', [56, 99, 80, 9]),
+      text('S/2', [0, 200, 40, 6], 'Name'),
+      widget('S/3', 'input', [0, 207, 90, 9], { value: { t: 'input', text: 'x', capacity: 8 } }),
+      text('S/4', [0, 20, 40, 8], 'Title'),
+      widget('S/5', 'button', [0, 300, 40, 9], { label: 'OK' }),
+    ]);
+    expect(ids(blocks)).toEqual(['S/4', 'S/1<S/0', 'S/3<S/2', 'S/5']);
+  });
+
+  it('does not caption a labelled button with the text beside it', () => {
+    const blocks = sheetBlocks([text('S/0', [0, 100, 50, 6], 'Note'), widget('S/1', 'button', [56, 101, 80, 9], { label: 'Go' })]);
+    expect(ids(blocks)).toEqual(['S/0', 'S/1']);
+  });
+
+  it('shows the text lying on a picture field as that field', () => {
+    const blocks = sheetBlocks([
+      widget('S/0', 'picture', [150, 100, 12, 8], { key: 'team_0' }),
+      text('S/1', [154, 99, 5, 6], 'X'),
+      widget('S/2', 'picture', [100, 200, 12, 8]),
+      text('S/3', [102, 200, 5, 6], 'Y'),
+    ]);
+    // The unkeyed picture is decoration and the text on it stays as it is.
+    expect(ids(blocks)).toEqual(['S/0+S/1', 'S/3']);
+  });
+
+  // The random map's player table and its settings column beside it, as the classic layout puts them.
+  const randomMap = (): WidgetView[] => {
+    const out: WidgetView[] = [
+      text('R/0', [152, 282, 86, 12], 'ZUFALLSKARTE'),
+      text('R/1', [105, 316, 18, 5], 'Spieler'),
+      text('R/2', [37, 330, 18, 5], 'Spieler'),
+      text('R/3', [87, 330, 23, 5], 'Nationen'),
+      text('R/4', [140, 330, 15, 5], 'Farbe'),
+      text('R/5', [172, 330, 14, 5], 'Team'),
+      text('R/6', [236, 331, 33, 5], 'Eigene Karte'),
+      text('R/7', [284, 331, 32, 5], 'Zufallskarte'),
+    ];
+    for (let i = 0; i < 3; i++) {
+      const y = 336 + 10 * i;
+      out.push(
+        i === 0 ? widget('R/n0', 'input', [35, y, 46, 9], { value: { t: 'input', text: 'EINSTEIN', capacity: 20 } }) : combo(`R/p${i}`, [35, y + 1, 49, 9]),
+        combo(`R/c${i}`, [85, y + 1, 48, 9]),
+        widget(`R/f${i}`, 'picture', [135, y + 1, 13, 8], { key: `color_${i}` }),
+        widget(`R/t${i}`, 'picture', [152, y + 3, 12, 7], { key: `team_${i}` }),
+        text(`R/x${i}`, [155, y + 1, 5, 6], 'X'),
+        text(`R/l${i}`, [231, y + 10, 46, 6], `Option ${i}`),
+        combo(`R/o${i}`, [282, y + 10, 79, 9]),
+      );
+    }
+    return out;
+  };
+
+  it('makes a card of each row of a table, captioned by its column headers', () => {
+    const blocks = sheetBlocks(randomMap());
+    const cards = blocks.filter((b) => b.t === 'card');
+    expect(cards).toHaveLength(3);
+    expect(ids(cards)).toEqual([
+      ['R/n0<R/2', 'R/c0<R/3', 'R/f0<R/4', 'R/t0<R/5'],
+      ['R/p1<R/2', 'R/c1<R/3', 'R/f1<R/4', 'R/t1<R/5'],
+      ['R/p2<R/2', 'R/c2<R/3', 'R/f2<R/4', 'R/t2<R/5'],
+    ]);
+    expect(cards.flatMap((b) => (b.t === 'card' ? b.cells : [])).map((c) => c.mark?.id).filter(Boolean)).toEqual(['R/x0', 'R/x1', 'R/x2']);
+  });
+
+  it('keeps the headers out of the sheet, and the settings column captioned beside the table', () => {
+    const blocks = sheetBlocks(randomMap());
+    const rest = ids(blocks.filter((b) => b.t === 'cell'));
+    expect(rest).toEqual(['R/0', 'R/1', 'R/6', 'R/7', 'R/o0<R/l0', 'R/o1<R/l1', 'R/o2<R/l2']);
+    // Reading order: the title, the window titles and tabs, then the whole table, then the settings.
+    expect(blocks.map((b) => b.t)).toEqual(['cell', 'cell', 'cell', 'cell', 'card', 'card', 'card', 'cell', 'cell', 'cell']);
+  });
+
+  it('captions a slider with the label whose box only just meets its thin bar', () => {
+    const blocks = sheetBlocks([
+      text('S/0', [172, 414, 49, 6], 'Volume'),
+      widget('S/1', 'slider', [236, 418, 111, 4.6], { value: { t: 'range', value: 1, max: 9 } }),
+    ]);
+    expect(ids(blocks)).toEqual(['S/1<S/0']);
+  });
+
+  it('does not take a lone row of fields for a table: each is captioned on its own', () => {
+    const blocks = sheetBlocks([
+      text('S/0', [0, 0, 10, 5], 'A'),
+      text('S/1', [30, 0, 10, 5], 'B'),
+      combo('S/2', [0, 10, 25, 9]),
+      combo('S/3', [30, 10, 25, 9]),
+    ]);
+    expect(ids(blocks)).toEqual(['S/2<S/0', 'S/3<S/1']);
   });
 });

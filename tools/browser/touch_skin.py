@@ -13,7 +13,7 @@ the DevTools protocol):
 and checks on the way that the page chose the touch skin, that no element lies outside the viewport (the
 menu sheets scroll vertically by design: their content is exempt from the vertical test), that every
 button is at least 44 CSS pixels each way, and that the unit's order reached the game (`state`).
-Screenshots go to `--shots` as `touch332-<viewport>-<step>.png`; `report.json` to `--out`.
+Screenshots go to `--shots` as `<prefix>-<viewport>-<step>.png` (prefix `touch332`); `report.json` to `--out`.
 
 Needs Python Playwright (`pip install playwright && playwright install chromium`); in headless Chromium
 without a GPU the game needs WebGPU on SwiftShader (the default of --gpu).
@@ -85,8 +85,8 @@ AUDIT = """() => {
 
 
 class Run:
-    def __init__(self, browser, url, name, size, shots, timeout_s):
-        self.name, self.shots, self.timeout_s = name, shots, timeout_s
+    def __init__(self, browser, url, name, size, shots, timeout_s, prefix="touch332"):
+        self.name, self.shots, self.timeout_s, self.prefix = name, shots, timeout_s, prefix
         self.errors = []
         self.report = {"viewport": list(size), "steps": []}
         self.ctx = browser.new_context(
@@ -123,7 +123,7 @@ class Run:
         raise SystemExit("driver timeout on " + json.dumps(request))
 
     def shot(self, step):
-        path = self.shots / ("touch332-%s-%s.png" % (self.name, step))
+        path = self.shots / ("%s-%s-%s.png" % (self.prefix, self.name, step))
         self.page.screenshot(path=str(path))
 
     def audit(self, step):
@@ -156,13 +156,21 @@ class Run:
         time.sleep(0.5)
 
 
-def play(browser, url, name, size, shots, timeout_s):
-    run = Run(browser, url, name, size, shots, timeout_s)
+def play(browser, url, name, size, shots, timeout_s, prefix):
+    run = Run(browser, url, name, size, shots, timeout_s, prefix)
     page = run.page
     run.wait("() => document.querySelector('.acr-ui') && document.querySelector('[data-acr-touch=sheet]')", "the main menu sheet")
     time.sleep(1.0)
     run.shot("1-main-menu")
     first = run.audit("main menu")
+    # The options sheet and back (its cancel entry), for the form-like layout.
+    run.tap_label("Optionen")
+    run.wait("() => document.querySelector('[data-acr-screen=Options]')", "the options sheet")
+    time.sleep(1.0)
+    run.shot("1b-options")
+    run.audit("options")
+    page.locator('[data-acr-key="cancel"]').first.tap()
+    run.wait("() => document.querySelector('[data-acr-screen=MainMenu]')", "the main menu again")
     for label in ROUTE:
         run.tap_label(label)
         run.wait("() => document.querySelector('[data-acr-touch=sheet]')", "the sheet after " + label)
@@ -242,6 +250,7 @@ def main():
     ap.add_argument("--timeout-s", type=float, default=240.0)
     ap.add_argument("--out", default="runs/touch-skin")
     ap.add_argument("--shots", default=None, help="folder for the screenshots (default: --out)")
+    ap.add_argument("--prefix", default="touch332", help="file name prefix of the screenshots")
     a = ap.parse_args()
     out = pathlib.Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
@@ -251,7 +260,7 @@ def main():
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True, args=CHROMIUM_ARGS[a.gpu])
         for name in a.viewports:
-            reports[name] = play(browser, a.url, name, VIEWPORTS[name], shots, a.timeout_s)
+            reports[name] = play(browser, a.url, name, VIEWPORTS[name], shots, a.timeout_s, a.prefix)
             r = reports[name]
             print("%-9s %s  selected=%s ordered=%s errors=%d" % (name, "PASS" if r["passed"] else "FAIL", r.get("selected"), r.get("ordered"), len(r["errors"])))
             for s in r["steps"]:
