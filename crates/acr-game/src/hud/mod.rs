@@ -73,6 +73,8 @@ pub struct Claim {
     pub stats: bool,
     /// The army list's icons.
     pub army: bool,
+    /// The game panel (key I): frame, tabs' pages, scroll bar.
+    pub game_panel: bool,
 }
 
 impl Claim {
@@ -85,6 +87,7 @@ impl Claim {
         commands: true,
         stats: true,
         army: true,
+        game_panel: true,
     };
 
     pub fn claims(self, layer: Layer) -> bool {
@@ -96,7 +99,7 @@ impl Claim {
             Layer::Commands => self.commands,
             Layer::Stats | Layer::UnitPanel => self.stats,
             Layer::Army => self.army,
-            Layer::GamePanel => false,
+            Layer::GamePanel => self.game_panel,
         }
     }
 }
@@ -116,7 +119,7 @@ pub enum Layer {
     Army,
     /// The unit panel (portrait, values).
     UnitPanel,
-    /// The game panel (its widgets draw things the protocol has no part for).
+    /// The game panel: frame, page and scroll bar.
     GamePanel,
     TopBar,
     DropDown,
@@ -153,7 +156,9 @@ pub fn claimed(section: Section) -> Vec<Claimed> {
         Layer::Stats => vec![group("stats", 4, draws)],
         Layer::Army => vec![group("army", 5, draws)],
         Layer::UnitPanel => vec![group("unit_panel", 6, draws)],
-        Layer::GamePanel => Vec::new(),
+        // Beside the unit panel, which it never shares the screen with; no panel, no group.
+        Layer::GamePanel if draws.is_empty() => Vec::new(),
+        Layer::GamePanel => vec![group("game_panel", 6, draws)],
         Layer::TopBar => {
             let (text, frames): (Vec<Draw>, Vec<Draw>) = draws.into_iter().partition(Draw::is_text);
             vec![group("top_bar", 7, frames), group("top_bar_text", 8, text)]
@@ -2050,9 +2055,11 @@ mod tests {
         assert_eq!(names, [("top_bar", 7, 2), ("top_bar_text", 8, 1)]);
         let map = claimed(Section { layer: Layer::Minimap, zoom: Zoom::NONE, draws: vec![fill.clone()] });
         assert_eq!(map.iter().map(|g| (g.name, g.layer)).collect::<Vec<_>>(), [("minimap", 0)]);
-        assert!(claimed(Section { layer: Layer::GamePanel, zoom: Zoom::NONE, draws: vec![fill] }).is_empty());
+        assert!(claimed(Section { layer: Layer::GamePanel, zoom: Zoom::NONE, draws: Vec::new() }).is_empty());
+        let panel = claimed(Section { layer: Layer::GamePanel, zoom: Zoom::NONE, draws: vec![fill] });
+        assert_eq!(panel.iter().map(|g| (g.name, g.layer)).collect::<Vec<_>>(), [("game_panel", 6)]);
         assert!(Claim::ALL.claims(Layer::Hint) && !Claim::default().claims(Layer::TopBar));
-        assert!(Claim::ALL.claims(Layer::Commands) && !Claim::ALL.claims(Layer::GamePanel));
-        assert!(!Claim::default().claims(Layer::Army));
+        assert!(Claim::ALL.claims(Layer::Commands) && Claim::ALL.claims(Layer::GamePanel));
+        assert!(!Claim::default().claims(Layer::Army) && !Claim::default().claims(Layer::GamePanel));
     }
 }

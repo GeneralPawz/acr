@@ -1,0 +1,24 @@
+{
+  "name": "svelte_game_panel",
+  "description": "The classic skin draws the game panel (key I) of #328 as the group game_panel: every tab's page resolves to parts (frame, plaques, strings, the market's icons) and the driver's asset check passes; closing it removes the group",
+  "args": ["--ui", "classic"],
+  "steps": [
+    {"cmd": "start", "blank": {"ground": "grass"}},
+    {"cmd": "wait", "ticks": 50},
+    {"cmd": "key", "key": "i"},
+    {"cmd": "wait", "ticks": 5},
+    {"cmd": "view", "expect": [{"path": "view.hud.groups.6.name", "eq": "game_panel"}, {"path": "view.hud.groups.6.parts", "len_ge": 20}]},
+    {"cmd": "click", "pos": [850, 456]},
+    {"cmd": "wait", "ticks": 5},
+    {"cmd": "view"},
+    {"cmd": "click", "pos": [886, 456]},
+    {"cmd": "wait", "ticks": 5},
+    {"cmd": "view"},
+    {"cmd": "click", "pos": [922, 456]},
+    {"cmd": "wait", "ticks": 5},
+    {"cmd": "view"},
+    {"cmd": "key", "key": "i"},
+    {"cmd": "wait", "ticks": 5},
+    {"cmd": "view"}
+  ]
+}

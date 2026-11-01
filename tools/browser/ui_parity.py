@@ -90,6 +90,11 @@ ROUTES.update({
     "UnitStats": [BLANK] + PEASANTS[:1] + [{"cmd": "click", "pos": [512, 384]}, {"hover": [512, 300]}],
     "Minimap": [BLANK] + PEASANTS + [{"cmd": "click", "pos": [512, 384], "double": True}, {"hover": [512, 300]}],
     "UnitPanel": [BLANK] + PEASANTS[:2] + [{"cmd": "click", "pos": [512, 384]}] + UNIT_PANEL + [{"hover": [512, 300]}],
+    # #328: the game panel (key I), on the first tab, then the others by their tab strip.
+    "GamePanel": [BLANK, {"press": "i"}, {"hover": [512, 300]}],
+    "GamePanelDeaths": [BLANK, {"press": "i"}, [886, 456], {"hover": [512, 300]}],
+    "GamePanelMarket": [BLANK, {"press": "i"}, [850, 456], {"hover": [512, 300]}],
+    "GamePanelIncome": [BLANK, {"press": "i"}, [922, 456], {"hover": [512, 300]}],
     "TopBarWide": [BLANK, {"hover": [960, 540]}],
     "TopBarCentered": [BLANK, {"hover": [960, 540]}],
     "TopBarTouch": [BLANK, {"hover": [792, 360]}],
@@ -112,6 +117,10 @@ HUD_AREAS = {
     "UnitStats": "0,598,260,170",
     "Minimap": "760,505,264,263",
     "UnitPanel": "700,40,324,330",
+    "GamePanel": "740,40,284,430",
+    "GamePanelDeaths": "740,40,284,430",
+    "GamePanelMarket": "740,40,284,430",
+    "GamePanelIncome": "740,40,284,430",
     "TopBarWide": "0,0,1920,44",
     "TopBarCentered": "0,0,1920,44",
     "TopBarTouch": "0,0,1584,70",
@@ -122,7 +131,7 @@ HUD_AREAS = {
 SCREEN_OF = {
     "CampaignMissions": "SingleMission", "RandomMapCombo": "RandomMap", "GameOptionsMore": "GameOptions",
     "GameOptionsRules": "GameOptions", "GameLoadGame": "LoadGame",
-    "TopBar": "game", "CommandPanel": "game", "UnitStats": "game", "Minimap": "game", "UnitPanel": "game", "DropDown": "game", "Hints": "game", "Messages": "game", "TopBarWide": "game",
+    "TopBar": "game", "CommandPanel": "game", "UnitStats": "game", "Minimap": "game", "UnitPanel": "game", "GamePanel": "game", "GamePanelDeaths": "game", "GamePanelMarket": "game", "GamePanelIncome": "game", "DropDown": "game", "Hints": "game", "Messages": "game", "TopBarWide": "game",
     "TopBarCentered": "game", "TopBarTouch": "game", "TopBarTouchOpen": "game",
 }
 
