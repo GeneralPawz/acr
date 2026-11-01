@@ -27,6 +27,12 @@ fn lock_cells(t: &ObjectType, pos: Pos, points: &[(i32, i32)]) -> Vec<(i32, i32)
     points.iter().map(|&(x, y)| (bx + x, by + y)).collect()
 }
 
+/// The lock cells the finished building of `kind` at `pos` occupies.
+pub fn lock_footprint(w: &World, kind: TypeId, pos: Pos) -> Vec<(i32, i32)> {
+    let t = w.catalog.get(kind);
+    lock_cells(t, pos, &t.lock_points)
+}
+
 /// Whether `player` may place `kind` with these builders: the type is enabled and in the
 /// `[FIXED_PRODUCE]` list (the build menu) of one of them. Without nation data anything
 /// may be built.

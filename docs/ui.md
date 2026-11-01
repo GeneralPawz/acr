@@ -720,6 +720,15 @@ A finished building with `TORG` shows the market in the command grid instead of 
   - row `N = 5 + (sin(t / 100 ms) + 2)·8` (13..29) of `0\agew_1w.grd` where the building
     fits (`ShowGPDarkN`);
   - the same row of `0\agew_1r.grd` where it does not (`ShowGPRedN`).
+- Fields (ACR addition, #453): the original's preview (0x4bdd1e) draws only the building;
+  where a mill's fields would grow is not shown. ACR also draws, under a mill's preview
+  (`USAGE MELNICA`), the area its fields cover once grown: a translucent diamond cell
+  (alpha 0.3, 0.25 in touch placement) for each of the `(2n + 1)²` points of its first
+  product's `EXSPRITES` (7 × 7 points 64 px apart without; what `CreateFieldsAt` 0x51522f
+  plants, without the jitter), green where `CreateObject` (0x5155c5) would plant a field
+  there, red where it would not: locks (buildings, water, the finished mill's own), slopes
+  and sprites too close (trees). `sprite::field_footprint`; the driver's `ui.cursor.fields`
+  counts `free` and `blocked` points.
 - Fit (0x5142c2): the snapped position is tried first. If the site is blocked, the nearest
   free position within 10 rings of 16 px cells is used (spiral table 0x28a6f10, here square
   rings). The site check is the simulation's (`construction::site`): the finished footprint

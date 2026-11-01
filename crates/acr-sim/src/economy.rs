@@ -378,7 +378,12 @@ fn is_ready_mill(w: &World, i: usize, k: u8) -> bool {
 
 /// The first type a building produces (`PAble[NIndex][0]`: fields for a mill).
 fn mill_product(w: &World, b: usize) -> Option<TypeId> {
-    w.catalog.tech.of(w.units[b].kind).and_then(|t| t.produce.first().copied())
+    product_of(w, w.units[b].kind)
+}
+
+/// [`mill_product`] by building type.
+pub(crate) fn product_of(w: &World, kind: TypeId) -> Option<TypeId> {
+    w.catalog.tech.of(kind).and_then(|t| t.produce.first().copied())
 }
 
 /// `CreateFields` (0x577ff4): every ready mill of the nation plants its fields around it

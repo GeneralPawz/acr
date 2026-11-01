@@ -1,0 +1,24 @@
+{
+  "name": "mill_field_preview",
+  "description": "Placing a mill shows the area its fields would cover (ACR addition, #453): the free and blocked field points are counted in ui.cursor.fields at the pointer, and a house has none",
+  "steps": [
+    {"cmd": "start", "random": {"nation": 1, "seed": 5, "resources": 2}, "note": "Spain; the start units of Data\\Start2.dat"},
+    {"cmd": "wait", "ticks": 200, "note": "the first census enables the buildings"},
+    {"cmd": "drag", "around": {"owner": 0, "type": "Kri"}, "expect": {"path": "around", "ge": 10}},
+    {"cmd": "click", "label": "Fort"},
+    {"cmd": "click", "near": {"owner": 0, "type": "Kri"}, "offset": [-1350, 600]},
+    {"cmd": "wait", "until": {"units": {"owner": 0, "type": "EngKre", "finished": true}}, "timeout": 20000},
+    {"cmd": "drag", "around": {"owner": 0, "type": "Kri"}},
+    {"cmd": "click", "label": "Wohnhaus"},
+    {"cmd": "click", "near": {"owner": 0, "type": "Kri"}, "offset": [-900, 600]},
+    {"cmd": "wait", "until": {"units": {"owner": 0, "type": "SpnDo1", "finished": true}}, "timeout": 20000},
+    {"cmd": "drag", "around": {"owner": 0, "type": "Kri"}},
+    {"cmd": "click", "label": "Wohnhaus", "expect": {"path": "target.kind", "eq": "icon"}},
+    {"cmd": "move", "pos": [500, 300]},
+    {"cmd": "ui", "expect": [{"path": "ui.cursor.mode", "contains": "placing"}, {"path": "ui.cursor.fields", "eq": null}], "note": "a house grows no fields"},
+    {"cmd": "key", "key": "Escape"},
+    {"cmd": "click", "label": "Mühle", "expect": {"path": "target.kind", "eq": "icon"}},
+    {"cmd": "move", "pos": [500, 300]},
+    {"cmd": "ui", "expect": [{"path": "ui.cursor.mode", "contains": "placing"}, {"path": "ui.cursor.fields.free", "ge": 1}], "note": "the 7 x 7 field points of the mill"}
+  ]
+}

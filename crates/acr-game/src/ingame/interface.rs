@@ -47,6 +47,9 @@ const OUTLINE_HZ: f64 = 2.0;
 const DRAG_MIN: i32 = 30;
 /// Colour tables of the building preview (`ShowGPDarkN` / `ShowGPRedN`, loaded at 0x483feb
 /// and 0x4840d1): a free site and a blocked one.
+/// The field preview's fills (RGBA): where a field can grow, where it cannot.
+const FIELD_FREE: [u8; 4] = [60, 220, 60, 255];
+const FIELD_BLOCKED: [u8; 4] = [230, 50, 50, 255];
 const PREVIEW_FREE: &str = "0\\AGEW_1W.GRD";
 const PREVIEW_BLOCKED: &str = "0\\AGEW_1R.GRD";
 /// `NRES.DAT [RESTYPES]` names, the text ids of the resources in cost hints (0x606229).
@@ -1461,7 +1464,7 @@ impl InGame {
     /// Where the building being placed would stand at a world pixel (0x5142c2): the snapped
     /// position if it is free, else the nearest free one within 10 rings of 16 px cells
     /// (`0x28a6f10`, approximated by square rings); `None` if there is none.
-    fn placement_site(&self, kind: TypeId, x: i32, y: i32) -> Option<(i32, i32)> {
+    pub(super) fn placement_site(&self, kind: TypeId, x: i32, y: i32) -> Option<(i32, i32)> {
         let world = self.world.as_ref()?;
         let site = |x: i32, y: i32| acr_sim::construction::site(world, kind, x, y).map(|p| p.pixels());
         if let Some(p) = site(x, y) {
@@ -2219,6 +2222,7 @@ impl InGame {
             };
             let t = self.interface.started.elapsed().as_secs_f64() * 10.0;
             let row = (5.0 + (t.sin() + 2.0) * 8.0) as u8;
+            self.field_preview(world, terrain, kind, (sx, sy), &mut out);
             // The packs come from the library: the type may not be on the map yet.
             let def = objects.definition(&world.catalog.get(kind).id);
             let look = def.and_then(|d| {
@@ -2243,6 +2247,32 @@ impl InGame {
             }
         }
         out
+    }
+
+    /// The area the fields of the building being placed would cover once grown (ACR's
+    /// addition; the original shows only the building): a translucent diamond per field
+    /// point, green where a field can grow and red where it cannot (buildings, water, trees,
+    /// slopes). Nothing for a building that grows no fields.
+    fn field_preview(
+        &self,
+        world: &acr_sim::World,
+        terrain: &acr_render::terrain::TerrainData,
+        kind: TypeId,
+        (x, y): (i32, i32),
+        out: &mut Vec<Draw>,
+    ) {
+        let alpha = if self.interface.touch { 0.25 } else { 0.3 };
+        for s in acr_sim::sprite::field_footprint(world, kind, x, y) {
+            let color = if s.free { FIELD_FREE } else { FIELD_BLOCKED };
+            let (cx, cy) = (s.x, (s.y >> 1) - terrain.height_at(s.x, s.y));
+            let half = s.step / 2;
+            // Rows of one pixel: the cell is `step` wide at each side of its centre and
+            // `step / 2` high on screen (the map's y is doubled).
+            for r in -half..half {
+                let w = s.step * (half - r.abs()) / half.max(1);
+                out.push(Draw::fill(color, Rect::new(cx - w, cy + r, 2 * w, 1)).unclipped().with_alpha(alpha));
+            }
+        }
     }
 
     /// The selected formations' marks (0x41c93f, called by the map drawer 0x4bd613 for the

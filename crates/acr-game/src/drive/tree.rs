@@ -313,6 +313,7 @@ pub fn describe(game: &Game, all: bool) -> Value {
                 "pos": [game.cursor.x.round(), game.cursor.y.round()],
                 "mode": g.cursor_mode(),
                 "outline": g.touch_outline(),
+                "fields": g.field_preview_counts().map(|(free, blocked)| json!({"free": free, "blocked": blocked})),
             }),
         );
     }
