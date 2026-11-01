@@ -53,7 +53,7 @@ pub enum ToUi {
         #[serde(default)]
         skin: SkinSetting,
     },
-    View(ViewPatch),
+    View(Box<ViewPatch>),
     /// The game refused the [`FromUi::Intent`] numbered `seq`; nothing changed. `reason` is
     /// for the log and the developer, not for the player.
     Rejected {
@@ -224,6 +224,11 @@ pub struct ScreenPatch {
     pub busy: bool,
     pub engine_drawn: bool,
     pub hint: Option<String>,
+    /// The id of the widget that goes back (the one its Escape key or its back or cancel button
+    /// triggers), if the screen shows one: the touch skin's header arrow sends [`FromUi::Back`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub back: Option<String>,
     pub widgets: WidgetsPatch,
 }
 
@@ -442,6 +447,10 @@ pub enum FromUi {
     /// [`ToUi::Rejected`] with the same `seq` if it cannot be applied. `id` is a widget's id
     /// (`<Screen>/<index>`), a HUD icon's (`hud/<slot>`, `army/<slot>`) or `minimap`.
     Intent { seq: u32, id: String, action: Action },
+    /// The touch skin's back (its header arrow): the top screen's own back or cancel widget
+    /// ([`ScreenPatch::back`]) is pressed, as its Escape key would. Answered
+    /// [`ToUi::Rejected`] with the same `seq` if the screen shows none.
+    Back { seq: u32 },
 }
 
 /// What an [`FromUi::Intent`] does to its widget; the effect is that of the original input
@@ -514,10 +523,10 @@ mod tests {
     #[test]
     fn patches_leave_unchanged_topics_out_and_keep_nulls() {
         let patch = ViewPatch { rev: 3, loading: Some(None), cursor: Some(None), ..Default::default() };
-        let json = serde_json::to_string(&ToUi::View(patch.clone())).unwrap();
+        let json = serde_json::to_string(&ToUi::View(Box::new(patch.clone()))).unwrap();
         assert_eq!(json, r#"{"t":"view","rev":3,"loading":null,"cursor":null}"#);
-        assert_eq!(serde_json::from_str::<ToUi>(&json).unwrap(), ToUi::View(patch));
-        let json = serde_json::to_string(&ToUi::View(ViewPatch { rev: 4, ..Default::default() })).unwrap();
+        assert_eq!(serde_json::from_str::<ToUi>(&json).unwrap(), ToUi::View(Box::new(patch)));
+        let json = serde_json::to_string(&ToUi::View(Box::new(ViewPatch { rev: 4, ..Default::default() }))).unwrap();
         assert_eq!(json, r#"{"t":"view","rev":4}"#);
     }
 
@@ -564,6 +573,12 @@ mod tests {
         let rejected = ToUi::Rejected { seq: 7, reason: "no widget".into() };
         assert_eq!(serde_json::to_string(&rejected).unwrap(), r#"{"t":"rejected","seq":7,"reason":"no widget"}"#);
         assert!(serde_json::from_str::<FromUi>(r#"{"t":"intent","seq":1,"id":"a","action":{"t":"nope"}}"#).is_err());
+    }
+
+    #[test]
+    fn back_is_a_message_of_its_own() {
+        let FromUi::Back { seq } = serde_json::from_str(r#"{"t":"back","seq":3}"#).unwrap() else { panic!() };
+        assert_eq!(seq, 3);
     }
 
     #[test]

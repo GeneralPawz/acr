@@ -8,4 +8,9 @@ export type ScreenPatch = { name: string,
 /**
  * Names of all open screens, bottom first.
  */
-stack: Array<string>, in_game: boolean, busy: boolean, engine_drawn: boolean, hint: string | null, widgets: WidgetsPatch, };
+stack: Array<string>, in_game: boolean, busy: boolean, engine_drawn: boolean, hint: string | null, 
+/**
+ * The id of the widget that goes back (the one its Escape key or its back or cancel button
+ * triggers), if the screen shows one: the touch skin's header arrow sends [`FromUi::Back`].
+ */
+back?: string, widgets: WidgetsPatch, };

@@ -190,6 +190,7 @@ pub struct ScreenView {
     pub in_game: bool,
     pub busy: bool,
     pub hint: Option<String>,
+    pub back: Option<String>,
     pub widgets: Vec<WidgetView>,
 }
 
@@ -337,6 +338,7 @@ pub fn screen(resolver: &mut Resolver, ui: &Ui) -> Result<Option<ScreenView>, Fa
         in_game,
         busy: top.busy(),
         hint: dialog.hint().map(|h| CodePage::Cp1252.decode(h)),
+        back: top.back_widget().map(|w| format!("{name}/{w}")),
         widgets: {
             let mut out = widgets(resolver, lib, fonts, name, dialog, in_game)?;
             // What the screen draws under its widgets (the choice window's paper box).

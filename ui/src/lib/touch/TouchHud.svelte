@@ -140,7 +140,7 @@
     style:--cols={columns}
   >
     <div class="upper">
-    <header class="top">
+    <header class="top" data-acr-hit>
       <ul class="resources">
         {#each touch.resources as r (r.key)}
           <li data-acr-resource={r.key}><Sprite parts={r.parts} size={r.size} /></li>
@@ -157,7 +157,7 @@
     </header>
 
     {#if touch.minimap && mapImage}
-      <div class="minimap" data-acr-touch="minimap">
+      <div class="minimap" data-acr-touch="minimap" data-acr-hit>
         <button class="fold" aria-label="minimap" aria-expanded={mapOpen} onclick={() => (mapOpen = !mapOpen)}>
           <span class="fold-glyph" class:plus={!mapOpen} aria-hidden="true"></span>
         </button>
@@ -199,7 +199,7 @@
       </div>
     {/if}
 
-    <aside class="commands" data-acr-touch="commands">
+    <aside class="commands" data-acr-touch="commands" data-acr-hit>
       {#if selection.length > 0 || (touch.army.length > 0)}
         <div class="summary" data-acr-touch="summary">
           {#each selection as icon (icon.id)}

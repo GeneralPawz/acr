@@ -12,3 +12,10 @@ export function intent(bridge: Bridge, id: string, action: Action): void {
 }
 
 export const leftClick = { t: 'click', button: 'left', mods: { shift: false, ctrl: false, alt: false, meta: false } } as const satisfies Action;
+
+/** Asks the game to go back (`FromUi::Back`): it presses the screen's own back or cancel widget, as its Escape
+ * key does, and answers `rejected` if the screen shows none. */
+export function goBack(bridge: Bridge): void {
+  bridge.unlockAudio?.();
+  bridge.send({ t: 'back', seq: ++seq });
+}

@@ -477,7 +477,7 @@ impl WebUi {
 
         if changed {
             self.rev += 1;
-            (self.send)(&serde_json::to_string(&ToUi::View(patch)).expect("view serializes"));
+            (self.send)(&serde_json::to_string(&ToUi::View(Box::new(patch))).expect("view serializes"));
         }
     }
 
@@ -582,8 +582,8 @@ impl WebUi {
     /// The screen topic if it changed since the last patch.
     fn screen_patch(&mut self, described: Option<view::ScreenView>, ui: &Ui) -> Option<ScreenPatch> {
         let engine_drawn = described.is_none();
-        let (name, stack, in_game, busy, hint, widgets) = match described {
-            Some(s) => (s.name, s.stack, s.in_game, s.busy, s.hint, s.widgets),
+        let (name, stack, in_game, busy, hint, back, widgets) = match described {
+            Some(s) => (s.name, s.stack, s.in_game, s.busy, s.hint, s.back, s.widgets),
             None => {
                 let top = ui.shown_screen();
                 (
@@ -592,11 +592,12 @@ impl WebUi {
                     top.is_some_and(|s| s.in_game()),
                     top.is_some_and(|s| s.busy()),
                     None,
+                    None,
                     Vec::new(),
                 )
             }
         };
-        let meta = format!("{name}|{stack:?}|{in_game}|{busy}|{hint:?}");
+        let meta = format!("{name}|{stack:?}|{in_game}|{busy}|{hint:?}|{back:?}");
         let order: Vec<String> = widgets.iter().map(|w| w.id.clone()).collect();
         let upsert: Vec<WidgetView> =
             widgets.iter().filter(|w| self.sent.widgets.get(&w.id) != Some(*w)).cloned().collect();
@@ -619,7 +620,7 @@ impl WebUi {
         self.sent.engine_drawn = Some(engine_drawn);
         self.sent.order = order;
         self.sent.widgets = widgets.into_iter().map(|w| (w.id.clone(), w)).collect();
-        Some(ScreenPatch { name, stack, in_game, busy, engine_drawn, hint, widgets: widgets_patch })
+        Some(ScreenPatch { name, stack, in_game, busy, engine_drawn, hint, back, widgets: widgets_patch })
     }
 }
 
@@ -753,6 +754,7 @@ mod tests {
                 busy: false,
                 engine_drawn: false,
                 hint: None,
+                back: None,
                 widgets: WidgetsPatch::Full {
                     widgets: vec![widget(vec![sprite("bmp/a"), text.clone(), sprite("bmp/a")])],
                 },
@@ -772,6 +774,7 @@ mod tests {
             in_game,
             busy: false,
             hint: None,
+            back: None,
             widgets: vec![],
         };
         let claimed = || vec!["LoadGame".to_owned(), "GameMenu".to_owned(), "Elsewhere".to_owned()];

@@ -1255,6 +1255,14 @@ impl Dialog {
         Ok(out)
     }
 
+    /// The widget that goes back: the first enabled, shown one reporting one of `params`.
+    pub fn back_widget(&self, params: &[i32]) -> Option<WidgetId> {
+        (0..self.widgets.len()).find(|&i| {
+            let w = &self.widgets[i];
+            w.enabled && w.param.is_some_and(|p| params.contains(&p)) && self.is_shown(i)
+        })
+    }
+
     /// A click on widget `id` (the press at its centre): a button, picture or text reports
     /// its `param`; a combo box opens or closes; a radio button or check changes state; an
     /// input box or text viewer takes the focus. An open drop-down elsewhere closes first.
@@ -1620,6 +1628,8 @@ pub enum Reject {
     Range,
     /// Text with a control character or too long for the box.
     Text,
+    /// The screen has no widget that goes back.
+    NoBack,
 }
 
 impl std::fmt::Display for Reject {
@@ -1632,6 +1642,7 @@ impl std::fmt::Display for Reject {
             Self::Kind(want) => write!(f, "the widget is not {want}"),
             Self::Range => f.write_str("the row, option or value is out of range"),
             Self::Text => f.write_str("the text has a control character or does not fit"),
+            Self::NoBack => f.write_str("the screen has no back or cancel widget"),
         }
     }
 }
@@ -2024,6 +2035,26 @@ mod tests {
         assert_eq!(set.set_text(4, b"a\tb"), Err(Reject::Text));
         assert!(matches!(set.set_text(3, b"a"), Err(Reject::Kind(_))));
         assert_eq!(before, state(&set));
+    }
+
+    #[test]
+    fn back_is_the_shown_enabled_widget_with_a_back_param() {
+        let mut d = Dialog::default();
+        d.set_clip(Some(Rect::new(0, 0, 15, 15)));
+        let outside = d.add_area(Rect::new(40, 40, 10, 10));
+        d.choose(outside, CANCEL);
+        let off = d.add_area(Rect::new(2, 2, 5, 5));
+        d.choose(off, CANCEL);
+        d.widgets[off].enabled = false;
+        let other = d.add_area(Rect::new(8, 8, 5, 5));
+        d.choose(other, OK);
+        assert_eq!(d.back_widget(&[CANCEL]), None);
+        let back = d.add_area(Rect::new(4, 4, 5, 5));
+        d.choose(back, 0xff);
+        assert_eq!(d.back_widget(&[CANCEL]), None);
+        assert_eq!(d.back_widget(&[CANCEL, 0xff]), Some(back));
+        // Pressing it is the click: its param is chosen with the click sound.
+        assert_eq!(d.activate(back).unwrap().chosen, Some(0xff));
     }
 
     #[test]

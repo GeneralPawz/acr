@@ -122,6 +122,15 @@ code the press ends in (`Dialog::press_plain`, `choose_param`, `reveal`, the HUD
 | `hud/<slot>`, `army/<slot>` | `click { button, mods }` | `InGame::hud_event`: the command of the icon, left or right (`Hud::icon_click`); `mods` are held for this click (Ctrl: an endless order) |
 | `minimap` | `minimap_at { uv, button }` | `InGame::hud_event`: left centres the camera, right orders the selection to the point (`Hud::minimap_pixel`) |
 
+**Back** (`FromUi::Back { seq }`, the touch skin's header arrow): presses the top screen's own back or cancel widget as
+a click (`Ui::back`), the widget whose `param` its `Screen::back_params` names (the default is `CANCEL`, what the
+original's Escape key chooses; the options screens name `ABORT`, the game menu `CONTINUE`, the main menu its `BACK`
+entries), and is refused (`NoBack`, `Rejected`) when the screen shows none (the first page of the main menu, a
+message with only OK). `ScreenPatch.back` is that widget's id, so the page shows the arrow only where the game would
+go back, and leaves the widget itself out of the sheet. In the touch skin the Escape key does the same (Android's
+back gesture arrives as Escape), also where the original's lists swallow the key; a screen with no back widget takes
+the key as before. In the game the key still opens and closes the game menu.
+
 Refused: a screen that is not the top one, not built yet or busy (the main menu sliding), a widget that does
 not exist, is disabled, hidden or outside its clip window, the wrong kind for the action, a row, entry or
 value out of range, text that does not fit or has a control character, an icon that does nothing, a
@@ -425,7 +434,13 @@ the touch skin only renders it and sends intents.
   orientation from width and height, `(pointer: coarse)` for the finger. **Setting** `ui_skin=auto|classic|touch` in
   `settings.txt` (`Hello.skin` carries it, default `auto`, no options row): `auto` is the classic skin on an expanded
   viewport with a fine pointer, so a desktop keeps what it has, and the touch skin everywhere else.
-- **Menus** are full-screen sheets (`TouchMenu`): the dialog's widgets in reading order as entries of at least 44 CSS
+- **Menus** are full-screen sheets (`TouchMenu`), one column of at most 560 CSS pixels in portrait and landscape, with a
+  sticky header (the screen's title, the widget Rust keys `title`, and a 48 pixel back arrow when `ScreenPatch.back` is
+  set) over the scrolling list, which uses the native touch scrolling (`overflow-y: auto`, `overscroll-behavior:
+  contain`, `touch-action: pan-y`; sliders take only horizontal drags). A tap is a `click`, which a scroll drag never
+  becomes. The sheet's root carries `data-acr-hit` (the Android host's interactive rectangles), so the whole sheet
+  gets the touches. A drop-down opens as a full-width list over the sheet that scrolls, closed by a tap beside it. The
+  dialog's widgets in reading order as entries of at least 44 CSS
   pixels (the game font's height, at most 30 CSS pixels, plus the frame and padding), left out when `WidgetView.shown` is false (hidden, or outside its
   clip window: the main menu keeps its submenus' entries off to the side), and a label is scaled down to the entry's inner width (whole and half steps while
   it stays as large as the game's pixels, smooth below that) so that it never overflows. The content is `WidgetView.label` (a button's or check's text) and `WidgetView.value` (a list's rows, a combo box's options,
@@ -434,7 +449,10 @@ the touch skin only renders it and sends intents.
   `set_text`). The frames are CSS `border-image` 9-slice of `nine/box.png`, cut at runtime from `BORDER.GP` of the player's
   files (`assets::nine_box`, 3 x 3 cells of 64 pixels); texts are glyph images of the game's fonts, scaled; the one native
   piece is the text field of an input box (the soft keyboard), in the system font.
-- **Form layout** (`sheetBlocks` in `sheet.ts`, from the classic layout's widget rects, no per-label cases): a static text
+- **Form layout** (`sheetBlocks` in `sheet.ts`, from the classic layout's widget rects, no per-label cases): the blocks
+  are read per column region of the classic layout (the left column whole, then the right one), each top to bottom; a
+  static text with another static text close below it and indented (the captions of its group) is a section heading,
+  drawn as a header above its group (the options' "Grafikoptionen"), and no control's caption; a static text
   immediately left of a control (same row) or directly above it is that control's caption, drawn above it; several
   rows of the same number of controls aligned under a row of as many static texts are a table, one card per row with the
   column headers as captions (the random map's players); a static text lying on a picture-only control is its mark (the

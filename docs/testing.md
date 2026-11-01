@@ -562,9 +562,12 @@ WebGPU on SwiftShader: `--enable-unsafe-webgpu --enable-unsafe-swiftshader
 **The touch skin** (`tools/browser/touch_skin.py`, #332): Playwright with `hasTouch`, `isMobile` and device pixel ratio 3
 at 390x844, 844x390 and 820x1180 against `cargo xtask serve --release --game-dir ...` (with the bundle). With fingers only
 (`locator.tap()`, `touchscreen.tap()`, a long press by DevTools touch events) it taps the main menu down to the random map
-setup, starts the game, selects a unit with a tap and orders it with a long press, and per step checks the skin is `touch`,
-no element lies outside the viewport (menu sheets scroll vertically, so only their width counts), every button is at least
-44 CSS pixels, and `state` shows the selection and the order. Screenshots `touch332-<viewport>-<step>.png` go to `--shots`.
+setup, scrolls the options sheet and the setup with touch swipes (DevTools scroll gestures) until every control is reachable,
+changes the options' last control and a drop-down (a full-width list), goes back with the header arrow (two levels from the
+setup) and with Escape (Android's back gesture), starts the game, selects a unit with a tap and orders it with a long press,
+and per step checks the skin is `touch`, no element lies outside the viewport (menu sheets scroll vertically, so only their
+width counts), every button is at least 44 CSS pixels, a sheet is one centred column of at most 560 CSS pixels, there is no
+console error, and `state` shows the selection and the order. Screenshots `touch332-<viewport>-<step>.png` go to `--shots`.
 Run it with `~/browser/venv/bin/python tools/browser/touch_skin.py --url 'http://127.0.0.1:8090/?game=/game/'`.
 
 ## Scenario files

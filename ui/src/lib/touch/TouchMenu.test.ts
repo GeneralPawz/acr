@@ -59,4 +59,53 @@ describe('TouchMenu', () => {
     // The sheet lists them top to bottom.
     expect([...container.querySelectorAll('[data-acr-id]')].map((e) => (e as HTMLElement).dataset.acrId)).toEqual(['Options/1', 'Options/2', 'Options/0']);
   });
+
+  it('has a header with the title and a back arrow that asks the game to go back', async () => {
+    const sent: FromUi[] = [];
+    const b = bridge(sent);
+    const model = new UiState(b);
+    const w = (id: string, key: string, kind: 'text' | 'button' | 'combo', label: string | undefined, y: number, value?: object) =>
+      ({ id, key, kind, rect: [0, y, 9, 9], enabled: true, shown: true, hover: false, label, value, parts: [] }) as never;
+    model.receive({
+      t: 'view',
+      rev: 1,
+      mode: 'menus',
+      screen: {
+        name: 'Options',
+        stack: ['Options'],
+        in_game: false,
+        busy: false,
+        engine_drawn: false,
+        hint: null,
+        back: 'Options/2',
+        widgets: {
+          t: 'full',
+          widgets: [
+            w('Options/0', 'title', 'text', 'OPTIONEN ', 0),
+            w('Options/1', 'ok', 'button', 'OK', 300),
+            w('Options/2', 'cancel', 'button', 'Abbruch', 320),
+            w('Options/3', 'res', 'combo', undefined, 100, { t: 'combo', options: ['a', 'b', 'c'], selected: 0, open: false }),
+          ],
+        },
+      },
+    });
+    const { container } = render(TouchMenu, { context: new Map([[KEY, { bridge: b, fonts: new FontCache(b), model }]]) });
+    // The title and the cancel entry are the header's: neither is a sheet entry.
+    expect([...container.querySelectorAll('.items [data-acr-id]')].map((e) => (e as HTMLElement).dataset.acrId)).toEqual(['Options/3', 'Options/1']);
+    expect(container.querySelector('.title')).not.toBeNull();
+    expect(container.querySelector('[data-acr-hit]')).not.toBeNull();
+    await fireEvent.click(container.querySelector('[data-acr-back]')!);
+    // The drop-down's choices are a list over the sheet, closed by a tap beside it.
+    await fireEvent.click(container.querySelector('[data-acr-id="Options/3"]')!);
+    expect(container.querySelectorAll('.picker [role=option]')).toHaveLength(3);
+    expect(container.querySelector('.picker')!.hasAttribute('data-acr-hit')).toBe(true);
+    expect(container.querySelector('main.sheet')!.hasAttribute('data-acr-hit')).toBe(true);
+    await fireEvent.click(container.querySelector('.picker')!);
+    expect(container.querySelector('.picker')).toBeNull();
+    await fireEvent.click(container.querySelector('[data-acr-id="Options/3"]')!);
+    await fireEvent.click(container.querySelectorAll('.picker [role=option]')[2]);
+    expect(container.querySelector('.picker')).toBeNull();
+    expect(sent.map((m) => (m.t === 'intent' ? [m.id, m.action.t] : m.t))).toEqual(['back', ['Options/3', 'select_option']]);
+    expect(sent[1]).toMatchObject({ action: { t: 'select_option', option: 2 } });
+  });
 });

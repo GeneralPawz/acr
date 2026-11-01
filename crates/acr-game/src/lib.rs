@@ -1484,6 +1484,19 @@ impl Game {
         Ok(())
     }
 
+    /// The touch skin's back (`FromUi::Back`, and Escape while it is on): the top screen's own
+    /// back or cancel widget is pressed. The reason if it shows none.
+    fn ui_back(&mut self, event_loop: &ActiveEventLoop) -> Result<(), String> {
+        if !(matches!(self.mode, Mode::Menus) || self.ui.dialog_open()) {
+            return Err("no screen is shown".into());
+        }
+        let action = self.ui.back().map_err(|e| e.to_string())?;
+        self.apply(action, event_loop);
+        self.load_requested();
+        self.play_sounds();
+        Ok(())
+    }
+
     /// The Escape key, pressed and released (the touch top bar's plaque, Android's back key).
     fn press_escape(&mut self, event_loop: &ActiveEventLoop) {
         for state in [ElementState::Pressed, ElementState::Released] {
@@ -1575,6 +1588,14 @@ impl Game {
         }
         #[cfg(target_arch = "wasm32")]
         self.audio.start();
+        // In the touch skin Escape goes back as the header arrow does, also where the original's
+        // lists swallow the key; a screen with nothing to go back to takes the key as before.
+        if logical_key == Key::Named(NamedKey::Escape)
+            && self.webui.as_ref().is_some_and(|web| web.touch())
+            && self.ui_back(event_loop).is_ok()
+        {
+            return;
+        }
         let key = match logical_key {
             Key::Named(NamedKey::F11) => return self.toggle_fullscreen(),
             Key::Named(NamedKey::Enter) if self.alt_down() => return self.toggle_fullscreen(),

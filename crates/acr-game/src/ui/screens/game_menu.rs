@@ -105,6 +105,10 @@ impl Screen for GameMenu {
         }
     }
 
+    fn back_params(&self) -> &'static [i32] {
+        &[CONTINUE]
+    }
+
     fn draw(&self, ctx: &Ctx, out: &mut Vec<Draw>) {
         self.menu.draw(ctx, out);
     }

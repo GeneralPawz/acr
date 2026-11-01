@@ -6,13 +6,18 @@ touch context (`hasTouch`, `isMobile`, device pixel ratio 3) at 390x844 portrait
 and 820x1180, and plays with fingers only (`locator.tap()`, `touchscreen.tap()` and touch events through
 the DevTools protocol):
 
-1. the main menu, down to the random map setup, by tapping the sheet's entries;
+1. the main menu, down to the options sheet and the random map setup, by tapping the sheet's entries;
+   the sheets scroll with touch swipes (DevTools scroll gestures): every control of the options sheet and
+   of the random map is brought into view by scrolling, the last control of the options is changed, a
+   drop-down opens as a list over the sheet, and the sheets' header arrow (and the Escape key, as Android's
+   back gesture sends it) goes back, two levels from the random map to the main menu;
 2. the start of the game, by tapping its start button;
 3. a unit: one tap on it selects it, a long press on the ground orders it to walk there;
 
 and checks on the way that the page chose the touch skin, that no element lies outside the viewport (the
 menu sheets scroll vertically by design: their content is exempt from the vertical test), that every
-button is at least 44 CSS pixels each way, and that the unit's order reached the game (`state`).
+button is at least 44 CSS pixels each way, that the sheet is one column of at most 560 CSS pixels, and
+that the unit's order reached the game (`state`).
 Screenshots go to `--shots` as `<prefix>-<viewport>-<step>.png` (prefix `touch332`); `report.json` to `--out`.
 
 Needs Python Playwright (`pip install playwright && playwright install chromium`); in headless Chromium
@@ -84,6 +89,31 @@ AUDIT = """() => {
 }"""
 
 
+# Where a control of a sheet stands against the sheet's visible area (below its header, above the viewport's
+# bottom edge) and whether a finger on its middle would land on it; `dy` is how far to scroll to centre it.
+REACH = """(el) => {
+  const bar = document.querySelector('.bar');
+  const top = bar ? bar.getBoundingClientRect().bottom : 0;
+  const r = el.getBoundingClientRect();
+  const hit = document.elementFromPoint(r.left + r.width / 2, Math.min(Math.max(r.top + r.height / 2, 0), window.innerHeight - 1));
+  const ok = r.top >= top - 0.5 && r.bottom <= window.innerHeight + 0.5 && hit !== null && el.contains(hit);
+  return { ok, dy: r.top + r.height / 2 - (top + window.innerHeight) / 2 };
+}"""
+
+# The sheet's layout: its scroll area, whether it overflows, and the column of its entries.
+SHEET = """() => {
+  const s = document.querySelector('.scroll'), items = document.querySelector('.items');
+  const r = items.getBoundingClientRect();
+  return { scrollTop: s.scrollTop, overflow: s.scrollHeight - s.clientHeight, width: r.width, left: r.left, right: window.innerWidth - r.right,
+           columns: new Set([...items.children].map((c) => Math.round(c.getBoundingClientRect().left))).size,
+           hit: document.querySelector('[data-acr-hit]') !== null };
+}"""
+
+CONTROLS = ".items [data-acr-id]"
+# The controls that change a setting (not the sheet's OK and not a disabled field).
+CHANGEABLE = '.items [data-acr-id]:not(:disabled):not([data-acr-key="ok"]):not([data-acr-key="start"])'
+
+
 class Run:
     def __init__(self, browser, url, name, size, shots, timeout_s, prefix="touch332"):
         self.name, self.shots, self.timeout_s, self.prefix = name, shots, timeout_s, prefix
@@ -141,6 +171,55 @@ class Run:
         entry.tap()
         time.sleep(0.6)
 
+    def swipe(self, dy):
+        """A finger drag that scrolls the page content by `dy` CSS pixels (positive: further down)."""
+        w, h = self.page.evaluate("() => [window.innerWidth, window.innerHeight]")
+        x, y0 = w * 0.9, h * 0.6
+        steps = 12
+        send = lambda kind, y: self.cdp.send(
+            "Input.dispatchTouchEvent", {"type": kind, "touchPoints": [{"x": x, "y": y, "id": 7}] if kind != "touchEnd" else []}
+        )
+        send("touchStart", y0)
+        for i in range(1, steps + 1):
+            send("touchMove", y0 - dy * i / steps)
+            time.sleep(0.012)
+        send("touchEnd", 0)
+        time.sleep(0.15)
+
+    def reach(self, locator):
+        """Scrolls the sheet with touch swipes until the control is in view and a finger would land on it."""
+        el = locator.element_handle()
+        for _ in range(40):
+            got = self.page.evaluate(REACH, el)
+            if got["ok"]:
+                return True
+            h = self.page.evaluate("() => window.innerHeight")
+            self.swipe(max(-h * 0.4, min(h * 0.4, got["dy"])) or 1)
+        return self.page.evaluate(REACH, el)["ok"]
+
+    def reach_all(self, step):
+        """Every control of the sheet is reachable by scrolling; the ids that are not go to the report."""
+        lost = []
+        for i in range(self.page.locator(CONTROLS).count()):
+            el = self.page.locator(CONTROLS).nth(i)
+            if not self.reach(el):
+                lost.append(el.get_attribute("data-acr-id"))
+        self.report.setdefault("unreachable", []).extend("%s:%s" % (step, x) for x in lost)
+        sheet = self.page.evaluate(SHEET)
+        sheet["step"] = step
+        self.report.setdefault("sheets", []).append(sheet)
+        return sheet
+
+    def back_arrow(self, screen):
+        """Taps the header's back arrow and waits for `screen` (None: for the main menu's first page)."""
+        arrow = self.page.locator("[data-acr-back]")
+        arrow.wait_for(state="visible", timeout=self.timeout_s * 1000)
+        box = arrow.bounding_box()
+        self.report.setdefault("back_arrow", []).append([box["width"], box["height"]])
+        arrow.tap()
+        time.sleep(0.8)
+        self.wait("() => document.querySelector('[data-acr-screen=%s]') && document.querySelector('[data-acr-touch=sheet]')" % screen, "the " + screen + " sheet")
+
     def wait(self, script, what):
         try:
             self.page.wait_for_function(script, timeout=self.timeout_s * 1000)
@@ -163,20 +242,59 @@ def play(browser, url, name, size, shots, timeout_s, prefix):
     time.sleep(1.0)
     run.shot("1-main-menu")
     first = run.audit("main menu")
-    # The options sheet and back (its cancel entry), for the form-like layout.
+    # The options sheet: scrolled with swipes down to its last control, which is changed; a drop-down opens
+    # as a list over the sheet and a choice closes it.
     run.tap_label("Optionen")
     run.wait("() => document.querySelector('[data-acr-screen=Options]')", "the options sheet")
     time.sleep(1.0)
     run.shot("1b-options")
     run.audit("options")
-    page.locator('[data-acr-key="cancel"]').first.tap()
-    run.wait("() => document.querySelector('[data-acr-screen=MainMenu]')", "the main menu again")
+    options = run.reach_all("options")
+    last = page.locator(CHANGEABLE).last
+    run.reach(last)
+    run.shot("1c-options-bottom")
+    tree = lambda: json.dumps(run.drive({"cmd": "ui"})["ui"]["widgets"], sort_keys=True)
+    before = tree()
+    last.tap()
+    time.sleep(0.8)
+    run.report["last_control_changed"] = tree() != before
+    combos = page.locator(".items button.combo")
+    combos.last.scroll_into_view_if_needed()
+    run.reach(combos.last)
+    combos.last.tap()
+    page.wait_for_selector(".picker [role=option]", timeout=run.timeout_s * 1000)
+    run.shot("1d-picker")
+    picker = page.evaluate("() => { const o = document.querySelector('.picker .options').getBoundingClientRect(); return [o.left, o.right, window.innerWidth]; }")
+    run.report["picker_full_width"] = picker[0] <= 0.5 and picker[1] >= picker[2] - 0.5
+    page.locator(".picker [role=option]").last.tap()
+    page.wait_for_selector(".picker", state="detached", timeout=run.timeout_s * 1000)
+    # Escape is what Android's back gesture sends: it goes back like the arrow.
+    page.keyboard.press("Escape")
+    run.wait("() => document.querySelector('[data-acr-screen=MainMenu]')", "the main menu after Escape")
+    run.tap_label("Optionen")
+    run.wait("() => document.querySelector('[data-acr-screen=Options]')", "the options sheet again")
+    run.back_arrow("MainMenu")
     for label in ROUTE:
         run.tap_label(label)
         run.wait("() => document.querySelector('[data-acr-touch=sheet]')", "the sheet after " + label)
+    run.wait("() => document.querySelector('[data-acr-screen=RandomMap]')", "the random map")
     time.sleep(1.0)
     run.shot("2-random-map")
     run.audit("random map setup")
+    random_map = run.reach_all("random map")
+    run.reach(page.locator(CONTROLS).last)
+    run.shot("2b-random-map-bottom")
+    # Two levels back with the header arrow: the setup, then the single player submenu.
+    run.back_arrow("MainMenu")
+    run.shot("2c-back-single-menu")
+    run.back_arrow("MainMenu")
+    run.wait("() => !document.querySelector('[data-acr-back]')", "the first page of the main menu")
+    time.sleep(0.5)
+    run.shot("2d-back-main-menu")
+    for label in ROUTE:
+        run.tap_label(label)
+        run.wait("() => document.querySelector('[data-acr-touch=sheet]')", "the sheet after " + label)
+    run.wait("() => document.querySelector('[data-acr-screen=RandomMap]')", "the random map again")
     # The setup's start button: `start` (its key), else the OK that sends it on.
     start = page.locator('[data-acr-key="start"], [data-acr-key="ok"]').first
     start.scroll_into_view_if_needed()
@@ -232,9 +350,20 @@ def play(browser, url, name, size, shots, timeout_s, prefix):
         run.shot("5-ordered")
         run.audit("ordered")
     run.report["errors"] = run.errors[:20]
+    sheets = run.report["sheets"]
     run.report["passed"] = bool(
         ok
         and first["skin"] == "touch"
+        and not run.errors
+        and not run.report["unreachable"]
+        and run.report["last_control_changed"]
+        and run.report["picker_full_width"]
+        # One column of at most 560 CSS pixels, centred, whose whole area is the host's.
+        and all(s["columns"] == 1 and s["width"] <= 560.5 and abs(s["left"] - s["right"]) < 1 and s["hit"] for s in sheets)
+        # The arrow is a 44 pixel target; a sheet that overflows was scrolled.
+        and all(w >= 44 and h >= 44 for w, h in run.report["back_arrow"])
+        and (options["overflow"] <= 0 or options["scrollTop"] > 0)
+        and (random_map["overflow"] <= 0 or random_map["scrollTop"] > 0)
         and all(not s["outside"] for s in run.report["steps"])
         and all(not s["small"] for s in run.report["steps"])
     )
@@ -263,6 +392,9 @@ def main():
             reports[name] = play(browser, a.url, name, VIEWPORTS[name], shots, a.timeout_s, a.prefix)
             r = reports[name]
             print("%-9s %s  selected=%s ordered=%s errors=%d" % (name, "PASS" if r["passed"] else "FAIL", r.get("selected"), r.get("ordered"), len(r["errors"])))
+            print("   unreachable=%s last_changed=%s picker_full_width=%s" % (r["unreachable"], r["last_control_changed"], r["picker_full_width"]))
+            for s in r["sheets"]:
+                print("   %s: overflow=%s width=%.0f columns=%s" % (s["step"], round(s["overflow"]), s["width"], s["columns"]))
             for s in r["steps"]:
                 if s["outside"] or s["small"]:
                     print("   %s: outside=%s small=%s" % (s["step"], json.dumps(s["outside"][:4]), json.dumps(s["small"][:4])))

@@ -75,8 +75,9 @@ export interface Cell {
   mark?: WidgetView;
 }
 
-/** A sheet block: one cell, or a card, which is a row of a table with its column headers as captions. */
-export type Block = { t: 'cell'; cell: Cell } | { t: 'card'; cells: Cell[] };
+/** A sheet block: one cell, a card (a row of a table with its column headers as captions), or the heading of
+ * the group of controls that follows it. */
+export type Block = { t: 'cell'; cell: Cell } | { t: 'card'; cells: Cell[] } | { t: 'section'; heading: WidgetView };
 
 type Rect = WidgetView['rect'];
 
@@ -146,11 +147,32 @@ function headersOf(first: readonly WidgetView[], statics: readonly WidgetView[])
   return above.every((s) => sameRow(s.rect, above[0].rect)) ? above : null;
 }
 
-/** The sheet's blocks in reading order: the widgets of `sheetItems` grouped by the classic layout's geometry.
+/** The widgets of a block (a heading is only itself) as the area they cover. */
+function extentOf(parts: readonly WidgetView[]): Rect {
+  const x0 = Math.min(...parts.map((w) => left(w.rect)));
+  const y0 = Math.min(...parts.map((w) => top(w.rect)));
+  return [x0, y0, Math.max(...parts.map((w) => right(w.rect))) - x0, Math.max(...parts.map((w) => bottom(w.rect))) - y0];
+}
+
+/** Whether the static text `t` heads a group: a static text sits below it, close and indented (the group's
+ * captions lie inside the heading's column, the heading at its edge). */
+function heads(t: WidgetView, below: readonly WidgetView[]): boolean {
+  const h = t.rect[3];
+  return below.some((s) => {
+    const gap = top(s.rect) - bottom(t.rect);
+    const indent = left(s.rect) - left(t.rect);
+    return s.id !== t.id && gap >= -h / 2 && gap <= 1.5 * h && indent >= h / 4 && indent <= 3 * h;
+  });
+}
+
+/** The sheet's blocks: the widgets of `sheetItems` grouped by the classic layout's geometry, one column of
+ * them per column region of the classic layout (left to right), each in reading order (top to bottom).
  *
  * - A static text lying on a control that is only a picture is that control's mark.
  * - Several rows of controls with the same number of controls, aligned under a row of as many static texts, are
  *   a table: one card per row, each control captioned by the header of its column.
+ * - A static text with another static text close below it and indented (the group's captions) is the heading of
+ *   the group of controls that follows it in its column.
  * - A static text immediately left of a control (in its row) or directly above it is its caption.
  * - Everything else is a cell of its own. */
 export function sheetBlocks(widgets: readonly WidgetView[]): Block[] {
@@ -209,6 +231,15 @@ export function sheetBlocks(widgets: readonly WidgetView[]): Block[] {
     }
   }
 
+  // Headings.
+  const sections = new Set<string>();
+  for (const t of unclaimed()) {
+    if (heads(t, unclaimed())) {
+      sections.add(t.id);
+      claim(t);
+    }
+  }
+
   // Captions: left of the control in its row, else directly above it.
   for (const c of controls) {
     if (labelled(c) || inCard.has(c.id)) continue;
@@ -226,15 +257,32 @@ export function sheetBlocks(widgets: readonly WidgetView[]): Block[] {
   }
 
   const placed = [
-    ...cards.map((c) => ({ block: { t: 'card', cells: c.cells } as Block, at: c.at, seq: c.seq })),
+    ...cards.map((c) => ({ block: { t: 'card', cells: c.cells } as Block, at: c.at, area: c.at, seq: c.seq })),
     ...items
-      .filter((w) => !inCard.has(w.id) && (!isStatic(w) || free.has(w.id)))
+      .filter((w) => !inCard.has(w.id) && (!isStatic(w) || free.has(w.id) || sections.has(w.id)))
       .map((w) => {
+        if (sections.has(w.id)) return { block: { t: 'section', heading: w } as Block, at: w.rect, area: w.rect, seq: 0 };
         const c = cell(w);
-        const at = [c.caption, w].filter((x): x is WidgetView => !!x).sort((p, q) => top(p.rect) - top(q.rect) || left(p.rect) - left(q.rect))[0].rect;
-        return { block: { t: 'cell', cell: c } as Block, at, seq: 0 };
+        const parts = [c.caption, w, c.mark].filter((x): x is WidgetView => !!x);
+        const at = parts.filter((x) => x !== c.mark).sort((p, q) => top(p.rect) - top(q.rect) || left(p.rect) - left(q.rect))[0].rect;
+        return { block: { t: 'cell', cell: c } as Block, at, area: extentOf(parts), seq: 0 };
       }),
   ];
-  placed.sort((a, b) => top(a.at) - top(b.at) || left(a.at) - left(b.at) || a.seq - b.seq);
-  return placed.map((p) => p.block);
+  // The column regions: blocks whose areas share horizontal extent, from the left (the classic layout's
+  // two-column screens read the whole left column, then the right one).
+  const columns: { x0: number; x1: number; blocks: typeof placed }[] = [];
+  for (const p of [...placed].sort((a, b) => left(a.area) - left(b.area))) {
+    const column = columns.find((c) => overlap(c.x0, c.x1, left(p.area), right(p.area)) > 0);
+    if (column) {
+      column.blocks.push(p);
+      column.x0 = Math.min(column.x0, left(p.area));
+      column.x1 = Math.max(column.x1, right(p.area));
+    } else {
+      columns.push({ x0: left(p.area), x1: right(p.area), blocks: [p] });
+    }
+  }
+  columns.sort((a, b) => a.x0 - b.x0);
+  return columns.flatMap((c) =>
+    c.blocks.sort((a, b) => top(a.at) - top(b.at) || left(a.at) - left(b.at) || a.seq - b.seq).map((p) => p.block),
+  );
 }

@@ -71,6 +71,14 @@ pub fn apply(game: &mut Game, event_loop: &ActiveEventLoop, message: FromUi) {
                         }
                     }
                 }
+                FromUi::Back { seq } => {
+                    if let Err(reason) = game.ui_back(event_loop) {
+                        log::debug!("webui: back {seq} refused: {reason}");
+                        if let Some(web) = game.webui.as_mut() {
+                            web.reject(seq, reason);
+                        }
+                    }
+                }
                 FromUi::Blur => {
                     // Keys and buttons released elsewhere never arrive.
                     if let crate::Mode::InGame(g) = &mut game.mode {
