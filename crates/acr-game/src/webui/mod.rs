@@ -70,8 +70,16 @@ struct Waiting {
     reply: AssetReply,
 }
 
+/// Screens over the running game that the UI may draw, on hosts whose UI layer is transparent
+/// over the game's canvas (the page of the browser build; a native webview that only draws opaque
+/// full-screen menus could not, #333, #319). Every other `Screen::in_game` screen stays with the
+/// engine even when the UI's registry names it.
+pub const OVER_GAME: &[&str] = &["GameMenu", "GameOptions", "SaveGameDialog", "LoadGame"];
+
 pub struct WebUi {
     send: Sender,
+    /// The UI layer lies transparently over the game's canvas, so it can draw [`OVER_GAME`].
+    transparent: bool,
     /// Screens the UI draws itself.
     claimed: Vec<String>,
     /// Every screen the view model can describe is the UI's (the test driver's classic skin).
@@ -96,6 +104,7 @@ impl WebUi {
         send(&serde_json::to_string(&hello).expect("hello serializes"));
         Self {
             send,
+            transparent: host == Host::Web,
             claimed,
             claim_all: false,
             error: None,
@@ -152,10 +161,13 @@ impl WebUi {
     }
 
     /// Whether the UI draws `screen`: the driver's classic UI draws all it can describe, a page the
-    /// ones its registry names. Screens over the game lie on the game's canvas, which the UI
-    /// does not draw yet.
+    /// ones its registry names. A screen over the game lies on the game's canvas, which the engine
+    /// goes on drawing underneath: the UI draws it only on a transparent host and only the
+    /// [`OVER_GAME`] ones.
     fn draws(&self, screen: &view::ScreenView) -> bool {
-        self.claim_all || (!screen.in_game && self.claimed.contains(&screen.name))
+        self.claim_all
+            || (self.claimed.contains(&screen.name)
+                && (!screen.in_game || (self.transparent && OVER_GAME.contains(&screen.name.as_str()))))
     }
 
     /// Tells the engine which screens to leave to the UI, and the UI what changed. Call after
@@ -366,19 +378,29 @@ mod tests {
     }
 
     #[test]
-    fn screens_over_the_game_stay_with_the_engine_unless_everything_is_claimed() {
-        let screen = |in_game| view::ScreenView {
-            name: "LoadGame".into(),
+    fn screens_over_the_game_are_the_uis_only_on_a_transparent_host_and_when_listed() {
+        let screen = |name: &str, in_game| view::ScreenView {
+            name: name.into(),
             stack: vec![],
             in_game,
             busy: false,
             hint: None,
             widgets: vec![],
         };
-        let mut web = WebUi::new(Box::new(|_| {}), Host::Web, vec!["LoadGame".into()], [1.0; 2], 1.0);
-        assert!(web.draws(&screen(false)) && !web.draws(&screen(true)));
+        let claimed = || vec!["LoadGame".to_owned(), "GameMenu".to_owned(), "Elsewhere".to_owned()];
+        let mut web = WebUi::new(Box::new(|_| {}), Host::Web, claimed(), [1.0; 2], 1.0);
+        // The main menu's load dialog and the game menu's, but not an unlisted screen over the game.
+        assert!(web.draws(&screen("LoadGame", false)) && web.draws(&screen("LoadGame", true)));
+        assert!(web.draws(&screen("GameMenu", true)));
+        assert!(!web.draws(&screen("Elsewhere", true)) && web.draws(&screen("Elsewhere", false)));
+        // Named screens only: the registry is the UI's say.
+        assert!(!web.draws(&screen("HistoryWindow", true)));
+        // A host that cannot draw over the canvas keeps them with the engine.
+        let native = WebUi::new(Box::new(|_| {}), Host::Native, claimed(), [1.0; 2], 1.0);
+        assert!(native.draws(&screen("LoadGame", false)) && !native.draws(&screen("LoadGame", true)));
+        assert!(!native.draws(&screen("GameMenu", true)));
         web.claim_everything();
-        assert!(web.draws(&screen(true)));
+        assert!(web.draws(&screen("Elsewhere", true)));
     }
 
     #[test]
