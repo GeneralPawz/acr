@@ -425,15 +425,17 @@ the touch skin only renders it and sends intents.
   orientation from width and height, `(pointer: coarse)` for the finger. **Setting** `ui_skin=auto|classic|touch` in
   `settings.txt` (`Hello.skin` carries it, default `auto`, no options row): `auto` is the classic skin on an expanded
   viewport with a fine pointer, so a desktop keeps what it has, and the touch skin everywhere else.
-- **Menus** are full-screen sheets (`TouchMenu`): the dialog's widgets in reading order as entries of at least 48 CSS
-  pixels, from `WidgetView.label` (a button's or check's text) and `WidgetView.value` (a list's rows, a combo box's options,
+- **Menus** are full-screen sheets (`TouchMenu`): the dialog's widgets in reading order as entries of at least 44 CSS
+  pixels (the game font's height, at most 30 CSS pixels, plus the frame and padding), left out when `WidgetView.shown` is false (hidden, or outside its
+  clip window: the main menu keeps its submenus' entries off to the side), and a label is scaled down to the entry's inner width (whole and half steps while
+  it stays as large as the game's pixels, smooth below that) so that it never overflows. The content is `WidgetView.label` (a button's or check's text) and `WidgetView.value` (a list's rows, a combo box's options,
   a slider, an input box, a text viewer). A text button that reports nothing is a `text` widget; a picture button (OK)
   keeps its original picture. Every tap is an intent (`Dialog::activate`, `select_row`, `select_option`, `set_value`,
   `set_text`). The frames are CSS `border-image` 9-slice of `nine/box.png`, cut at runtime from `BORDER.GP` of the player's
   files (`assets::nine_box`, 3 x 3 cells of 64 pixels); texts are glyph images of the game's fonts, scaled; the one native
   piece is the text field of an input box (the soft keyboard), in the system font.
 - **HUD** (`TouchHud`, from `ViewPatch.touch`, built by `Hud::touch_view` when the touch skin is on): the resource strip
-  on top (icon cut from `ResPanel` and the number), pause and menu buttons, the minimap top right (the classic skin's
+  on top (icon cut from `ResPanel` and the number), pause and menu buttons (in one row with the strip, 44 CSS pixels tall), the minimap top right (its fold button draws a CSS minus or plus) (the classic skin's
   three minimap groups cut to the map image, folds with its button), the command grid as a bottom sheet in portrait
   (4, 5 or 6 columns by size class) and a side column in landscape, the selection summary (icons whose command keeps a
   type or formation, and the army list) above the grid. The icons are the original's draws (`draw_icon`) in a 40 pixel

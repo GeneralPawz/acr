@@ -46,6 +46,7 @@ describe('Ui', () => {
               kind: 'picture',
               rect: [0, 0, 5, 5],
               enabled: true,
+              shown: true,
               hover: false,
               parts: [{ t: 'fill', rgba: [1, 2, 3, 255], rect: [0, 0, 5, 5], clip: null }],
             },

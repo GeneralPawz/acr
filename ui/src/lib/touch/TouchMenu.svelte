@@ -24,11 +24,11 @@
       {@const v = widget.value}
       <li class="item {widget.kind}">
         {#if widget.kind === 'text'}
-          <GameLabel {...f} text={widget.label ?? ''} scale={1.5} />
+          <GameLabel {...f} text={widget.label ?? ''} scale={1.5} fit maxHeight={30} />
         {:else if widget.kind === 'button'}
           <button class="entry" disabled={!widget.enabled} data-acr-key={widget.key} data-acr-id={widget.id} onclick={() => intent(bridge, widget.id, leftClick)}>
             {#if widget.label}
-              <GameLabel {...f} text={widget.label} scale={1.5} />
+              <GameLabel {...f} text={widget.label} scale={1.5} fit maxHeight={30} />
             {:else}
               <Sprite parts={widget.parts} size={[widget.rect[2], widget.rect[3]]} origin={[widget.rect[0], widget.rect[1]]} scale={1.5} />
             {/if}
@@ -44,7 +44,7 @@
             onclick={() => intent(bridge, widget.id, leftClick)}
           >
             <span class="box" class:on={v?.t === 'check' && v.on}></span>
-            <GameLabel {...f} text={widget.label ?? ''} scale={1.5} />
+            <GameLabel {...f} text={widget.label ?? ''} scale={1.5} fit maxHeight={30} />
           </button>
         {:else if v?.t === 'list'}
           <div class="list" role="listbox" data-acr-scroll data-acr-key={widget.key} data-acr-id={widget.id}>
@@ -56,20 +56,20 @@
                 class:selected={v.selected === i}
                 onclick={() => intent(bridge, widget.id, { t: 'select_row', row: i })}
               >
-                <GameLabel {...f} text={row} scale={1.5} />
+                <GameLabel {...f} text={row} scale={1.5} fit maxHeight={26} />
               </button>
             {/each}
           </div>
         {:else if v?.t === 'combo'}
           <button class="entry combo" data-acr-key={widget.key} data-acr-id={widget.id} onclick={() => (picking = picking === widget.id ? null : widget.id)}>
-            <GameLabel {...f} text={v.options[v.selected] ?? ''} scale={1.5} />
+            <GameLabel {...f} text={v.options[v.selected] ?? ''} scale={1.5} fit maxHeight={30} />
             <span class="caret" aria-hidden="true"></span>
           </button>
           {#if picking === widget.id}
             <div class="options" role="listbox" data-acr-scroll>
               {#each v.options as option, i (i)}
                 <button class="entry row" role="option" aria-selected={v.selected === i} class:selected={v.selected === i} onclick={() => pick(widget, i)}>
-                  <GameLabel {...f} text={option} scale={1.5} />
+                  <GameLabel {...f} text={option} scale={1.5} fit maxHeight={26} />
                 </button>
               {/each}
             </div>
@@ -163,13 +163,13 @@
     gap: 12px;
     box-sizing: border-box;
     width: 100%;
-    min-height: 48px;
-    padding: 6px 12px;
+    min-height: 44px;
+    padding: 4px 10px;
     color: inherit;
     font: inherit;
     background: #3a2a18 var(--acr-nine-fill, none);
-    border: 20px solid transparent;
-    border-image: var(--acr-nine, none) 64 / 20px round;
+    border: 12px solid transparent;
+    border-image: var(--acr-nine, none) 64 / 12px round;
     border-radius: 0;
     cursor: pointer;
     -webkit-tap-highlight-color: transparent;
@@ -182,7 +182,8 @@
     background-color: #5b4126;
   }
   .row {
-    min-height: 44px;
+    min-height: 40px;
+    padding: 2px 10px;
     border-width: 0 0 1px;
     border-image: none;
     border-bottom: 1px solid #5b4126;

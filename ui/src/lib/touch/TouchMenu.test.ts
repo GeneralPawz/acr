@@ -1,5 +1,5 @@
 import { fireEvent, render } from '@testing-library/svelte';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { Bridge } from '../bridge';
 import { KEY } from '../context';
 import { FontCache } from '../fonts';
@@ -15,6 +15,9 @@ const bridge = (sent: FromUi[]): Bridge => ({
 });
 
 describe('TouchMenu', () => {
+  // jsdom has no layout: a fitted label only needs the observer to exist.
+  vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} });
+
   it('sends the intents of its entries and never a pixel', async () => {
     const sent: FromUi[] = [];
     const b = bridge(sent);
@@ -33,9 +36,9 @@ describe('TouchMenu', () => {
         widgets: {
           t: 'full',
           widgets: [
-            { id: 'Options/0', key: 'ok', kind: 'button', rect: [0, 300, 9, 9], enabled: true, hover: false, label: 'OK', parts: [] },
-            { id: 'Options/1', key: 'volume', kind: 'slider', rect: [0, 100, 9, 9], enabled: true, hover: false, value: { t: 'range', value: 3, max: 10 }, parts: [] },
-            { id: 'Options/2', key: 'saves', kind: 'list', rect: [0, 200, 9, 9], enabled: true, hover: false, value: { t: 'list', rows: ['a', 'b'], selected: null }, parts: [] },
+            { id: 'Options/0', key: 'ok', kind: 'button', rect: [0, 300, 9, 9], enabled: true, shown: true, hover: false, label: 'OK', parts: [] },
+            { id: 'Options/1', key: 'volume', kind: 'slider', rect: [0, 100, 9, 9], enabled: true, shown: true, hover: false, value: { t: 'range', value: 3, max: 10 }, parts: [] },
+            { id: 'Options/2', key: 'saves', kind: 'list', rect: [0, 200, 9, 9], enabled: true, shown: true, hover: false, value: { t: 'list', rows: ['a', 'b'], selected: null }, parts: [] },
           ],
         },
       },

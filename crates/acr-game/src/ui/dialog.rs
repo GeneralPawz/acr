@@ -797,6 +797,12 @@ impl Dialog {
         w.rect.offset(0, self.owner_dy(w))
     }
 
+    /// Whether widget `id` is visible and inside its clip window (what the touch skin may offer).
+    pub fn is_shown(&self, id: WidgetId) -> bool {
+        let w = &self.widgets[id];
+        w.visible && !self.shown_rect(id).intersect(&w.clip).is_empty()
+    }
+
     /// The rows of the open drop-down list: combo box, row and rectangle (test driver).
     pub fn dropdown_rows(&self) -> Vec<(WidgetId, usize, Rect)> {
         let Some((id, zone)) = self.modal_zone() else { return Vec::new() };
@@ -1189,7 +1195,7 @@ impl Dialog {
         if !w.enabled {
             return Err(Reject::Disabled);
         }
-        if !w.visible || self.shown_rect(id).intersect(&w.clip).is_empty() {
+        if !self.is_shown(id) {
             return Err(Reject::Hidden);
         }
         match (intent, &w.kind) {
@@ -1758,6 +1764,16 @@ mod tests {
         d.choose(a, 1);
         assert_eq!(d.press([12.0, 12.0]).chosen, Some(1));
         assert_eq!(d.press([17.0, 17.0]).chosen, None);
+    }
+
+    #[test]
+    fn a_widget_outside_its_clip_is_not_shown() {
+        let mut d = Dialog::default();
+        d.set_clip(Some(Rect::new(0, 0, 15, 15)));
+        let inside = d.add_area(Rect::new(10, 10, 10, 10));
+        let outside = d.add_area(Rect::new(40, 40, 10, 10));
+        assert!(d.is_shown(inside));
+        assert!(!d.is_shown(outside));
     }
 
     #[test]

@@ -736,6 +736,7 @@ mod tests {
             kind: WidgetKind::Button,
             rect: [0; 4],
             enabled: true,
+            shown: true,
             hover: false,
             label: None,
             value: None,

@@ -15,7 +15,12 @@ key?: string, kind: WidgetKind,
 /**
  * `[x, y, w, h]` of the area that reacts to the mouse, in canvas pixels.
  */
-rect: [number, number, number, number], enabled: boolean, hover: boolean, 
+rect: [number, number, number, number], enabled: boolean, 
+/**
+ * The widget is visible and inside its clip window: the player can see and press it. A skin
+ * that lays widgets out by role (the touch skin) leaves the others out.
+ */
+shown: boolean, hover: boolean, 
 /**
  * The widget's text, for a skin that lays widgets out by role (a button's or check's label).
  */

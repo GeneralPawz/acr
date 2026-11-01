@@ -148,10 +148,10 @@
       </ul>
       <div class="buttons">
       <button class="bar" aria-label="pause" data-acr-id="bar/pause" onclick={() => tapBar('bar/pause')}>
-        <GameLabel {...font} text={touch.paused ? '>' : 'II'} scale={2} />
+        <GameLabel {...font} text={touch.paused ? '>' : 'II'} scale={2} maxHeight={24} />
       </button>
       <button class="bar" aria-label="menu" data-acr-id="bar/menu" onclick={() => tapBar('bar/menu')}>
-        <GameLabel {...font} text="M" scale={2} />
+        <GameLabel {...font} text="M" scale={2} maxHeight={24} />
       </button>
       </div>
     </header>
@@ -159,7 +159,7 @@
     {#if touch.minimap && mapImage}
       <div class="minimap" data-acr-touch="minimap">
         <button class="fold" aria-label="minimap" aria-expanded={mapOpen} onclick={() => (mapOpen = !mapOpen)}>
-          <GameLabel {...font} text={mapOpen ? '-' : '+'} scale={2} />
+          <span class="fold-glyph" class:plus={!mapOpen} aria-hidden="true"></span>
         </button>
         {#if mapOpen}
           <div
@@ -246,20 +246,20 @@
   }
   .top {
     display: flex;
-    flex-wrap: wrap;
     align-items: center;
     justify-content: flex-end;
     gap: 6px;
     box-sizing: border-box;
-    padding: 4px var(--pad);
+    padding: 2px var(--pad);
     background: rgb(20 14 8 / 0.78);
     pointer-events: auto;
   }
   .resources {
     display: grid;
     grid-template-columns: repeat(6, auto);
-    flex: 1 1 200px;
-    gap: 2px 14px;
+    flex: 1 1 0;
+    min-width: 0;
+    gap: 2px 8px;
     margin: 0;
     padding: 0;
     list-style: none;
@@ -278,13 +278,13 @@
     align-items: center;
     justify-content: center;
     box-sizing: border-box;
-    min-width: 48px;
-    min-height: 48px;
-    padding: 0 10px;
+    min-width: 44px;
+    min-height: 44px;
+    padding: 0;
     color: inherit;
     background: #3a2a18 var(--acr-nine-fill, none);
-    border: 12px solid transparent;
-    border-image: var(--acr-nine, none) 64 / 12px round;
+    border: 10px solid transparent;
+    border-image: var(--acr-nine, none) 64 / 10px round;
     cursor: pointer;
     -webkit-tap-highlight-color: transparent;
   }
@@ -301,9 +301,18 @@
   .map {
     pointer-events: auto;
   }
-  .fold {
-    min-height: 44px;
-    min-width: 44px;
+  /* A minus or plus drawn in CSS: the game font's glyphs are a few pixels wide. */
+  .fold-glyph {
+    position: relative;
+    width: 20px;
+    height: 20px;
+    background: linear-gradient(#f2e3bd, #f2e3bd) center / 100% 4px no-repeat;
+  }
+  .fold-glyph.plus::after {
+    content: '';
+    position: absolute;
+    inset: 0 8px;
+    background: #f2e3bd;
   }
   .map {
     position: relative;
@@ -318,7 +327,7 @@
   }
   .hint {
     position: absolute;
-    top: calc(env(safe-area-inset-top) + 64px);
+    top: calc(env(safe-area-inset-top) + 84px);
     left: 50%;
     transform: translateX(-50%);
     display: flex;
@@ -330,6 +339,9 @@
     background: rgb(20 14 8 / 0.92);
     border: 2px solid #d9b46a;
     pointer-events: none;
+  }
+  .landscape .hint {
+    top: calc(env(safe-area-inset-top) + 56px);
   }
   .commands {
     position: absolute;

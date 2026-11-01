@@ -252,6 +252,9 @@ pub struct WidgetView {
     /// `[x, y, w, h]` of the area that reacts to the mouse, in canvas pixels.
     pub rect: [i32; 4],
     pub enabled: bool,
+    /// The widget is visible and inside its clip window: the player can see and press it. A skin
+    /// that lays widgets out by role (the touch skin) leaves the others out.
+    pub shown: bool,
     pub hover: bool,
     /// The widget's text, for a skin that lays widgets out by role (a button's or check's label).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -539,6 +542,7 @@ mod tests {
             kind: WidgetKind::Button,
             rect: [0; 4],
             enabled: true,
+            shown: true,
             hover: false,
             label: None,
             value: None,
@@ -589,6 +593,7 @@ mod tests {
             kind: WidgetKind::List,
             rect: [0; 4],
             enabled: true,
+            shown: true,
             hover: false,
             label: None,
             value: Some(WidgetValue::List { rows: vec!["a".into()], selected: Some(0) }),
