@@ -39,7 +39,13 @@ ROUTES = {
     "MainMenu": [],
     "PlayerName": ["Einzelspieler", "Zufallskarte"],
     "Options": ["Optionen"],
+    "Campaigns": ["Einzelspieler", "Kampagne", "OK"],
+    "SingleMission": ["Einzelspieler", "Einzelmission", "OK"],
+    "CampaignMissions": ["Einzelspieler", "Kampagne", "OK", "Mission spielen!"],
 }
+
+# Routes whose screen is another route's (`Screen::name`): the campaign's missions are a SingleMission.
+SCREEN_OF = {"CampaignMissions": "SingleMission"}
 
 CHROMIUM_ARGS = {
     "swiftshader": [
@@ -187,8 +193,8 @@ def main():
         for screen in screens:
             out = pathlib.Path(a.out) / screen
             out.mkdir(parents=True, exist_ok=True)
-            tree, _, engine_errors = shoot(browser, a.url, "engine", screen, ROUTES[screen], size, a.timeout_s, out)
-            _, rects, svelte_errors = shoot(browser, a.url, "svelte", screen, ROUTES[screen], size, a.timeout_s, out)
+            tree, _, engine_errors = shoot(browser, a.url, "engine", SCREEN_OF.get(screen, screen), ROUTES[screen], size, a.timeout_s, out)
+            _, rects, svelte_errors = shoot(browser, a.url, "svelte", SCREEN_OF.get(screen, screen), ROUTES[screen], size, a.timeout_s, out)
             pixels = pixel_share(out / "engine.png", out / "svelte.png", out / "diff.png", root)
             layout, per_id, extra, compared = layout_difference(tree, rects)
             passed = pixels >= a.min_pixels and layout <= a.max_layout and bool(compared) and not svelte_errors
