@@ -752,8 +752,20 @@ A finished building with `TORG` shows the market in the command grid instead of 
 - Fit (0x5142c2): the snapped position is tried first. If the site is blocked, the nearest
   free position within 10 rings of 16 px cells is used (spiral table 0x28a6f10, here square
   rings). The site check is the simulation's (`construction::site`): the finished footprint
-  must be free of locks and units. 0x513b2c and the mine-deposit rules (`MINEID0..5` hints)
-  are not reproduced.
+  must be free of locks and units. 0x513b2c is reproduced only in part (no enemy
+  objects near, no sprites in the way for other buildings), but its mine rule is not:
+  a mine (`PRODUCER`) is checked by `CheckMinePosition` (0x4d2100, cell test 0x4d1fc0). It
+  scans a square of `2s + 1` cells of 128 px per side, `s = ((BRadius + 15)·16 >> 7) + 1`,
+  from the cell of `(x − s, y − s)` down each column in turn; in a cell the last sprite with an
+  `[INTERNAL_SOURCE]` resource (below 8; the call passes the mask 0xFF, so any resource) whose
+  `norma >> 2` is below the type's `[INTERNAL_SOURCE]` radius (0x503118: resource +0x11,
+  amount +0x12, radius +0x14) counts, and the first cell with one decides. The site then
+  moves onto that deposit's position, and without one the placement fails (0x513b2c returns
+  -1): the outline snaps onto the deposit and is red anywhere else. The simulation applies it
+  to the command, so the mouse, the touch outline (a double tap on it) and the AI share the
+  rule (`construction::site`, `place`). A cell outside the grid, which the original reads as
+  a hit that leaves the position as it is (0x4d20ec), is not reproduced. The AI's own
+  version (`aiplace::site_ok`) still uses the radius of the site test, see simulation.md.
 - A left click on a free site sends `Build` with the selected units and leaves the mode;
   with Shift the mode stays. A right click or Escape leaves the mode.
 - Units inside buildings (`Unit::inside_of`) are not drawn, selected or shown on the

@@ -876,7 +876,7 @@ impl World {
         let (group, index, x, y) = (sprite.group, sprite.index, sprite.x, sprite.y);
         self.objects.push(MapObject { group, index, x, y });
         if let Some(resource) = shapes.source(group, index) {
-            self.deposits.push(crate::economy::Deposit { x, y, resource });
+            self.deposits.push(crate::economy::Deposit { x, y, resource, radius: shapes.source_radius(group, index) });
         }
         if let Some((kind, per_work, radius)) = shapes.work_source(group, index) {
             let source = crate::gather::Source { x, y, kind, per_work, radius };

@@ -312,6 +312,9 @@ pub enum Request {
     Impact(Value),
     /// Trees or stones put on the map as simulated map objects (`drive::bench::map_object`).
     MapObject(Value),
+    /// Types made buildable for every player, whatever their `[ACCESSCONTROL]` asks
+    /// (`drive::bench::enable`).
+    Enable(Value),
     /// `{"cmd":"gputime","frames":n}`: GPU milliseconds per pass, from timestamp queries.
     GpuTime(u32),
     /// `{"cmd":"frametimes","frames":n}`: wall milliseconds of `n` frames drawn back to back
@@ -746,6 +749,7 @@ pub fn parse(line: &str) -> Result<(Option<Value>, Request), String> {
         "hit" => Request::Hit(v.clone()),
         "impact" => Request::Impact(v.clone()),
         "map_object" => Request::MapObject(v.clone()),
+        "enable" => Request::Enable(v.clone()),
         "profile" => Request::Profile,
         "perf" => Request::Perf {
             frames: uint(&v, "frames").unwrap_or(0).min(100_000) as u32,

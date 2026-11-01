@@ -197,6 +197,8 @@ pub struct SpriteShapes {
     pub groups: BTreeMap<SpriteGroup, Vec<Option<SpriteLock>>>,
     /// `[INTERNAL_SOURCE]` resource index per sprite group and type index.
     pub sources: BTreeMap<SpriteGroup, Vec<Option<usize>>>,
+    /// `[INTERNAL_SOURCE]` radius per sprite group and type index.
+    pub source_radii: BTreeMap<SpriteGroup, Vec<i32>>,
     /// `[SOURCES]`: `(source type, amount per work, radius)` per sprite group and type index.
     pub work: BTreeMap<SpriteGroup, Vec<Option<WorkSource>>>,
     /// `ObjCharacter`s (sources, work and time transforms) per sprite group.
@@ -225,6 +227,9 @@ impl SpriteShapes {
             .map(|t| rsr.sources.get(&t.name.to_ascii_uppercase()).and_then(|s| crate::catalog::resource_index(&s.0)))
             .collect();
         self.sources.insert(group, sources);
+        let radii =
+            list.entries.iter().map(|t| rsr.sources.get(&t.name.to_ascii_uppercase()).map_or(32, |s| s.2)).collect();
+        self.source_radii.insert(group, radii);
         let work = list
             .entries
             .iter()
@@ -256,6 +261,11 @@ impl SpriteShapes {
     /// The resource a sprite supplies to mines, if it is a deposit.
     pub fn source(&self, group: SpriteGroup, index: u16) -> Option<usize> {
         *self.sources.get(&group)?.get(usize::from(index))?
+    }
+
+    /// The `[INTERNAL_SOURCE]` radius of a deposit sprite (32 where none is known).
+    pub fn source_radius(&self, group: SpriteGroup, index: u16) -> i32 {
+        self.source_radii.get(&group).and_then(|r| r.get(usize::from(index))).copied().unwrap_or(32)
     }
 
     fn get(&self, s: &Sprite) -> Option<&SpriteLock> {

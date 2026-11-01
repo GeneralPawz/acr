@@ -1,0 +1,23 @@
+{
+  "name": "mine_placement",
+  "description": "A mine can only stand on a deposit (#489, CheckCreationAbility 0x513b2c, CheckMinePosition 0x4d2100): clicking open grass places nothing and pays nothing, a click near the deposit puts the site on the deposit's position",
+  "steps": [
+    {"cmd": "start", "map": "Missions/COLUMB/Columb1/columb1.m3d", "note": "Spain; the first Columbus mission, whose peasants stand on open grass"},
+    {"cmd": "wait", "ticks": 200, "note": "the first census enables the buildings"},
+    {"cmd": "enable", "types": ["SpnRud(SP)"], "note": "the mine comes late in the tech tree"},
+    {"cmd": "map_object", "group": "deposit", "at": [[6143, 10052]], "note": "screen (760, 250) with the camera as the mission starts"},
+    {"cmd": "wait", "ticks": 1},
+    {"cmd": "state", "capture": {"wood": "state.resources.wood"}},
+    {"cmd": "select", "units": [270, 271, 272]},
+    {"cmd": "click", "label": "Mine", "expect": {"path": "target.kind", "eq": "icon"}},
+    {"cmd": "ui", "expect": {"path": "ui.cursor.mode", "contains": "placing"}},
+    {"cmd": "click", "pos": [900, 420]},
+    {"cmd": "wait", "ticks": 1},
+    {"cmd": "state", "expect": [{"path": "state.counts.0.sites", "len_eq": 0}, {"path": "state.resources.wood", "eq": "${wood}"}], "note": "open grass: nothing placed, nothing paid"},
+    {"cmd": "ui", "expect": {"path": "ui.cursor.mode", "contains": "placing"}, "note": "and the build mode stays"},
+    {"cmd": "click", "pos": [780, 260]},
+    {"cmd": "wait", "ticks": 1},
+    {"cmd": "state", "units": true, "owner": 0, "type": "SpnRud", "expect": [{"path": "state.counts.0.sites", "len_eq": 1}, {"path": "state.resources.wood", "lt": "${wood}"}, {"path": "state.units.0.x", "eq": 6143}, {"path": "state.units.0.y", "eq": 10052}], "note": "near the deposit: the site snaps onto it"},
+    {"cmd": "ui", "expect": {"path": "ui.cursor.mode", "eq": "normal"}}
+  ]
+}

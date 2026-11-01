@@ -62,6 +62,8 @@ pub struct Deposit {
     pub x: i32,
     pub y: i32,
     pub resource: usize,
+    /// The `[INTERNAL_SOURCE]` radius of its sprite type (`CheckMinePosition` reaches `4 ×` it).
+    pub radius: i32,
 }
 
 /// The lock base cell of an object (0x516fde): spawn and gathering points are relative to it.
@@ -1069,7 +1071,14 @@ fn release(w: &mut World, b: usize, inside: Vec<crate::world::EntityId>) {
 pub fn deposits(objects: &[crate::world::MapObject], shapes: &crate::map::SpriteShapes) -> Vec<Deposit> {
     objects
         .iter()
-        .filter_map(|o| Some(Deposit { x: o.x, y: o.y, resource: shapes.source(o.group, o.index)? }))
+        .filter_map(|o| {
+            Some(Deposit {
+                x: o.x,
+                y: o.y,
+                resource: shapes.source(o.group, o.index)?,
+                radius: shapes.source_radius(o.group, o.index),
+            })
+        })
         .collect()
 }
 
