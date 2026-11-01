@@ -48,7 +48,7 @@ const DRAG_MIN: i32 = 30;
 /// Colour tables of the building preview (`ShowGPDarkN` / `ShowGPRedN`, loaded at 0x483feb
 /// and 0x4840d1): a free site and a blocked one.
 /// The field preview's fills (RGBA): where a field can grow, where it cannot.
-const FIELD_FREE: [u8; 4] = [60, 220, 60, 255];
+const FIELD_FREE: [u8; 4] = [70, 255, 70, 255];
 const FIELD_BLOCKED: [u8; 4] = [230, 50, 50, 255];
 const PREVIEW_FREE: &str = "0\\AGEW_1W.GRD";
 const PREVIEW_BLOCKED: &str = "0\\AGEW_1R.GRD";
@@ -2250,9 +2250,11 @@ impl InGame {
     }
 
     /// The area the fields of the building being placed would cover once grown (ACR's
-    /// addition; the original shows only the building): a translucent diamond per field
-    /// point, green where a field can grow and red where it cannot (buildings, water, trees,
-    /// slopes). Nothing for a building that grows no fields.
+    /// addition; the original shows only the building): plots of about 64 map pixels, each
+    /// an inset diamond with a light fill and a firmer outline, green where most of its
+    /// field points can grow a field and red where most cannot (buildings, water, trees,
+    /// slopes). The points lie only `step` (4) px apart, too dense to draw one by one.
+    /// Nothing for a building that grows no fields.
     fn field_preview(
         &self,
         world: &acr_sim::World,
@@ -2261,16 +2263,38 @@ impl InGame {
         (x, y): (i32, i32),
         out: &mut Vec<Draw>,
     ) {
-        let alpha = if self.interface.touch { 0.25 } else { 0.3 };
-        for s in acr_sim::sprite::field_footprint(world, kind, x, y) {
-            let color = if s.free { FIELD_FREE } else { FIELD_BLOCKED };
-            let (cx, cy) = (s.x, (s.y >> 1) - terrain.height_at(s.x, s.y));
-            let half = s.step / 2;
-            // Rows of one pixel: the cell is `step` wide at each side of its centre and
-            // `step / 2` high on screen (the map's y is doubled).
-            for r in -half..half {
-                let w = s.step * (half - r.abs()) / half.max(1);
-                out.push(Draw::fill(color, Rect::new(cx - w, cy + r, 2 * w, 1)).unclipped().with_alpha(alpha));
+        let spots = acr_sim::sprite::field_footprint(world, kind, x, y);
+        let Some(step) = spots.first().map(|s| s.step.max(1)) else {
+            return;
+        };
+        // The points sit on a diamond lattice: (i + j, i - j) steps from the building.
+        let block = (64 / step).max(1);
+        let mut plots: std::collections::BTreeMap<(i32, i32), (i32, i32)> = std::collections::BTreeMap::new();
+        for s in &spots {
+            let (u, v) = ((s.x - x) / step, (s.y - y) / step);
+            let (i, j) = ((u + v) / 2, (u - v) / 2);
+            let at = ((i + block / 2).div_euclid(block), (j + block / 2).div_euclid(block));
+            let e = plots.entry(at).or_default();
+            e.0 += i32::from(s.free);
+            e.1 += 1;
+        }
+        let (fill, edge) = if self.interface.touch { (0.12, 0.45) } else { (0.15, 0.5) };
+        let span = block * step;
+        for ((bi, bj), (free, count)) in plots {
+            let color = if free * 2 > count { FIELD_FREE } else { FIELD_BLOCKED };
+            let (px, py) = (x + (bi + bj) * span, y + (bi - bj) * span);
+            let (cx, cy) = (px, (py >> 1) - terrain.height_at(px, py));
+            // The plot is a diamond `2 * span` wide and `span` high on screen (the map's y is
+            // doubled); the drawn one is inset, leaving a gap to its neighbours.
+            let hw = span * 7 / 8;
+            let hh = hw / 2;
+            for r in -hh..=hh {
+                let w = hw * (hh - r.abs()) / hh.max(1);
+                out.push(Draw::fill(color, Rect::new(cx - w, cy + r, 2 * w, 1)).unclipped().with_alpha(fill));
+            }
+            let corners = [(cx, cy - hh), (cx + hw, cy), (cx, cy + hh), (cx - hw, cy)];
+            for i in 0..4 {
+                out.push(Draw::line(color, corners[i], corners[(i + 1) % 4]).with_alpha(edge));
             }
         }
     }
