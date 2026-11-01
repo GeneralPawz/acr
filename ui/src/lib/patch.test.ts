@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { applyWidgets, isSnapshot } from './patch';
+import { applyHud, applyWidgets, isSnapshot } from './patch';
+import type { HudGroup } from './protocol/HudGroup';
 import type { WidgetView } from './protocol/WidgetView';
 import type { ScreenPatch } from './protocol/ScreenPatch';
 
@@ -51,5 +52,26 @@ describe('isSnapshot', () => {
     expect(isSnapshot({ rev: 5, mode: 'menus', screen, cursor: null, loading: null })).toBe(true);
     expect(isSnapshot({ rev: 5, mode: 'menus', screen })).toBe(false);
     expect(isSnapshot({ rev: 5, screen: { ...screen, widgets: { t: 'changed', upsert: [], order: null } } })).toBe(false);
+  });
+});
+
+describe('applyHud', () => {
+  const group = (name: string, layer: number, text = ''): HudGroup => ({
+    name,
+    layer,
+    anchor: [0, 0],
+    scale: 1,
+    parts: text ? [{ t: 'text', font: 'YellowFont', set: 0, text, x: 0, y: 0, fade: 0, clip: null }] : [],
+  });
+
+  it('replaces a group as a whole, drops removed ones and keeps the stacking order', () => {
+    const [bar, hint] = [group('top_bar', 0), group('hint', 3)];
+    const text = group('top_bar_text', 1, '10');
+    let out = applyHud([], { groups: [hint, bar, text], removed: [] });
+    expect(out.map((g) => g.name)).toEqual(['top_bar', 'top_bar_text', 'hint']);
+    const text2 = group('top_bar_text', 1, '11');
+    out = applyHud(out, { groups: [text2], removed: ['hint'] });
+    expect(out).toEqual([bar, text2]);
+    expect(out[0]).toBe(bar);
   });
 });

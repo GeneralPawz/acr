@@ -4,7 +4,7 @@ import { nativeBridge, webBridge } from './lib/bridge';
 import { FontCache } from './lib/fonts';
 import type { FromUi } from './lib/protocol/FromUi';
 import { UiState } from './lib/state.svelte';
-import { SCREENS } from './screens/registry';
+import { HUD, SCREENS } from './screens/registry';
 import Root from './lib/Root.svelte';
 
 /** Version of `acr-ui-protocol` this bundle speaks. */
@@ -20,7 +20,7 @@ export function mountUi(target: HTMLElement, bridge: Bridge) {
     dpr: window.devicePixelRatio || 1,
   });
   window.addEventListener('resize', () => bridge.send({ t: 'viewport', ...viewport() }));
-  bridge.send({ t: 'ready', protocol: PROTOCOL, screens: [...SCREENS], ...viewport() });
+  bridge.send({ t: 'ready', protocol: PROTOCOL, screens: [...SCREENS], hud: [...HUD], ...viewport() });
   return app;
 }
 

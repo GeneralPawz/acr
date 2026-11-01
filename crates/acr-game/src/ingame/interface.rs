@@ -159,6 +159,9 @@ pub struct State {
     pub hud: Hud,
     cursor: Cursor,
     cursor_loaded: bool,
+    /// The parts of the interface an external UI draws, and what it is to draw this frame.
+    pub(super) claim: hud::Claim,
+    pub(super) claimed: Vec<hud::Claimed>,
     /// The Pause key (op 0x46) stopped the simulation.
     pub paused: bool,
     /// Control groups 0..9.
@@ -258,6 +261,8 @@ impl Default for State {
             hud: Hud::default(),
             cursor: Cursor::default(),
             cursor_loaded: false,
+            claim: hud::Claim::default(),
+            claimed: Vec::new(),
             paused: false,
             groups: vec![Vec::new(); 10],
             markers: Vec::new(),
@@ -2085,7 +2090,14 @@ impl InGame {
         }
         // The panels at their `hud_scale`, then the dialogs and the pause text at the canvas'.
         let canvas = self.interface.canvas;
-        layers.extend(hud_layers.into_iter().map(|(zoom, draws)| (zoom.canvas(canvas), draws)));
+        self.interface.claimed.clear();
+        for section in hud_layers {
+            if self.interface.claim.claims(section.layer) {
+                self.interface.claimed.extend(hud::claimed(section));
+            } else {
+                layers.push((section.zoom.canvas(canvas), section.draws));
+            }
+        }
         layers.push((canvas, hud_draws));
         (layers, images, cursor)
     }

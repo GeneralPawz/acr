@@ -1,3 +1,5 @@
+import type { HudGroup } from './protocol/HudGroup';
+import type { HudPatch } from './protocol/HudPatch';
 import type { ViewPatch } from './protocol/ViewPatch';
 import type { WidgetView } from './protocol/WidgetView';
 import type { WidgetsPatch } from './protocol/WidgetsPatch';
@@ -17,6 +19,14 @@ export function applyWidgets(current: readonly WidgetView[], patch: WidgetsPatch
   // Same order: replace in place, append the new ones.
   const known = new Set(current.map((w) => w.id));
   return [...current.map((w) => byId.get(w.id) as WidgetView), ...patch.upsert.filter((w) => !known.has(w.id))];
+}
+
+/** The interface's groups after `patch`, in stacking order. A group is replaced as a whole. */
+export function applyHud(current: readonly HudGroup[], patch: HudPatch): HudGroup[] {
+  const byName = new Map(current.map((g) => [g.name, g]));
+  for (const name of patch.removed) byName.delete(name);
+  for (const g of patch.groups) byName.set(g.name, g);
+  return [...byName.values()].sort((a, b) => a.layer - b.layer);
 }
 
 /** A patch that carries every topic, as the one the game sends after `Resync`. */

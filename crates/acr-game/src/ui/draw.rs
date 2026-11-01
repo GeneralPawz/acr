@@ -98,7 +98,7 @@ pub enum Sprite {
 }
 
 /// One sprite placed on the canvas.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Draw {
     pub sprite: Sprite,
     pub x: i32,
@@ -196,6 +196,11 @@ impl Draw {
             other => other,
         };
         self
+    }
+
+    /// Whether this is a string.
+    pub fn is_text(&self) -> bool {
+        matches!(self.sprite, Sprite::Text { .. } | Sprite::GameText { .. } | Sprite::GameTextFaded { .. })
     }
 
     /// Without a clip of its own (only its canvas clips it).

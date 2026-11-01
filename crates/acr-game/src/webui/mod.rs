@@ -21,10 +21,14 @@ pub mod web;
 
 use std::collections::HashMap;
 
-use acr_ui_protocol::{Host, Mode, PROTOCOL, ScreenPatch, Stage, ToUi, ViewPatch, WidgetView, WidgetsPatch};
+use acr_ui_protocol::{
+    Host, HudGroup, HudPatch, Mode, PROTOCOL, ScreenPatch, Stage, ToUi, ViewPatch, WidgetView, WidgetsPatch,
+};
 pub use assets::{AssetBody, AssetError, AssetReply};
 
 use crate::canvas::Canvas;
+use crate::hud::{Claim, Claimed};
+use crate::ui::draw::Draw;
 use crate::ui::{External, Ui};
 
 /// Delivers one JSON message to the UI.
@@ -62,6 +66,9 @@ struct Sent {
     engine_drawn: Option<bool>,
     widgets: HashMap<String, WidgetView>,
     order: Vec<String>,
+    /// The groups of the in-game interface, with the draws they were made from; `None` until the
+    /// first patch of a connection (or a resync), which then carries the topic even if empty.
+    hud: Option<HashMap<String, (Vec<Draw>, HudGroup)>>,
 }
 
 /// An asset request waiting for files.
@@ -77,12 +84,18 @@ struct Waiting {
 pub const OVER_GAME: &[&str] =
     &["GameMenu", "GameOptions", "SaveGameDialog", "LoadGame", "MessageWindow", "ChoiceWindow", "HistoryWindow"];
 
+/// The parts of the in-game interface the UI can claim (`Ready::hud`), over the same transparent
+/// canvas as [`OVER_GAME`].
+pub const HUD_PARTS: &[&str] = &["TopBar", "DropDown", "Hints", "Messages"];
+
 pub struct WebUi {
     send: Sender,
     /// The UI layer lies transparently over the game's canvas, so it can draw [`OVER_GAME`].
     transparent: bool,
     /// Screens the UI draws itself.
     claimed: Vec<String>,
+    /// Parts of the in-game interface the UI draws itself ([`HUD_PARTS`]).
+    hud: Vec<String>,
     /// Every screen the view model can describe is the UI's (the test driver's classic skin).
     claim_all: bool,
     /// Why the last description failed on an asset (anything but files still loading).
@@ -100,13 +113,21 @@ pub struct WebUi {
 
 impl WebUi {
     /// A UI that announced `Ready` for `claimed`; answers with `Hello`.
-    pub fn new(mut send: Sender, host: Host, claimed: Vec<String>, viewport: [f32; 2], dpr: f32) -> Self {
+    pub fn new(
+        mut send: Sender,
+        host: Host,
+        claimed: Vec<String>,
+        hud: Vec<String>,
+        viewport: [f32; 2],
+        dpr: f32,
+    ) -> Self {
         let hello = ToUi::Hello { protocol: PROTOCOL, host, asset_base: String::new() };
         send(&serde_json::to_string(&hello).expect("hello serializes"));
         Self {
             send,
             transparent: host == Host::Web,
             claimed,
+            hud,
             claim_all: false,
             error: None,
             rev: 0,
@@ -122,6 +143,13 @@ impl WebUi {
     /// The UI draws every screen it can describe, whatever it announced.
     pub fn claim_everything(&mut self) {
         self.claim_all = true;
+    }
+
+    /// The parts of the interface the engine leaves to the UI: the ones the UI named, on a host
+    /// whose UI layer is transparent over the canvas (the driver's classic skin takes all).
+    pub fn hud_claim(&self) -> Claim {
+        let has = |part: &str| self.claim_all || (self.transparent && self.hud.iter().any(|p| p == part));
+        Claim { top_bar: has("TopBar"), drop_down: has("DropDown"), hints: has("Hints"), messages: has("Messages") }
     }
 
     /// The UI wants everything again.
@@ -173,7 +201,14 @@ impl WebUi {
 
     /// Tells the engine which screens to leave to the UI, and the UI what changed. Call after
     /// the frame's advance, before it is drawn.
-    pub fn publish(&mut self, ui: &mut Ui, mode: Mode, loading: Option<f32>, frame: Option<[f32; 2]>) {
+    pub fn publish(
+        &mut self,
+        ui: &mut Ui,
+        mode: Mode,
+        loading: Option<f32>,
+        frame: Option<[f32; 2]>,
+        hud: Vec<Claimed>,
+    ) {
         acr_sim::prof_scope!("ui.bridge");
         let mut patch = ViewPatch { rev: self.rev + 1, ..Default::default() };
         let mut changed = false;
@@ -193,7 +228,7 @@ impl WebUi {
                 Stage { menu: view::canvas_view(Canvas::fit(size)), game: view::canvas_view(Canvas::screen(size)) };
             if self.sent.stage != Some(stage) {
                 self.sent.stage = Some(stage);
-                patch.stage = Some(stage);
+                patch.stage = Some(Box::new(stage));
                 changed = true;
             }
         }
@@ -231,10 +266,59 @@ impl WebUi {
             Err(e) => log::error!("webui: cursor: {e:?}"),
         }
 
+        match self.hud_patch(ui, hud) {
+            Ok(Some(hud)) => {
+                patch.hud = Some(Box::new(hud));
+                changed = true;
+            }
+            // Files still loading: the groups stay as they were.
+            Ok(None) | Err(view::Failure::Pending) => {}
+            Err(e) => {
+                log::error!("webui: the interface: {e:?}");
+                if matches!(e, view::Failure::Asset(_)) {
+                    self.error = Some(format!("{e:?}"));
+                }
+            }
+        }
+
         if changed {
             self.rev += 1;
             (self.send)(&serde_json::to_string(&ToUi::View(patch)).expect("view serializes"));
         }
+    }
+
+    /// The interface topic: the groups whose draws changed, and the ones that are gone. Draws are
+    /// compared before they are resolved to parts, which is the costly step.
+    fn hud_patch(&mut self, ui: &Ui, groups: Vec<Claimed>) -> Result<Option<HudPatch>, view::Failure> {
+        let (lib, fonts) = ui.assets();
+        let first = self.sent.hud.is_none();
+        let sent = self.sent.hud.get_or_insert_with(HashMap::new);
+        let mut patch = HudPatch::default();
+        let mut updates = Vec::new();
+        let mut names = Vec::with_capacity(groups.len());
+        for g in groups {
+            names.push(g.name);
+            if sent.get(g.name).is_some_and(|(draws, _)| *draws == g.draws) {
+                continue;
+            }
+            let parts = self.resolver.parts(lib, fonts, &g.draws)?;
+            let group =
+                HudGroup { name: g.name.to_owned(), layer: g.layer, anchor: g.zoom.anchor, scale: g.zoom.scale, parts };
+            if sent.get(g.name).is_none_or(|(_, old)| *old != group) {
+                patch.groups.push(group.clone());
+            }
+            updates.push((g.name, g.draws, group));
+        }
+        // Nothing is recorded unless every group could be made: a retry sends them all.
+        for (name, draws, group) in updates {
+            sent.insert(name.to_owned(), (draws, group));
+        }
+        patch.removed = sent.keys().filter(|k| !names.contains(&k.as_str())).cloned().collect();
+        patch.removed.sort();
+        for name in &patch.removed {
+            sent.remove(name);
+        }
+        Ok((first || !patch.groups.is_empty() || !patch.removed.is_empty()).then_some(patch))
     }
 
     /// The screen topic if it changed since the last patch.
@@ -301,6 +385,9 @@ pub fn referenced(patch: &ViewPatch) -> Vec<String> {
         };
         widgets.iter().flat_map(|w| &w.parts).for_each(&mut part);
     }
+    if let Some(hud) = &patch.hud {
+        hud.groups.iter().flat_map(|g| &g.parts).for_each(&mut part);
+    }
     if let Some(Some(cursor)) = &patch.cursor {
         out.push(cursor.url.clone());
     }
@@ -327,13 +414,14 @@ mod tests {
             Box::new(move |m| sink.borrow_mut().push(m.to_owned())),
             Host::Web,
             vec!["MainMenu".into()],
+            vec![],
             [1024.0, 768.0],
             1.0,
         );
         assert!(log.borrow()[0].starts_with(r#"{"t":"hello","protocol":1,"host":"web""#));
         let mut ui = ui_with_menu();
-        web.publish(&mut ui, Mode::Menus, None, Some([1024.0, 768.0]));
-        web.publish(&mut ui, Mode::Menus, None, Some([1024.0, 768.0]));
+        web.publish(&mut ui, Mode::Menus, None, Some([1024.0, 768.0]), Vec::new());
+        web.publish(&mut ui, Mode::Menus, None, Some([1024.0, 768.0]), Vec::new());
         let log = log.borrow();
         // One patch: the second publish found nothing changed.
         assert_eq!(log.len(), 2, "{log:?}");
@@ -389,7 +477,7 @@ mod tests {
             widgets: vec![],
         };
         let claimed = || vec!["LoadGame".to_owned(), "GameMenu".to_owned(), "Elsewhere".to_owned()];
-        let mut web = WebUi::new(Box::new(|_| {}), Host::Web, claimed(), [1.0; 2], 1.0);
+        let mut web = WebUi::new(Box::new(|_| {}), Host::Web, claimed(), vec![], [1.0; 2], 1.0);
         // The main menu's load dialog and the game menu's, but not an unlisted screen over the game.
         assert!(web.draws(&screen("LoadGame", false)) && web.draws(&screen("LoadGame", true)));
         assert!(web.draws(&screen("GameMenu", true)));
@@ -397,7 +485,7 @@ mod tests {
         // Named screens only: the registry is the UI's say.
         assert!(!web.draws(&screen("HistoryWindow", true)));
         // A host that cannot draw over the canvas keeps them with the engine.
-        let native = WebUi::new(Box::new(|_| {}), Host::Native, claimed(), [1.0; 2], 1.0);
+        let native = WebUi::new(Box::new(|_| {}), Host::Native, claimed(), vec![], [1.0; 2], 1.0);
         assert!(native.draws(&screen("LoadGame", false)) && !native.draws(&screen("LoadGame", true)));
         assert!(!native.draws(&screen("GameMenu", true)));
         web.claim_everything();
@@ -406,22 +494,69 @@ mod tests {
 
     #[test]
     fn claiming_everything_describes_screens_the_ui_did_not_name() {
-        let mut web = WebUi::new(Box::new(|_| {}), Host::Web, vec![], [1.0; 2], 1.0);
+        let mut web = WebUi::new(Box::new(|_| {}), Host::Web, vec![], vec![], [1.0; 2], 1.0);
         assert!(!web.claim_all);
         web.claim_everything();
         assert!(web.claim_all && web.error.is_none());
     }
 
     #[test]
+    fn the_interface_goes_out_by_group_and_only_what_changed() {
+        use crate::hud::font;
+        use crate::hud::zoom::Zoom;
+        let mut web = WebUi::new(Box::new(|_| {}), Host::Web, vec![], vec!["TopBar".into()], [1.0; 2], 1.0);
+        let ui = ui_with_menu();
+        let group = |name, layer, draws| Claimed { name, layer, zoom: Zoom::NONE, draws };
+        let bar = || group("top_bar", 0, vec![Draw::fill([1, 2, 3, 255], crate::ui::draw::Rect::new(0, 0, 9, 9))]);
+        let text = |s: &[u8]| group("top_bar_text", 1, vec![Draw::game_text(font::YELLOW, s, 5, 7)]);
+        // The first patch carries the topic whatever it holds.
+        let p = web.hud_patch(&ui, Vec::new()).unwrap().unwrap();
+        assert!(p.groups.is_empty() && p.removed.is_empty());
+        assert!(web.hud_patch(&ui, Vec::new()).unwrap().is_none());
+        let p = web.hud_patch(&ui, vec![bar(), text(b"10")]).unwrap().unwrap();
+        assert_eq!(p.groups.iter().map(|g| g.name.as_str()).collect::<Vec<_>>(), ["top_bar", "top_bar_text"]);
+        // A changed number resends the number only.
+        assert!(web.hud_patch(&ui, vec![bar(), text(b"10")]).unwrap().is_none());
+        let p = web.hud_patch(&ui, vec![bar(), text(b"11")]).unwrap().unwrap();
+        assert_eq!(p.groups.len(), 1);
+        assert_eq!(p.groups[0].name, "top_bar_text");
+        assert!(matches!(&p.groups[0].parts[0], acr_ui_protocol::Part::Text { text, x: 5, y: 7, .. } if text == "11"));
+        // A group that is gone is removed; a resync sends the topic again, with everything.
+        let p = web.hud_patch(&ui, vec![bar()]).unwrap().unwrap();
+        assert_eq!((p.groups.len(), p.removed.as_slice()), (0, ["top_bar_text".to_owned()].as_slice()));
+        web.resync();
+        let p = web.hud_patch(&ui, vec![bar()]).unwrap().unwrap();
+        assert_eq!(p.groups.len(), 1);
+    }
+
+    #[test]
+    fn the_interface_is_the_uis_only_where_it_named_it_on_a_transparent_host() {
+        let hud = || vec!["TopBar".to_owned(), "Hints".to_owned()];
+        let web = WebUi::new(Box::new(|_| {}), Host::Web, vec![], hud(), [1.0; 2], 1.0);
+        assert_eq!(web.hud_claim(), Claim { top_bar: true, hints: true, ..Claim::default() });
+        let native = WebUi::new(Box::new(|_| {}), Host::Native, vec![], hud(), [1.0; 2], 1.0);
+        assert_eq!(native.hud_claim(), Claim::default());
+        let mut all = WebUi::new(Box::new(|_| {}), Host::Native, vec![], vec![], [1.0; 2], 1.0);
+        all.claim_everything();
+        assert_eq!(all.hud_claim(), Claim::ALL);
+    }
+
+    #[test]
     fn resync_sends_everything_again_with_a_higher_rev() {
         let log = Rc::new(RefCell::new(Vec::<String>::new()));
         let sink = log.clone();
-        let mut web =
-            WebUi::new(Box::new(move |m| sink.borrow_mut().push(m.to_owned())), Host::Web, vec![], [1.0; 2], 1.0);
+        let mut web = WebUi::new(
+            Box::new(move |m| sink.borrow_mut().push(m.to_owned())),
+            Host::Web,
+            vec![],
+            vec![],
+            [1.0; 2],
+            1.0,
+        );
         let mut ui = ui_with_menu();
-        web.publish(&mut ui, Mode::Intro, None, None);
+        web.publish(&mut ui, Mode::Intro, None, None, Vec::new());
         web.resync();
-        web.publish(&mut ui, Mode::Intro, None, None);
+        web.publish(&mut ui, Mode::Intro, None, None, Vec::new());
         let revs: Vec<u64> = log
             .borrow()
             .iter()

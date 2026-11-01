@@ -1,0 +1,21 @@
+{
+  "name": "svelte_hud",
+  "description": "The classic skin draws the HUD's top bar (#326, docs/webui.md 'The HUD'): the resource values are a group of their own, and the value of food follows a purchase",
+  "args": ["--ui", "classic"],
+  "steps": [
+    {"cmd": "start", "random": {"nation": 1, "seed": 5}},
+    {"cmd": "wait", "ticks": 200},
+    {"cmd": "view", "expect": [
+      {"path": "view.hud.groups.0.name", "eq": "top_bar"},
+      {"path": "view.hud.groups.1.name", "eq": "top_bar_text"},
+      {"path": "view.hud.groups.1.parts", "len_ge": 6}
+    ], "capture": {"food": "view.hud.groups.1.parts.3.text"}},
+    {"cmd": "drag", "around": {"owner": 0, "type": "Kri"}},
+    {"cmd": "click", "label": "Fort"},
+    {"cmd": "click", "near": {"owner": 0, "type": "Kri"}, "offset": [0, 700]},
+    {"cmd": "wait", "until": {"units": {"owner": 0, "type": "Kre", "finished": true}}, "timeout": 20000},
+    {"cmd": "click", "unit": {"owner": 0, "type": "Kre"}},
+    {"cmd": "click", "label": "Hellebardier", "expect": {"path": "target.label", "contains": "Hellebardier"}},
+    {"cmd": "view", "expect": {"path": "view.hud.groups.1.parts.3.text", "ne": "${food}"}, "note": "food was paid"}
+  ]
+}

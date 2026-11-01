@@ -41,6 +41,7 @@
         <img
           alt=""
           draggable="false"
+          data-acr-part-rect="{part.x},{part.y},{part.w},{part.h}"
           {src}
           style:left="{part.x}px"
           style:top="{part.y}px"
@@ -54,6 +55,7 @@
     {:else}
       <div
         class="fill"
+        data-acr-part-rect={part.rect.join(',')}
         style:left="{part.rect[0]}px"
         style:top="{part.rect[1]}px"
         style:width="{part.rect[2]}px"
@@ -71,7 +73,7 @@
   }
   img {
     position: absolute;
-    image-rendering: pixelated;
+    image-rendering: var(--acr-image-rendering, pixelated);
     user-select: none;
   }
   .fill {

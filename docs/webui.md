@@ -7,7 +7,7 @@ and their rules in [docs/ui.md](ui.md) stay as they are, the headless driver and
 run on them, and the Svelte app draws a view model Rust publishes and sends raw input back.
 
 What exists now (#317, #322, browser part): the protocol, the bridge, the classic skin, the main menu,
-the player name, the options, the campaigns, the single missions, the load dialog of the main menu, the random map setup, the loading screen and the connection screen of multiplayer (`Placeholder`), and (#325) the dialogs over the running game: the game menu, the options with their "Weitere Optionen" and ACR rule pages, the save dialog and the load dialog of the game menu, the mission's message boxes, choices and history. Every other screen is still drawn by the engine, under the UI's input overlay.
+the player name, the options, the campaigns, the single missions, the load dialog of the main menu, the random map setup, the loading screen and the connection screen of multiplayer (`Placeholder`), and (#325) the HUD's top bar over the running game (#326), and (#325) the dialogs over the running game: the game menu, the options with their "Weitere Optionen" and ACR rule pages, the save dialog and the load dialog of the game menu, the mission's message boxes, choices and history. Every other screen is still drawn by the engine, under the UI's input overlay.
 
 ## Parts
 
@@ -46,9 +46,9 @@ and clippy never need Bun.
   leave the user gesture; fullscreen (F11, Alt+Enter) is handled in the page for the same reason.
 - `ui/` sends `ready { protocol, screens, viewport, dpr }`; the game answers `hello` and from then on
   publishes after each frame's advance (`WebUi::publish`): only changed topics (`mode`, `loading`,
-  `stage`, `screen`, `cursor`), at most one message a frame, `rev` growing by one. A gap makes the UI
+  `stage`, `screen`, `cursor`, `hud`), at most one message a frame, `rev` growing by one. A gap makes the UI
   send `resync`; the answer carries every topic. Scope `ui.bridge` of the profiler.
-- **Claiming:** the registry (`ui/src/screens/registry.ts`: `MainMenu`, `PlayerName`, `Options`, `Campaigns`, `SingleMission`, `LoadGame`, `RandomMap`, `Placeholder`, `Loading`, `GameMenu`, `GameOptions`, `SaveGameDialog`, `MessageWindow`, `HistoryWindow`) is announced in `ready`.
+- **Claiming:** the registry (`ui/src/screens/registry.ts`: `MainMenu`, `PlayerName`, `Options`, `Campaigns`, `SingleMission`, `LoadGame`, `RandomMap`, `Placeholder`, `Loading`, `GameMenu`, `GameOptions`, `SaveGameDialog`, `MessageWindow`, `HistoryWindow`, and `HUD`: `TopBar`) is announced in `ready` (`screens`, `hud`).
   `Ui::set_external` makes the engine skip exactly the screens the UI claims, and the cursor, but only
   while `view::screen` can describe the screen completely; otherwise the screen goes on being drawn by
   the engine (`engine_drawn: true`), never half.
@@ -131,6 +131,39 @@ The engine takes a claimed dialog out of its frame (`Ui::set_external`) and noth
   The page's driver answers only `ui` while a message box is open (`drive::web_ready`), so the parity route
   dismisses the briefing with a key.
 
+## The HUD (#326)
+
+The classic skin over the game canvas draws the parts of the in-game interface the registry's `HUD` list names
+(`TopBar`; announced in `ready.hud`), on the same transparent host as the dialogs
+(`WebUi::hud_claim`, only `Host::Web` or the driver's classic skin). The engine goes on drawing the world, the world
+overlays (brackets, life bars, move markers), the selection rectangle, the minimap, the command and army panels and the
+side panels, and the parts not named yet.
+
+- **Topic:** `ViewPatch.hud` (`HudPatch { groups, removed }`): a group (`HudGroup { name, layer, anchor, scale, parts }`)
+  is a layer of `Part`s in game canvas pixels (`Stage::game`), replaced as a whole and stacked by `layer`;
+  `scale` about `anchor` is `hud_scale` (the hint is stretched about the mouse as `Hud::draw_hint` lays it out).
+  Rust produces them: `Hud::draw` returns `Section`s (`Layer`), the game leaves the claimed ones out of its layers
+  (`hud::Claim`, `InGame::set_hud_claim`, `Claimed` groups via `InGame::take_claimed`) and `WebUi::hud_patch`
+  resolves them to parts after the frame's advance. The UI draws them in `Hud.svelte` over the canvas and under any dialog.
+  The protocol and the game side know all four parts; the registry says which ones the page claims.
+- **Diffing:** a group's draws are compared with the last ones before they are resolved to parts, and only changed groups go
+  out, so a changed resource value resends its group (`top_bar_text`, six strings) and not the bar's frames
+  (`top_bar`): `hud::claimed` splits the bar's strings from its sprites. The first patch of a connection and the one after a
+  `resync` carry the topic even when empty; a `resync` snapshot makes the UI forget groups it does not list. A group whose
+  files are still loading keeps its old version.
+- **Groups:** `top_bar` (layer 0) and `top_bar_text` (1): the resource bar with the "M" plaque, or the touch bar (`top_bar=touch`,
+  open panel included); `center_top_bar` moves them in Rust.
+- **Input** is the viewport's, as over the dialogs: Rust hit-tests the "M" button, the rows and the plaques.
+- **Driver:** `--ui classic` claims all four; `{"cmd":"view"}` shows the groups (scenarios `svelte_hud`).
+  `drive::tree::messages` still reads the game's whole overlay.
+
+Parity (`ui_parity.py`, the blank grass field, the mouse waits mid-screen; pixels over the part's area `HUD_AREAS`, layout
+from every sprite's and fill's published rect against the page's (`data-acr-part-rect`), at 1024x768, device pixel ratio 1):
+`TopBar` 100.000%, layout 0 px. At a window whose scale is not whole the
+engine's linear filter and the page's differ at glyph edges (the page lays a string out glyph by glyph, the engine scales the
+whole string): `TopBarWide` (1920x1080, scale 1.40625) 96.669%, `TopBarCentered` 96.654%, `TopBarTouch` (1584x720, scale 0.9375) 99.495%,
+`TopBarTouchOpen` 98.102%, so those are measured, not within 99.5%.
+
 ## Native host spike (Android, #333)
 
 `tools/android/build-webview-spike.sh` builds the example `crates/acr-game/examples/webview_spike_android.rs`
@@ -177,5 +210,5 @@ webview, the `capture` and `shrink` modes, a soft keyboard (the popup is not foc
 
 ## Not yet
 
-The touch skin, the HUD, the native webview host (`wry`, spike on Windows), the other screens, and the start screen's layout for other screen ratios
+The touch skin, the rest of the HUD (the minimap, the command and army panels, the side panels, the pause text, the diplomacy panel), the native webview host (`wry`, spike on Windows), the other screens, and the start screen's layout for other screen ratios
 (#316 section 8).

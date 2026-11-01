@@ -1,7 +1,8 @@
 import type { Bridge } from './bridge';
-import { applyWidgets, isSnapshot } from './patch';
+import { applyHud, applyWidgets, isSnapshot } from './patch';
 import type { CanvasView } from './protocol/CanvasView';
 import type { CursorView } from './protocol/CursorView';
+import type { HudGroup } from './protocol/HudGroup';
 import type { Mode } from './protocol/Mode';
 import type { ScreenPatch } from './protocol/ScreenPatch';
 import type { Stage } from './protocol/Stage';
@@ -20,6 +21,8 @@ export class UiState {
   screen = $state.raw<ScreenInfo | null>(null);
   widgets = $state.raw<WidgetView[]>([]);
   cursor = $state.raw<CursorView | null>(null);
+  /** The groups of the in-game interface, in stacking order. */
+  hud = $state.raw<HudGroup[]>([]);
   /** Game protocol version of the last `Hello`. */
   protocol = $state.raw<number | null>(null);
 
@@ -51,12 +54,14 @@ export class UiState {
       this.#bridge.send({ t: 'resync' });
       return;
     }
+    const snapshot = this.#awaitingSnapshot;
     this.#awaitingSnapshot = false;
     this.#rev = patch.rev;
     if (patch.mode != null) this.mode = patch.mode;
     if (patch.loading !== undefined) this.loading = patch.loading;
     if (patch.stage != null) this.stage = patch.stage;
     if (patch.cursor !== undefined) this.cursor = patch.cursor;
+    if (patch.hud != null) this.hud = applyHud(snapshot ? [] : this.hud, patch.hud);
     if (patch.screen != null) {
       const { widgets, ...info } = patch.screen;
       this.screen = info;

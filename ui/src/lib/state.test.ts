@@ -59,4 +59,15 @@ describe('UiState', () => {
     expect(state.mode).toBe('menus');
     expect(sent).toHaveLength(1);
   });
+
+  it('forgets the interface groups a snapshot does not carry', () => {
+    const { state } = setup();
+    const group = (name: string) => ({ name, layer: 0, anchor: [0, 0] as [number, number], scale: 1, parts: [] });
+    state.receive({ t: 'hello', protocol: 1, host: 'web', asset_base: '' });
+    state.receive(view({ rev: 1, mode: 'game', hud: { groups: [group('hint'), group('top_bar')], removed: [] } }));
+    expect(state.hud.map((g) => g.name).sort()).toEqual(['hint', 'top_bar']);
+    state.receive(view({ rev: 3, mode: 'game' }));
+    state.receive(view({ rev: 4, mode: 'game', screen: screen(), cursor: null, loading: null, hud: { groups: [group('top_bar')], removed: [] } }));
+    expect(state.hud.map((g) => g.name)).toEqual(['top_bar']);
+  });
 });

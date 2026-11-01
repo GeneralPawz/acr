@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import Hud from './Hud.svelte';
   import GameViewport from './GameViewport.svelte';
   import Stage from './Stage.svelte';
   import { ui } from './context';
@@ -27,6 +28,9 @@
 </script>
 
 <div class="acr-ui" data-acr-mode={model.mode}>
+  {#if model.mode === 'game' && model.hud.length > 0}
+    <Hud {dpr} />
+  {/if}
   {#if shown}
     <Stage {dpr} />
   {/if}

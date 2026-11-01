@@ -70,10 +70,38 @@ ROUTES.update({
     "SaveGameDialog": MENU + ["Spiel speichern"],
 })
 
+# The parts of the in-game interface (#326), on the same blank field: the top bar (also wide, centred
+# and the touch bar, at the window sizes and settings of `HUD_SETTINGS`). The mouse waits mid-screen otherwise: in a corner it would scroll the map.
+# Pixels are counted over the part's `HUD_AREAS` box. They are `game` for the driver's tree, which has no widget of them.
+ROUTES.update({
+    "TopBar": [BLANK, {"hover": [512, 400]}],
+    "TopBarWide": [BLANK, {"hover": [960, 540]}],
+    "TopBarCentered": [BLANK, {"hover": [960, 540]}],
+    "TopBarTouch": [BLANK, {"hover": [792, 360]}],
+    "TopBarTouchOpen": [BLANK, [1547, 19], {"hover": [792, 360]}],
+})
+# Settings and window size of the routes that need them (`top_bar`, `center_top_bar` and `hud_scale` of
+# settings.txt); the others run at --size.
+HUD_SETTINGS = {
+    "TopBarWide": ("", [1920, 1080]),
+    "TopBarCentered": ("center_top_bar=on\n", [1920, 1080]),
+    "TopBarTouch": ("top_bar=touch\n", [1584, 720]),
+    "TopBarTouchOpen": ("top_bar=touch\n", [1584, 720]),
+}
+HUD_AREAS = {
+    "TopBar": "243,0,781,44",
+    "TopBarWide": "0,0,1920,44",
+    "TopBarCentered": "0,0,1920,44",
+    "TopBarTouch": "0,0,1584,70",
+    "TopBarTouchOpen": "1100,0,484,330",
+}
+
 # Routes whose screen is another route's (`Screen::name`): the campaign's missions are a SingleMission.
 SCREEN_OF = {
     "CampaignMissions": "SingleMission", "RandomMapCombo": "RandomMap", "GameOptionsMore": "GameOptions",
     "GameOptionsRules": "GameOptions", "GameLoadGame": "LoadGame",
+    "TopBar": "game", "TopBarWide": "game",
+    "TopBarCentered": "game", "TopBarTouch": "game", "TopBarTouchOpen": "game",
 }
 
 CHROMIUM_ARGS = {
@@ -103,24 +131,54 @@ DOM_RECTS = """() => {
 }"""
 
 
+# The interface's parts are laid out by the same stage maths as the dialogs: every sprite and fill
+# (`data-acr-part-rect`, the rect Rust published, in game canvas pixels) as the page places it. Their
+# groups are at hud_scale 1 here. Text has no box of its own; its pixels are counted.
+HUD_RECTS = """() => {
+    const hud = document.querySelector('[data-acr-hud]');
+    if (!hud) return {};
+    const box = hud.getBoundingClientRect();
+    const scale = box.width / hud.offsetWidth;
+    const out = {};
+    for (const group of document.querySelectorAll('[data-acr-hud-group]')) {
+        group.querySelectorAll('[data-acr-part-rect]').forEach((e, i) => {
+            let [x, y, w, h] = e.dataset.acrPartRect.split(',').map(Number);
+            // A group at hud_scale is stretched about its anchor.
+            const k = Number(group.dataset.acrHudScale);
+            const [ax, ay] = group.dataset.acrHudAnchor.split(',').map(Number);
+            [x, y, w, h] = [ax + (x - ax) * k, ay + (y - ay) * k, w * k, h * k];
+            const r = e.getBoundingClientRect();
+            out[group.dataset.acrHudGroup + '/' + i] = {
+                dom: [r.x, r.y, r.width, r.height],
+                want: [box.x + x * scale, box.y + y * scale, w * scale, h * scale],
+            };
+        });
+    }
+    return out;
+}"""
+
+
 class Page:
     """One browser page on the game, with the driver hook."""
 
-    def __init__(self, browser, url, size, timeout_s):
+    def __init__(self, browser, url, size, timeout_s, extra="", init=""):
         self.timeout_s = timeout_s
         self.errors = []
         self.page = browser.new_page(viewport={"width": size[0], "height": size[1]}, device_scale_factor=1)
         self.page.on("console", lambda m: m.type == "error" and self.errors.append(m.text))
         self.page.on("pageerror", lambda e: self.errors.append(str(e)))
         self.page.add_init_script(
-            "localStorage.setItem('acr-settings', %s);" % json.dumps(base64.b64encode(SETTINGS.encode()).decode())
+            "localStorage.setItem('acr-settings', %s);" % json.dumps(base64.b64encode((SETTINGS + extra).encode()).decode())
         )
+        if init:
+            self.page.add_init_script(init)
         self.page.goto(url)
         self.page.wait_for_function(
             "() => document.querySelector('canvas') && !document.getElementById('picker')",
             timeout=timeout_s * 1000,
         )
         self.page.evaluate("() => window.__acr = import('./acr_game.js')")
+        self.hover = None
 
     def drive(self, request):
         self.page.evaluate("async (l) => (await window.__acr).acr_drive(l)", json.dumps(request))
@@ -153,6 +211,10 @@ class Page:
         for step in route:
             if isinstance(step, dict) and "wait_screen" in step:
                 self.wait_screen(step["wait_screen"])
+            elif isinstance(step, dict) and "hover" in step:
+                # The mouse stays here for the screenshot (a hint needs it over its target).
+                self.hover = step["hover"]
+                self.page.mouse.move(*self.hover)
             elif isinstance(step, dict) and "press" in step:
                 # A message box takes no driver request but `ui`: the key goes in like a player's.
                 self.page.keyboard.press(step["press"])
@@ -170,24 +232,28 @@ class Page:
         else:
             raise SystemExit("the screen %s did not come up (at %s)" % (screen, tree["screen"]))
         # Out of the way of the screen: the engine draws its cursor, the page the system's.
-        self.page.mouse.move(self.page.viewport_size["width"] - 1, self.page.viewport_size["height"] - 1)
+        if self.hover:
+            self.page.mouse.move(*self.hover)
+        else:
+            self.page.mouse.move(self.page.viewport_size["width"] - 1, self.page.viewport_size["height"] - 1)
         time.sleep(1.0)
         return self.tree()
 
 
-def shoot(browser, url, ui, screen, route, size, timeout_s, out):
-    page = Page(browser, "%s%sui=%s" % (url, "&" if "?" in url else "?", ui), size, timeout_s)
+def shoot(browser, url, ui, screen, route, size, timeout_s, out, extra=""):
+    page = Page(browser, "%s%sui=%s" % (url, "&" if "?" in url else "?", ui), size, timeout_s, extra)
     tree = page.show(screen, route)
     if ui == "svelte":
-        page.page.wait_for_selector("[data-acr-id]", state="attached", timeout=timeout_s * 1000)
+        page.page.wait_for_selector("[data-acr-id], [data-acr-hud-group]", state="attached", timeout=timeout_s * 1000)
         page.page.evaluate("async () => { await document.fonts.ready; await new Promise(requestAnimationFrame); }")
         time.sleep(0.5)
     path = out / ("%s.png" % ui)
     page.page.screenshot(path=str(path))
     rects = page.page.evaluate(DOM_RECTS) if ui == "svelte" else {}
+    hud = page.page.evaluate(HUD_RECTS) if ui == "svelte" else {}
     errors = page.errors
     page.page.close()
-    return tree, rects, errors
+    return tree, rects, hud, errors
 
 
 def layout_difference(tree, rects):
@@ -203,6 +269,12 @@ def layout_difference(tree, rects):
         per_id[ident] = round(d, 2)
         worst = max(worst, d)
     return worst, per_id, sorted(set(rects) - set(expected)), sorted(set(rects) & set(expected))
+
+
+def hud_layout(hud):
+    """The largest pixel difference between the page's and Rust's rect of an interface part."""
+    per_id = {k: round(max(abs(a - b) for a, b in zip(v["dom"], v["want"])), 2) for k, v in hud.items()}
+    return max(per_id.values(), default=0.0), per_id, sorted(per_id)
 
 
 def dialog_area(tree, size, margin=40):
@@ -243,23 +315,29 @@ def main():
     ap.add_argument("--timeout-s", type=float, default=240.0)
     a = ap.parse_args()
     root = pathlib.Path(__file__).resolve().parents[2]
-    size = [int(v) for v in a.size.split("x")]
+    default_size = [int(v) for v in a.size.split("x")]
     screens = [s for s in a.screens.split(",") if s]
     unknown = [s for s in screens if s not in ROUTES]
     if unknown:
         raise SystemExit("no route to %s; known: %s" % (", ".join(unknown), ", ".join(ROUTES)))
 
     ok = True
+    size = default_size
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True, args=CHROMIUM_ARGS[a.gpu])
         for screen in screens:
             out = pathlib.Path(a.out) / screen
             out.mkdir(parents=True, exist_ok=True)
-            tree, _, engine_errors = shoot(browser, a.url, "engine", SCREEN_OF.get(screen, screen), ROUTES[screen], size, a.timeout_s, out)
-            _, rects, svelte_errors = shoot(browser, a.url, "svelte", SCREEN_OF.get(screen, screen), ROUTES[screen], size, a.timeout_s, out)
-            area = dialog_area(tree, size)
+            extra, size = HUD_SETTINGS.get(screen, ("", default_size))
+            tree, _, _, engine_errors = shoot(browser, a.url, "engine", SCREEN_OF.get(screen, screen), ROUTES[screen], size, a.timeout_s, out, extra)
+            _, rects, hud, svelte_errors = shoot(browser, a.url, "svelte", SCREEN_OF.get(screen, screen), ROUTES[screen], size, a.timeout_s, out, extra)
+            area = HUD_AREAS.get(screen) or dialog_area(tree, size)
             pixels = pixel_share(out / "engine.png", out / "svelte.png", out / "diff.png", root, area)
-            layout, per_id, extra, compared = layout_difference(tree, rects)
+            if screen in HUD_AREAS:
+                layout, per_id, compared = hud_layout(hud)
+                extra = []
+            else:
+                layout, per_id, extra, compared = layout_difference(tree, rects)
             passed = pixels >= a.min_pixels and layout <= a.max_layout and bool(compared) and not svelte_errors
             ok &= passed
             report = {

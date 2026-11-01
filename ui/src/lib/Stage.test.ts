@@ -120,6 +120,36 @@ describe('Ui', () => {
     expect(container.querySelector('.stage')).toBeNull();
   });
 
+  it('draws the interface groups over the game canvas, scaled about their anchor', async () => {
+    const b = bridge([]);
+    const model = new UiState(b);
+    const { container } = mountWith(model, b);
+    const fill = { t: 'fill' as const, rgba: [1, 2, 3, 255] as [number, number, number, number], rect: [0, 0, 5, 5] as [number, number, number, number], clip: null };
+    model.receive({
+      t: 'view',
+      rev: 1,
+      mode: 'game',
+      stage: { menu: canvas, game: canvas },
+      hud: {
+        groups: [
+          { name: 'hint', layer: 3, anchor: [30, 40], scale: 2, parts: [fill] },
+          { name: 'top_bar', layer: 0, anchor: [0, 0], scale: 1, parts: [fill] },
+        ],
+        removed: [],
+      },
+    });
+    await Promise.resolve();
+    const groups = [...container.querySelectorAll<HTMLElement>('[data-acr-hud-group]')];
+    expect(groups.map((g) => g.dataset.acrHudGroup)).toEqual(['top_bar', 'hint']);
+    expect(groups[0].style.transform).toBe('');
+    expect(groups[1].style.transform).toBe('scale(2)');
+    expect(groups[1].style.transformOrigin).toBe('30px 40px');
+    // No interface outside the running game.
+    model.receive({ t: 'view', rev: 2, mode: 'menus' });
+    await Promise.resolve();
+    expect(container.querySelector('[data-acr-hud]')).toBeNull();
+  });
+
   it('forwards pointer input in physical pixels', async () => {
     const sent: FromUi[] = [];
     const b = bridge(sent);
