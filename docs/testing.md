@@ -56,6 +56,7 @@ native only; the browser build has a scene subset of it ("Browser" below).
 | `--drive-gpu` (`ACR_DRIVE_GPU=1`) | a hidden window with a GPU, for `screenshot` |
 | `--size WxH` | the window size the game lays out for (default 1024x768) |
 | `--dialogs auto\|report` | the dialog policy at the start (default `auto`) |
+| `--ui engine\|classic\|touch` | the Svelte UI (docs/webui.md): `classic` makes the driver announce itself as a UI that draws every screen the view model can describe, enables `view` and `ui_send`, and resolves every asset a published view refers to after each answer; an asset that cannot be made, or a screen with a broken asset, fails the command (`ok: false`). `touch` is refused by the `ready` line until the touch skin exists (default `engine`: no UI). With `--drive-gpu` the engine leaves the claimed screens undrawn, as in the browser |
 
 There are no movies. The game only advances while a request needs it, in fixed steps as
 fast as it can: one simulation tick per frame in a running game, one menu tick (1/60 s)
@@ -107,6 +108,8 @@ its label to appear.
 | `{"cmd": "key", "key": "F12", "mods": ["ctrl"]}` | `Enter`, `Escape`, `F1`..`F12`, arrows, `PageUp`, `Home`, `Space`, `Pause`, single characters |
 | `{"cmd": "text", "text": "e2e"}` | types into the focused input box |
 | `{"cmd": "wheel", "lines": -1}` | mouse wheel |
+| `{"cmd": "view"}` | `--ui classic`: the Svelte UI's whole view model as `view`, one `ViewPatch` (mode, stage, screen with every widget's parts, cursor) |
+| `{"cmd": "ui_send", "msg": {"t": "pointer", ...}}` | `--ui classic`: a `FromUi` message as if the page had sent it (raw pointer, wheel, key, `resync`); a message that does not parse, or one before the UI is connected, is an error |
 | `{"cmd": "wait", "ticks": 100}` | also `"frames": n`, `"until": {...}` (all must hold), `"timeout": frames` (6000) |
 | `{"cmd": "state"}` | see below; `state.map_objects` counts the map's trees, stones, holes and others (`World::objects`, which the editor's Natur list adds to); `"units": true` lists every object, `"owner": n` and `"type": "Mus"` filter, `"visible_only": true` respects the fog, `"detail": true` adds each object's orders, animation and frame, stances, reload counter (`delay`), the owner's characteristics of the type (`adv`: life, damage and pause per attack index), direction and switches, and the listed objects' `activity` |
 | `{"cmd": "command", "command": {"type": "move", "units": [1, 2], "x": 3000, "y": 9000}}` | a simulation command for setup (below) |
@@ -525,7 +528,7 @@ the RX 9060 XT), `swiftshader` or `gl`.
 each frame's advance and render since the last call. The page's own frame loop runs one queued
 request per frame once the game has settled (`drive::web_ready`; the movies are skipped).
 Only requests that set a scene up work there: `start` with `blank`, `spawn`, `hit`, `camera`,
-`hud`, `state`, `command`, `ui`, `textures`; waits, screenshots, `frametimes`, `gputime` and
+`hud`, `state`, `command`, `ui`, `textures`, and the input requests `click`, `key` and `text` (their steps run at once: a click's move, press and release in a row, on the target the widget tree names); waits, screenshots, `frametimes`, `gputime` and
 the studio need the native driver's fixed-step frames, the page takes its screenshots itself.
 
 **Measured** (render VM, ANGLE on Vulkan/RADV, 1600 × 900, one `hdman.glb` zoomed 1..9;
@@ -544,7 +547,12 @@ binds with the `wasm-bindgen-cli-support` crate at Cargo.lock's version (0.2.129
 screens it claims are DOM (`[data-acr-id]`, `[data-acr-hover]`), all input is forwarded raw so
 `acr_drive` and the pointer work as before. Parity of a screen: screenshots of `?ui=engine` and
 `?ui=svelte` at 1024x768, device pixel ratio 1, then `cargo xtask ui-diff a.png b.png --out d.png`
-(needs at least 99.5% of the pixels within +-8). In headless Chromium without a GPU the game needs
+(needs at least 99.5% of the pixels within +-8). `tools/browser/ui_parity.py --screens MainMenu`
+(Python Playwright, against `cargo xtask serve --game-dir ...` with the bundle built) does both for
+each screen and also compares every `[data-acr-id]` element's rect with the `ui` tree's rect of the
+same id (at most 1 px); it writes `runs/ui-parity/<screen>/{engine,svelte,diff}.png` and `report.json`
+(`pixels`, `layout`, `passed`) and exits 1 when a screen fails. The screens' routes (labels to click
+from the main menu) are its `ROUTES`; a screen adds one when it joins the registry. In headless Chromium without a GPU the game needs
 WebGPU on SwiftShader: `--enable-unsafe-webgpu --enable-unsafe-swiftshader
 --use-webgpu-adapter=swiftshader --enable-features=Vulkan,WebGPU`. The UI's own tests are
 `cd ui && bun run check && bun run test` (not `bun test`, which is Bun's own runner).

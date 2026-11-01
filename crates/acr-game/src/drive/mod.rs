@@ -65,11 +65,38 @@ pub struct Options {
     /// The window size the game lays out for.
     pub size: [u32; 2],
     pub dialogs: DialogPolicy,
+    /// `--ui`: who draws the claimed screens; a value that is not supported is reported by the
+    /// `ready` line.
+    pub ui: Result<UiSkin, String>,
+}
+
+/// `--ui engine|classic|touch` (docs/webui.md "Driver").
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UiSkin {
+    /// No Svelte UI: the engine's own screens.
+    Engine,
+    /// The driver plays the classic skin: it announces itself as a UI that draws every screen
+    /// the view model can describe, resolves every asset the view refers to after each answer,
+    /// and answers `view` and `ui_send`.
+    Classic,
+    /// The touch skin (#316 section 5), not built yet.
+    Touch,
+}
+
+impl UiSkin {
+    pub fn parse(name: &str) -> Result<Self, String> {
+        match name {
+            "engine" => Ok(Self::Engine),
+            "classic" => Ok(Self::Classic),
+            "touch" => Err("--ui touch: the touch skin is not built yet (#316 section 5)".into()),
+            other => Err(format!("--ui {other:?}: expected engine, classic or touch")),
+        }
+    }
 }
 
 impl Options {
     /// `--drive` or `ACR_DRIVE=1`; `--drive-gpu` or `ACR_DRIVE_GPU=1` with a GPU;
-    /// `--size WxH` (default 1024x768); `--dialogs auto|report`.
+    /// `--size WxH` (default 1024x768); `--dialogs auto|report`; `--ui engine|classic|touch`.
     pub fn from_args(args: &[String]) -> Option<Self> {
         let env = |name: &str| std::env::var(name).is_ok_and(|v| v == "1" || v.eq_ignore_ascii_case("true"));
         let gpu = args.iter().any(|a| a == "--drive-gpu") || env("ACR_DRIVE_GPU");
@@ -84,7 +111,8 @@ impl Options {
             })
             .unwrap_or([1024, 768]);
         let dialogs = value("--dialogs").as_deref().and_then(DialogPolicy::parse).unwrap_or(DialogPolicy::Auto);
-        Some(Self { gpu, size, dialogs })
+        let ui = value("--ui").map_or(Ok(UiSkin::Engine), |name| UiSkin::parse(&name));
+        Some(Self { gpu, size, dialogs, ui })
     }
 }
 
@@ -95,7 +123,7 @@ pub fn strip_args(args: &[String]) -> Vec<String> {
     while let Some(a) = it.next() {
         match a.as_str() {
             "--drive" | "--drive-gpu" => {}
-            "--size" | "--dialogs" => {
+            "--size" | "--dialogs" | "--ui" => {
                 it.next();
             }
             _ => out.push(a.clone()),
@@ -158,6 +186,22 @@ struct Job {
     studio: Option<studio::Task>,
     /// The first answer: the `ready` line.
     hello: bool,
+    /// `view`: where the request is.
+    view: ViewWait,
+    /// The classic skin's messages since the last check, and the asset paths they refer to
+    /// that are not resolved yet.
+    ui_messages: Vec<String>,
+    ui_pending: Vec<String>,
+    ui_rounds: u32,
+}
+
+/// A `view` request: it asks for everything again after the screen settled, then takes the
+/// answer from the next frame's publish.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ViewWait {
+    No,
+    Wanted,
+    Resynced,
 }
 
 impl Job {
@@ -176,6 +220,10 @@ impl Job {
             reply: Map::new(),
             studio: None,
             hello: false,
+            view: ViewWait::No,
+            ui_messages: Vec::new(),
+            ui_pending: Vec::new(),
+            ui_rounds: 0,
         }
     }
 }
@@ -192,6 +240,10 @@ pub struct Driver {
     quit: bool,
     /// Game seconds per frame set by `fps` (`None`: one tick per frame).
     frame_seconds: Option<f64>,
+    /// The classic skin still to announce itself (`--ui classic`).
+    ui_connect: bool,
+    /// Why the UI could not be set up, reported by the `ready` line.
+    ui_error: Option<String>,
 }
 
 impl Driver {
@@ -217,6 +269,8 @@ impl Driver {
             dismissed: Vec::new(),
             quit: false,
             frame_seconds: None,
+            ui_connect: false,
+            ui_error: None,
         }
     }
 
@@ -338,7 +392,16 @@ impl Game {
         }
         // No movies.
         self.mode = Mode::Menus;
-        self.driver = Some(Box::new(Driver::new(options)));
+        let mut driver = Driver::new(options);
+        match driver.options.ui.clone() {
+            Ok(UiSkin::Classic) => {
+                self.ui_outbox = Some(Default::default());
+                driver.ui_connect = true;
+            }
+            Ok(_) => {}
+            Err(e) => driver.ui_error = Some(e),
+        }
+        self.driver = Some(Box::new(driver));
     }
 
     /// One pass of the event loop under the driver.
@@ -359,6 +422,9 @@ impl Driver {
     fn run(&mut self, game: &mut Game, event_loop: &ActiveEventLoop) {
         let start = Instant::now();
         let mut frames = 0;
+        if std::mem::take(&mut self.ui_connect) {
+            self.connect_ui(game, event_loop);
+        }
         loop {
             if self.job.is_none() {
                 match self.lines.try_recv() {
@@ -387,6 +453,93 @@ impl Driver {
                 return;
             }
         }
+    }
+
+    /// Plays the classic skin's `Ready`: the UI draws every screen the view model describes.
+    fn connect_ui(&mut self, game: &mut Game, event_loop: &ActiveEventLoop) {
+        let ready = acr_ui_protocol::FromUi::Ready {
+            protocol: acr_ui_protocol::PROTOCOL,
+            screens: Vec::new(),
+            viewport: self.options.size.map(|v| v as f32),
+            dpr: 1.0,
+        };
+        crate::webui::input::apply(game, event_loop, ready);
+        match game.webui.as_mut() {
+            Some(web) => web.claim_everything(),
+            None => self.ui_error = Some("--ui classic: the game did not accept the UI".into()),
+        }
+    }
+
+    /// The classic skin's part of a command, after the command itself: a `view` request's
+    /// snapshot, and every asset the published views refer to resolved as the page would, so a
+    /// broken one fails the command. `Ok(true)`: files are still loading, run another frame.
+    fn check_ui(&mut self, game: &mut Game, job: &mut Job) -> Result<bool, String> {
+        let Some(out) = game.ui_outbox.clone() else { return Ok(false) };
+        job.ui_messages.extend(out.borrow_mut().drain(..));
+        if job.view == ViewWait::Wanted {
+            let web = game.webui.as_mut().ok_or("the UI is not connected")?;
+            web.resync();
+            job.ui_messages.clear();
+            job.view = ViewWait::Resynced;
+            return Ok(true);
+        }
+        for message in std::mem::take(&mut job.ui_messages) {
+            if let Ok(acr_ui_protocol::ToUi::View(patch)) = serde_json::from_str(&message) {
+                job.ui_pending.extend(crate::webui::referenced(&patch));
+                if job.view == ViewWait::Resynced {
+                    job.reply.insert("view".into(), serde_json::from_str(&message).map_err(|e| e.to_string())?);
+                }
+            }
+        }
+        if job.view == ViewWait::Resynced {
+            if !job.reply.contains_key("view") {
+                return Err("the UI published nothing after a resync".into());
+            }
+            job.view = ViewWait::No;
+        }
+        let web = game.webui.as_mut().ok_or("the UI is not connected")?;
+        if let Some(e) = &web.error {
+            return Err(format!("ui: {e}"));
+        }
+        job.ui_pending.sort();
+        job.ui_pending.dedup();
+        let mut waiting = false;
+        for path in std::mem::take(&mut job.ui_pending) {
+            match web.check_asset(&game.ui, &path) {
+                Ok(crate::webui::assets::Resolved::Ready(_)) => {}
+                Ok(crate::webui::assets::Resolved::Pending) => {
+                    job.ui_pending.push(path);
+                    waiting = true;
+                }
+                Err(e) => return Err(format!("ui asset {path}: {e}")),
+            }
+        }
+        if waiting {
+            job.ui_rounds += 1;
+            if job.ui_rounds > 2000 {
+                return Err(format!("ui assets never arrived: {:?}", job.ui_pending));
+            }
+            job.settle = true;
+            job.settle_frames = 0;
+        }
+        Ok(waiting)
+    }
+
+    /// The browser's click, key and text: resolves the target and applies the steps in a row.
+    #[cfg(target_arch = "wasm32")]
+    fn run_now(&mut self, game: &mut Game, event_loop: &ActiveEventLoop, job: &mut Job) -> Result<bool, String> {
+        if let Some((target, pointer, _)) = job.resolve.take() {
+            let (p, hit) = tree::resolve(game, &target)?;
+            job.reply.insert("target".into(), hit);
+            job.steps = match pointer {
+                Pointer::Click { button, double, mods } => click_steps(p, button, double, mods),
+                Pointer::Move => VecDeque::from([Step::Move(p)]),
+            };
+        }
+        while let Some(step) = job.steps.pop_front() {
+            self.apply(game, event_loop, step);
+        }
+        Ok(false)
     }
 
     /// One frame of the game at the fixed step.
@@ -468,6 +621,11 @@ impl Driver {
 
     /// The next part of a job: `Ok(None)` needs another frame, `Ok(Some(()))` is done.
     fn work(&mut self, game: &mut Game, event_loop: &ActiveEventLoop, job: &mut Job) -> Result<Option<()>, String> {
+        if job.hello
+            && let Some(e) = self.ui_error.take()
+        {
+            return Err(e);
+        }
         if let Some((target, pointer, timeout)) = job.resolve.take() {
             if !self.settled(game) && job.frames < timeout {
                 job.resolve = Some((target, pointer, timeout));
@@ -581,6 +739,9 @@ impl Driver {
                 return Ok(None);
             }
             job.reply.insert("paths".into(), rec.paths.into());
+        }
+        if self.check_ui(game, job)? {
+            return Ok(None);
         }
         Ok(Some(()))
     }
@@ -708,6 +869,24 @@ impl Driver {
                     None => [0.0; 2],
                 };
                 job.steps.extend([Step::Touch(id, phase, pos, time), Step::Frame]);
+                job.settle = true;
+                Ok(true)
+            }
+            Request::View => {
+                if game.ui_outbox.is_none() {
+                    return Err("no Svelte UI: start the driver with --ui classic".into());
+                }
+                job.view = ViewWait::Wanted;
+                job.settle = true;
+                Ok(true)
+            }
+            Request::UiSend(msg) => {
+                let message: acr_ui_protocol::FromUi =
+                    serde_json::from_value(msg).map_err(|e| format!("ui_send: {e}"))?;
+                if game.webui.is_none() && !matches!(message, acr_ui_protocol::FromUi::Ready { .. }) {
+                    return Err("ui_send: the UI is not connected: start the driver with --ui classic".into());
+                }
+                crate::webui::input::apply(game, event_loop, message);
                 job.settle = true;
                 Ok(true)
             }
@@ -1156,7 +1335,7 @@ impl Driver {
 pub(crate) fn web_request(game: &mut Game, event_loop: &ActiveEventLoop, line: &str) -> Value {
     let (_tx, lines) = std::sync::mpsc::channel();
     let mut driver = Driver {
-        options: Options { gpu: true, size: [0, 0], dialogs: DialogPolicy::Auto },
+        options: Options { gpu: true, size: [0, 0], dialogs: DialogPolicy::Auto, ui: Ok(UiSkin::Engine) },
         lines,
         job: None,
         frames: 0,
@@ -1164,6 +1343,8 @@ pub(crate) fn web_request(game: &mut Game, event_loop: &ActiveEventLoop, line: &
         dismissed: Vec::new(),
         quit: false,
         frame_seconds: None,
+        ui_connect: false,
+        ui_error: None,
     };
     let (seq, request) = match protocol::parse(line) {
         Ok(r) => r,
@@ -1180,7 +1361,15 @@ pub(crate) fn web_request(game: &mut Game, event_loop: &ActiveEventLoop, line: &
         | Request::Command(_)
         | Request::Ui { .. }
         | Request::Textures) => driver.prepare(game, event_loop, r, &mut job),
-        _ => Err("not in the browser: start (blank), spawn, hit, camera, hud, state, command, ui, textures".into()),
+        // Input needs no frames of its own here: the page's loop runs the next request on the next
+        // frame, so the steps run at once (a click's move, press and release in a row).
+        r @ (Request::Click { .. } | Request::Key { .. } | Request::Text { .. }) => {
+            driver.prepare(game, event_loop, r, &mut job).and_then(|_| driver.run_now(game, event_loop, &mut job))
+        }
+        _ => Err(
+            "not in the browser: start (blank), spawn, hit, camera, hud, state, command, ui, textures, click, key, text"
+                .into(),
+        ),
     };
     let mut reply = job.reply;
     if let Some(seq) = job.seq {
@@ -1218,7 +1407,12 @@ mod tests {
     #[test]
     fn options_from_the_command_line() {
         let o = Options::from_args(&args("game --drive --size 800x600 --dialogs report")).unwrap();
-        assert_eq!(o, Options { gpu: false, size: [800, 600], dialogs: DialogPolicy::Report });
+        assert_eq!(o, Options { gpu: false, size: [800, 600], dialogs: DialogPolicy::Report, ui: Ok(UiSkin::Engine) });
+        let o = Options::from_args(&args("game --drive --ui classic")).unwrap();
+        assert_eq!(o.ui, Ok(UiSkin::Classic));
+        assert!(Options::from_args(&args("game --drive --ui touch")).unwrap().ui.is_err());
+        assert!(Options::from_args(&args("game --drive --ui nope")).unwrap().ui.is_err());
+        assert_eq!(strip_args(&args("--drive --ui classic C:\\AC")), args("C:\\AC"));
         let o = Options::from_args(&args("game --drive-gpu")).unwrap();
         assert!(o.gpu && o.size == [1024, 768] && o.dialogs == DialogPolicy::Auto);
         assert_eq!(strip_args(&args("--drive --size 800x600 C:\\AC")), args("C:\\AC"));

@@ -35,12 +35,19 @@ const HOST: Host = Host::Web;
 #[cfg(not(target_arch = "wasm32"))]
 const HOST: Host = Host::Native;
 
-/// The way to the UI of this platform, once the page connected.
-fn sender() -> Option<Sender> {
+/// Messages to the UI that the test driver collects instead of a page (`--ui classic`).
+pub type Outbox = std::rc::Rc<std::cell::RefCell<Vec<String>>>;
+
+/// The way to the UI of this platform, once the page connected; under the test driver the
+/// collecting outbox.
+fn sender(game: &crate::Game) -> Option<Sender> {
     #[cfg(target_arch = "wasm32")]
-    return web::sender();
+    {
+        let _ = game;
+        web::sender()
+    }
     #[cfg(not(target_arch = "wasm32"))]
-    None
+    game.ui_outbox.clone().map(|out| Box::new(move |m: &str| out.borrow_mut().push(m.to_owned())) as Sender)
 }
 
 /// What the UI was last told, to send only changes.
@@ -67,6 +74,10 @@ pub struct WebUi {
     send: Sender,
     /// Screens the UI draws itself.
     claimed: Vec<String>,
+    /// Every screen the view model can describe is the UI's (the test driver's classic skin).
+    claim_all: bool,
+    /// Why the last description failed on an asset (anything but files still loading).
+    pub error: Option<String>,
     rev: u64,
     sent: Sent,
     resolver: view::Resolver,
@@ -86,6 +97,8 @@ impl WebUi {
         Self {
             send,
             claimed,
+            claim_all: false,
+            error: None,
             rev: 0,
             sent: Sent::default(),
             resolver: view::Resolver::default(),
@@ -94,6 +107,11 @@ impl WebUi {
             viewport: (viewport, dpr),
             mods: Default::default(),
         }
+    }
+
+    /// The UI draws every screen it can describe, whatever it announced.
+    pub fn claim_everything(&mut self) {
+        self.claim_all = true;
     }
 
     /// The UI wants everything again.
@@ -120,6 +138,12 @@ impl WebUi {
                 }
             }
         }
+    }
+
+    /// Resolves one asset path now, as the page's request would (the driver's classic check).
+    pub fn check_asset(&mut self, ui: &Ui, path: &str) -> Result<assets::Resolved, AssetError> {
+        let (lib, fonts) = ui.assets();
+        assets::resolve(lib, fonts, &mut self.cache, path)
     }
 
     /// Whether the files of any waiting request are still to come (the frame loop keeps asking).
@@ -156,11 +180,17 @@ impl WebUi {
 
         // The screen: described by the UI if it claimed it and the description is complete.
         let described = match view::screen(&mut self.resolver, ui) {
-            Ok(Some(screen)) if self.claimed.contains(&screen.name) => Some(screen),
+            Ok(Some(screen)) if self.claim_all || self.claimed.contains(&screen.name) => {
+                self.error = None;
+                Some(screen)
+            }
             Ok(_) => None,
             Err(view::Failure::Pending) => None,
             Err(e) => {
                 log::error!("webui: the engine draws the screen: {e:?}");
+                // A screen the protocol cannot express stays with the engine; a broken asset
+                // is a defect the driver reports.
+                self.error = matches!(e, view::Failure::Asset(_)).then(|| format!("{e:?}"));
                 None
             }
         };
@@ -231,6 +261,34 @@ impl WebUi {
     }
 }
 
+/// The asset paths (below `/asset/v1/`) a patch's widgets and cursor refer to: what the page
+/// would fetch to draw it. Sprite urls are already paths; a text part needs its font's atlas.
+pub fn referenced(patch: &ViewPatch) -> Vec<String> {
+    use acr_ui_protocol::Part;
+    let mut out = Vec::new();
+    let mut part = |p: &Part| match p {
+        Part::Sprite { url, .. } => out.push(url.clone()),
+        Part::Text { font, set, .. } => {
+            out.push(format!("font/{set}/{font}.png"));
+            out.push(format!("font/{set}/{font}.json"));
+        }
+        _ => {}
+    };
+    if let Some(screen) = &patch.screen {
+        let widgets = match &screen.widgets {
+            WidgetsPatch::Full { widgets } => widgets,
+            WidgetsPatch::Changed { upsert, .. } => upsert,
+        };
+        widgets.iter().flat_map(|w| &w.parts).for_each(&mut part);
+    }
+    if let Some(Some(cursor)) = &patch.cursor {
+        out.push(cursor.url.clone());
+    }
+    out.sort();
+    out.dedup();
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -265,6 +323,47 @@ mod tests {
         // Nothing is built yet: no screen to describe.
         let screen = patch.screen.unwrap();
         assert!(screen.engine_drawn && screen.name.is_empty());
+    }
+
+    #[test]
+    fn a_patch_refers_to_its_sprites_fonts_and_cursor() {
+        use acr_ui_protocol::{CursorView, Part, WidgetKind};
+        let widget = |parts| WidgetView {
+            id: "S/0".into(),
+            kind: WidgetKind::Button,
+            rect: [0; 4],
+            enabled: true,
+            hover: false,
+            parts,
+        };
+        let sprite = |url: &str| Part::Sprite { url: url.into(), x: 0, y: 0, w: 1, h: 1, alpha: 1.0, clip: None };
+        let text = Part::Text { font: "fonG60w".into(), set: 1, text: "a".into(), x: 0, y: 0, fade: 0, clip: None };
+        let patch = ViewPatch {
+            rev: 1,
+            screen: Some(ScreenPatch {
+                name: "S".into(),
+                stack: vec![],
+                in_game: false,
+                busy: false,
+                engine_drawn: false,
+                hint: None,
+                widgets: WidgetsPatch::Full {
+                    widgets: vec![widget(vec![sprite("bmp/a"), text.clone(), sprite("bmp/a")])],
+                },
+            }),
+            cursor: Some(Some(CursorView { url: "frame/menu/0/C.GP/0".into(), hotspot: [0, 0] })),
+            ..Default::default()
+        };
+        assert_eq!(referenced(&patch), ["bmp/a", "font/1/fonG60w.json", "font/1/fonG60w.png", "frame/menu/0/C.GP/0"]);
+        assert!(referenced(&ViewPatch::default()).is_empty());
+    }
+
+    #[test]
+    fn claiming_everything_describes_screens_the_ui_did_not_name() {
+        let mut web = WebUi::new(Box::new(|_| {}), Host::Web, vec![], [1.0; 2], 1.0);
+        assert!(!web.claim_all);
+        web.claim_everything();
+        assert!(web.claim_all && web.error.is_none());
     }
 
     #[test]

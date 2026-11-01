@@ -99,6 +99,8 @@ pub struct Game {
     ui: ui::Ui,
     /// The Svelte UI, once it said `Ready` (docs/webui.md).
     webui: Option<webui::WebUi>,
+    /// Where the driver collects the UI's messages (`--ui classic`), in place of a page.
+    ui_outbox: Option<webui::Outbox>,
     mode: Mode,
     audio: music::Audio,
     suspension: suspend::Suspension,
@@ -152,6 +154,7 @@ impl Game {
             proxy,
             ui: ui::Ui::new(&paths),
             webui: None,
+            ui_outbox: None,
             mode: Mode::Intro,
             audio: music::Audio::new(&paths),
             suspension: Default::default(),

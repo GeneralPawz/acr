@@ -427,6 +427,8 @@ pub struct Options {
     pub exe: Option<PathBuf>,
     pub build: bool,
     pub gpu: bool,
+    /// `--ui engine|classic|touch`, given to every driver (docs/webui.md "Driver").
+    pub ui: Option<String>,
     pub list: bool,
     pub files: Vec<PathBuf>,
     pub verbose: bool,
@@ -521,6 +523,9 @@ pub fn e2e(root: &Path, target: &Path, options: &Options, hooks: &mut dyn Hooks)
                 let work = out.join(&s.name);
                 let _ = std::fs::remove_dir_all(&work);
                 let mut args = s.args.clone();
+                if let Some(ui) = &options.ui {
+                    args.extend(["--ui".into(), ui.clone()]);
+                }
                 if options.gpu && !args.iter().any(|a| a == "--drive-gpu") {
                     args.push("--drive-gpu".into());
                 }
