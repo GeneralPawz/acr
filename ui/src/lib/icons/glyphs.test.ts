@@ -15,7 +15,7 @@ const SENT = [
   'formation-cavalry-line',
   ...[1, 2, 3, 4].flatMap((n) => [`amount-plus-${n}`, `amount-minus-${n}`]),
 ];
-const BAR = ['pause', 'play', 'menu', 'map-open', 'map-closed', 'resources-open', 'resources-closed'];
+const BAR = ['speed', 'pause', 'play', 'menu', 'map-open', 'map-closed', 'resources-open', 'resources-closed'];
 
 describe('the glyph set', () => {
   it('draws every glyph the engine names and every bar button', () => {

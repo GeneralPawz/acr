@@ -191,6 +191,7 @@ export const GLYPHS: Record<string, string> = {
   'amount-plus-4': amount('+', 4),
 
   // The top bar.
+  speed: `<path d="M8 34A16 16 0 0 1 40 34"/><path d="M10 34h5M33 34h5M13.5 22.5l3.5 3.5M34.5 22.5L31 26M24 15v4.5"/>${line('M24 34L33 21', 'iron')}${dot(24, 34, 3.4, 'iron')}`,
   pause: '<path d="M17 11v26M31 11v26"/>',
   play: '<path d="M16 10l20 14-20 14z" fill="currentColor"/>',
   menu: '<path d="M10 14h28M10 24h28M10 34h28"/>',
