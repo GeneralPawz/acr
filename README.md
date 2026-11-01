@@ -65,7 +65,7 @@ docs/formats/   reverse-engineered format specifications with evidence
 
 Everything is done through the workspace: decoders are validated against the full game
 data by `acr` subcommands rather than ad-hoc scripts, and the web build needs no tools
-beyond `cargo`; only the optional Svelte UI (`ui/`, `?ui=svelte`) needs Bun (a justified extra tool: it installs
+beyond `cargo`; only the optional Svelte UI (`ui/`, the browser default; `?ui=engine` selects the engine UI) needs Bun (a justified extra tool: it installs
 the packages and runs Vite and the tests; `cargo xtask web` skips the UI with a warning without `bun`). `cargo build` embeds `ui/dist` (or
 `ACR_UI_DIST`) in the executable when it exists and warns when it does not; CI builds it in the `ui` job.
 
@@ -143,7 +143,7 @@ cargo run --release -p acr-viewer -- "C:\path\to\American Conquest" --map eng01 
 cargo xtask serve --release
 # ... or let the local server provide the archives: open http://127.0.0.1:8080/?game=/game/
 cargo xtask serve --release --game-dir "C:\path\to\American Conquest"
-# ... with the Svelte UI for the claimed menu screens: http://127.0.0.1:8080/?game=/game/&ui=svelte
+# ... the Svelte UI draws the claimed screens by default; the engine's own: http://127.0.0.1:8080/?game=/game/&ui=engine
 ```
 
 Requires the `wasm32-unknown-unknown` target for the browser build

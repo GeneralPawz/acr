@@ -52,7 +52,7 @@ window.__acrFrames = [];
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--url", default="http://127.0.0.1:8090/?game=/game/")
+    ap.add_argument("--url", default="http://127.0.0.1:8090/?game=/game/&ui=engine")
     ap.add_argument("--out", required=True)
     ap.add_argument("--unit", default="EngM18")
     ap.add_argument("--size", default="1600x900")

@@ -514,7 +514,7 @@ acr-vm-cargo -- 'bash tools/browser/run.sh --out runs/browser/x --overlay ~/brow
 ```
 
 The test stores the settings (models=all, camera=free, shadows, LOD, detailed ground) in
-`localStorage` `acr-settings`, opens `/?game=/game/`, starts the blank grass field without
+`localStorage` `acr-settings`, opens `/?game=/game/&ui=engine` (it measures the engine UI), starts the blank grass field without
 HUD, spawns `--unit` (default `EngM18`; `~/browser/hd/engm18.glb` is `hdman.glb`) and zooms
 the free camera through `--zooms` (default 1..9, `--step-s` 2 s each, `--hold-s` 8 s at the
 end). Into `--out` go `console.jsonl` (every console message and page error),
@@ -543,7 +543,7 @@ Chromium build 1248 (`~/.cache/ms-playwright`; `playwright install --with-deps c
 added the system libraries with sudo). No Node and no wasm-bindgen CLI: `cargo xtask web`
 binds with the `wasm-bindgen-cli-support` crate at Cargo.lock's version (0.2.129).
 
-**The Svelte UI** (`?ui=svelte`, docs/webui.md): the browser test drives the same page, the menu
+**The Svelte UI** (the browser default, `?ui=engine` opts out; docs/webui.md): the browser test drives the same page, the menu
 screens it claims are DOM (`[data-acr-id]`, `[data-acr-hover]`), all input is forwarded raw so
 `acr_drive` and the pointer work as before. Parity of a screen: screenshots of `?ui=engine` and
 `?ui=svelte` at 1024x768, device pixel ratio 1, then `cargo xtask ui-diff a.png b.png --out d.png`
