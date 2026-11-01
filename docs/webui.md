@@ -97,6 +97,50 @@ channel. Main menu: 100.000% (#317).
 - The web driver (`acr_drive`) also takes `click`, `key` and `text`.
 - `tools/browser/ui_parity.py --screens <names>`: see docs/testing.md "Browser".
 
+## Native host spike (Android, #333)
+
+`tools/android/build-webview-spike.sh` builds the example `crates/acr-game/examples/webview_spike_android.rs`
+(a cdylib, empty on other targets) plus a small dex (`tools/android/webview-spike/`) as its own app,
+`io.github.generalpawz.acr.webviewspike`, never the game's package. Start it with
+`adb shell am start -n io.github.generalpawz.acr.webviewspike/android.app.NativeActivity --es mode full --es fixed 255,0,0`
+(`mode` full / capture / shrink, `hold` seconds, `fixed` r,g,b clear colour); it logs `SPIKE ...` lines
+under the logcat tag `spike`. A `NativeActivity` (the game's host) draws an animated wgpu (Vulkan) clear; a
+transparent WebView (`setBackgroundColor(TRANSPARENT)`, hardware layer) in a `PopupWindow` covers the screen
+with a half-transparent panel, three white swatches of alpha 1 / .5 / .25, a button (`@JavascriptInterface`
+to Rust) and `evaluateJavascript` back. OnePlus 13 (Android 16, Adreno 830, 1080x2376, landscape), WebView
+Chrome 156, 2026-11-01.
+
+**Answer: yes, the game shows through with correct alpha; the host needs Java code and its own touch routing.**
+
+| Check | Result |
+|---|---|
+| Hosting | `NativeActivity` calls `takeSurface`/`takeInputQueue`, so the app owns the activity's surface and views added to its content are never drawn. A `PopupWindow` is its own window and its own SurfaceFlinger layer (type 1000) above the game's, so it works |
+| wgpu visible through transparent areas | **Yes.** Clear (255,0,0): outside the panel 255,0,0; swatches 255,255,255 / 255,128,128 / 255,64,64 (alpha 1 / .5 / .25 exactly); panel rgba(20,20,20,.55) shows 126,11,11 (expected 125.75,11,11). A screenshot the user took by hand (JPEG) gives 125,11,11 and the same swatches. Screenshot by `adb exec-out screencap -p` |
+| SurfaceFlinger composition | `dumpsys SurfaceFlinger`: the game layer and the popup layer are both `DEVICE` (hardware composer overlays), `usesClientComposition=false`: no GPU composition of the two |
+| touch, full-screen popup | A full-screen popup takes every touch (windows do not pass touches through). With the page's interactive rectangles reported to Java (`acr.regions`), `onTouch` returns false inside them and forwards the touch to Rust outside (`nativeTouch`): `adb shell input tap` on the button gave one page click (0.1 ms to Rust), on the panel's empty area and outside the panel reached the game (forwarded to Rust). Modes `capture` (no forwarding) and `shrink` (popup the size of the content) are in the code and were not run |
+| IPC JS to Rust, median / p99 | 0.34 / 1.65 ms (300 pings, last run); 0.15-0.47 / 0.98-3.2 ms over five runs |
+| `evaluateJavascript`, Rust to page, median / p99 | 1.10 / 1.83 ms (300 calls at 60 Hz, 2 bytes); 1.31 / 2.40 ms with 4 KB (1.2 MB); over runs 0.5-1.3 / 1.7-4.0 ms. The call itself returns in 0.10 / 0.49 ms (0.16 / 0.60 ms at 4 KB) |
+| frame time, webview vs none | vsync-bound (AutoVsync, 60 Hz): baseline median 16.37 ms, p99 19.7; idle webview 16.58 / 19.4; during JS to Rust 16.56 / 18.7; during Rust to JS 16.49 / 20.0 and 16.54 / 19.6 (4 KB). No frame over 27 ms in these runs. Touch input switches the display to 90 or 120 Hz (8-11 ms frames), which makes runs with touches not comparable |
+| `dumpsys gfxinfo` (the popup's own HWUI frames) | 81 frames: p50 6 ms, p99 61 ms, 2 missed vsync, GPU p50 1 ms / p99 6 ms (a run with taps and app switches); a second run p50 7 ms, GPU p99 4 ms |
+
+What a real Android host needs:
+
+- Java: `hasCode=true` and a small dex (the `@JavascriptInterface` object cannot be made from Rust). The
+  game's `AndroidManifest.xml` has `hasCode=false` now.
+- The natives must be registered with `RegisterNatives` from Rust: `NativeActivity` loads the library outside
+  the class loader's lookup, so `Java_..._nativeX` names fail with `UnsatisfiedLinkError`.
+- A native thread cannot `FindClass` app classes: load the Java class through
+  `activity.getClassLoader().loadClass`.
+- `WebView` calls (`evaluateJavascript`, `loadData...`) on the UI thread (`runOnUiThread`).
+- Touch routing as above: the page publishes its interactive rectangles, Java forwards everything else to
+  the game's touch handler (a transparent window is not touch-transparent). The popup is not focusable, so
+  keys stay with the activity.
+- Pause and resume: the popup lives with the activity; winit's `suspended`/`resumed` recreates the window
+  and the surface, not the WebView.
+
+Not measured: battery and CPU cost over time (no long run, the phone is the user's), a heavy scene under the
+webview, the `capture` and `shrink` modes, a soft keyboard (the popup is not focusable), screen rotation.
+
 ## Not yet
 
 The touch skin, the HUD, the native webview host (`wry`, spike on Windows), the other screens, and the start screen's layout for other screen ratios

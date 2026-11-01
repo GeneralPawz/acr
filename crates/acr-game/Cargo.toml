@@ -13,6 +13,12 @@ crate-type = ["cdylib", "rlib"]
 name = "AmericanConquest"
 path = "src/main.rs"
 
+# The Android WebView spike (docs/webui.md, "Android spike"; tools/android/build-webview-spike.sh).
+# Empty on every other target.
+[[example]]
+name = "webview_spike_android"
+crate-type = ["cdylib"]
+
 [dependencies]
 acr-app.workspace = true
 acr-audio.workspace = true
