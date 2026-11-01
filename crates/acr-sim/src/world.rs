@@ -393,6 +393,11 @@ pub struct Player {
     pub enabled: Vec<bool>,
     /// `CondEnabled`: the type was enabled by `[ENABLED]` or an `ENABLE` upgrade.
     pub cond_enabled: Vec<bool>,
+    /// `ManualDisable` / `ManualEnable` (record byte +7, bits 0 and 1) per type, set by the
+    /// scripts (`EnableUnit`, `SetUnitEnableState`): `RefreshAbility` keeps a manually
+    /// disabled type off and a manually enabled one on, whatever the tech tree says.
+    pub manual_disable: Vec<bool>,
+    pub manual_enable: Vec<bool>,
     /// Upgrade states, by [`crate::tech::UpgradeId`].
     pub upgrades: Vec<crate::tech::UpgradeState>,
     /// Characteristics changed by upgrades (`AdvCharacter`); types without an entry use
@@ -428,6 +433,8 @@ impl Player {
             resources: START_STOCK,
             enabled: (0..n).map(start).collect(),
             cond_enabled: (0..n).map(start).collect(),
+            manual_disable: vec![false; n],
+            manual_enable: vec![false; n],
             upgrades: tech.upgrades.iter().map(crate::tech::UpgradeState::new).collect(),
             food_eff: 1010,
             wood_eff: 100,

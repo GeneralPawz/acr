@@ -307,3 +307,75 @@ fn editor_type_levels_apply_and_undo_the_upgrades_of_one_type() {
     upgrade::set_type_level(&mut w, 0, pik, 0);
     assert_eq!(*w.adv(0, pik), *w.catalog.get(pik).adv, "back to the type's own");
 }
+
+/// A world where `Pik` needs a finished `Cen` ([ACCESSCONTROL]) and `Kri` has a [UNITLOCK].
+fn manual_world() -> (World, TypeId, TypeId, TypeId) {
+    let mut c = Catalog::new();
+    let kri = c.add(ObjectType::from_def("Kri(EN)", &UnitDef::parse(PEASANT.as_bytes())));
+    let pik = c.add(ObjectType::from_def("Pik(EN)", &UnitDef::parse(PIKEMAN.as_bytes())));
+    let cen = c.add(ObjectType::from_def("Cen(EN)", &UnitDef::parse(CENTER.as_bytes())));
+    let mut tech = Tech::default();
+    tech.add_nation(
+        &c,
+        &NationDef::parse(
+            b"[UPGRADE]\r\nDMG ICO #POSITION 0 0 #LEVEL 1 M #COST 0 #TIME 3\r\nDAMAGE WEAPONKIND PIKA Pik(EN) +2\r\n\
+              [FIXED_PRODUCE]\r\nCen(EN) 2\r\nKri(EN) 0 0\r\n[ENABLED]\r\nKri(EN)\r\nPik(EN)\r\nCen(EN)\r\n\
+              [ACCESSCONTROL]\r\nPik(EN) 1 Cen(EN)\r\n[UNITLOCK]\r\nKri(EN) 2 Cen(EN)\r\n\
+              [UPGRADEPLACE]\r\nCen(EN) 7 DMG\r\n[UPGRADEENABLE]\r\nDMG\r\n[END]\r\n",
+        ),
+    );
+    c.tech = tech;
+    let w = World::new(Arc::new(MapGrid::open(1)), Arc::new(c), Arc::new(Formations::default()));
+    (w, kri, pik, cen)
+}
+
+#[test]
+fn manual_flags_survive_the_recount() {
+    let (mut w, kri, pik, cen) = manual_world();
+    w.spawn(cen, 0, Pos::from_pixels(2048, 2048), 0);
+    economy::census_all(&mut w);
+    let on = |w: &World, t: TypeId| w.players[0].enabled[usize::from(t.0)];
+    assert!(on(&w, pik), "the access control is met");
+    // ManualDisable keeps it off although [ACCESSCONTROL] holds, however often it is recounted.
+    w.players[0].manual_disable[usize::from(pik.0)] = true;
+    for _ in 0..3 {
+        economy::census_all(&mut w);
+        assert!(!on(&w, pik));
+    }
+    // ManualEnable turns on a type whose condition is unmet, and wins over ManualDisable.
+    w.players[0].manual_disable[usize::from(pik.0)] = false;
+    w.units.clear();
+    economy::census_all(&mut w);
+    assert!(!on(&w, pik), "no centre: not available");
+    w.players[0].manual_enable[usize::from(pik.0)] = true;
+    economy::census_all(&mut w);
+    assert!(on(&w, pik));
+    w.players[0].manual_disable[usize::from(pik.0)] = true;
+    economy::census_all(&mut w);
+    assert!(on(&w, pik), "ManualEnable is applied last");
+    // ManualDisable skips the [UNITLOCK] rule, which would have enabled the type.
+    assert!(on(&w, kri));
+    w.players[0].manual_disable[usize::from(kri.0)] = true;
+    economy::census_all(&mut w);
+    assert!(!on(&w, kri));
+}
+
+#[test]
+fn manual_upgrade_flags_decide_what_the_panel_offers() {
+    let (mut w, _, _, cen) = manual_world();
+    let center = w.spawn(cen, 0, Pos::from_pixels(2048, 2048), 0).0 as usize;
+    economy::census_all(&mut w);
+    let dmg = up(&w, "DMG");
+    fn s(w: &mut World, dmg: UpgradeId) -> &mut acr_sim::tech::UpgradeState {
+        &mut w.players[0].upgrades[usize::from(dmg.0)]
+    }
+    assert!(upgrade::available(&w, center).contains(&dmg));
+    s(&mut w, dmg).manual_disable = true;
+    assert!(!upgrade::available(&w, center).contains(&dmg), "0x40 hides it");
+    s(&mut w, dmg).enabled = false;
+    s(&mut w, dmg).manual_disable = false;
+    s(&mut w, dmg).manual_enable = true;
+    assert!(upgrade::available(&w, center).contains(&dmg), "0x80 offers it although not enabled");
+    s(&mut w, dmg).manual_disable = true;
+    assert!(upgrade::available(&w, center).contains(&dmg), "0x80 wins");
+}

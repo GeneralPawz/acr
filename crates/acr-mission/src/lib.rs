@@ -325,7 +325,6 @@ impl Scripts {
         self.state.sync_desant(world, mission);
         let mut commands = std::mem::take(&mut self.state.pending_commands);
         api::run_production(&mut self.state, world);
-        aicity::apply_availability(&self.state, world);
         // The step that is about to run has `tmtmt` = tick + 1.
         let tmtmt = world.tick.0 + 1;
         let phase = (tmtmt % SCRIPT_PERIOD) as u8;

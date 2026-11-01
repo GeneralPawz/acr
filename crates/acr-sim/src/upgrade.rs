@@ -89,7 +89,8 @@ pub fn can_research(w: &World, b: usize, up: UpgradeId) -> bool {
 /// 0x609600 in 0x609230): enabled ones, where a `[PRIVATE]` upgrade's `#LEVEL` must equal
 /// the building's upgrade count, an `[UPGRADESTAGE]` upgrade's section must not be done
 /// (so a section being built or destroyed shows it) and the `[STAGEDEPENDENT]` sections
-/// must be done.
+/// must be done. Offered means manually enabled (0x80), or enabled and not manually
+/// disabled (0x40).
 pub fn available(w: &World, b: usize) -> Vec<UpgradeId> {
     let u = &w.units[b];
     let Some(t) = w.catalog.tech.of(u.kind) else { return Vec::new() };
@@ -105,7 +106,8 @@ pub fn available(w: &World, b: usize) -> Vec<UpgradeId> {
             } else {
                 true
             };
-            p.upgrades[usize::from(up.0)].enabled && own && stages_done(u.stages, def.stage_mask)
+            let s = &p.upgrades[usize::from(up.0)];
+            (s.manual_enable || (!s.manual_disable && s.enabled)) && own && stages_done(u.stages, def.stage_mask)
         })
         .collect()
 }

@@ -65,25 +65,9 @@ fn cost_percent(stock: &[i32; 8], cost: &[i32; 8]) -> i32 {
 }
 
 /// Whether the scripts switched a type off for a nation (`EnableUnit(false)`).
-fn disabled(st: &ScriptState, nation: u8, kind: TypeId) -> bool {
-    st.availability.get(&(nation, false, kind.0)).is_some_and(|&s| s < 0)
-}
-
-/// Applies the scripts' manual enable/disable flags (`ManualEnable`/`ManualDisable` of
-/// `EnableUnit`, `SetUnitEnableState`, `DisableUpgrade`, `SetUpgradeEnableStatus`) on top of
-/// the tech tree's availability, which the census recomputes (`RefreshAbility` 0x42ffed
-/// honours them the same way). Called after the flags change and before every tick.
-pub fn apply_availability(st: &ScriptState, world: &mut World) {
-    for (&(n, upgrade, i), &state) in &st.availability {
-        let Some(p) = world.players.get_mut(usize::from(n)) else { continue };
-        if upgrade {
-            if let Some(u) = p.upgrades.get_mut(usize::from(i)) {
-                u.enabled = state > 0 && !u.done;
-            }
-        } else if let Some(e) = p.enabled.get_mut(usize::from(i)) {
-            *e = state > 0;
-        }
-    }
+fn disabled(world: &World, nation: u8, kind: TypeId) -> bool {
+    let p = world.players.get(usize::from(nation));
+    p.and_then(|p| p.manual_disable.get(usize::from(kind.0))).copied().unwrap_or(false)
 }
 
 /// `City::EnumProp`: every type an idle finished building (or any peasant) of the nation can
@@ -122,7 +106,7 @@ pub fn enum_prop(st: &mut ScriptState, world: &World, nation: u8) {
                 .unwrap_or_default(),
         };
         for s in list {
-            if disabled(st, nation, s) || city.index.contains_key(&s) || city.props.len() >= 100 {
+            if disabled(world, nation, s) || city.index.contains_key(&s) || city.props.len() >= 100 {
                 continue;
             }
             let cost = acr_sim::economy::unit_cost(world, nation, s, None);
