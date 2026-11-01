@@ -71,11 +71,13 @@ ROUTES.update({
 })
 
 # The parts of the in-game interface (#326), on the same blank field: the top bar (also wide, centred
-# and the touch bar, at the window sizes and settings of `HUD_SETTINGS`), the "M" drop-down (its button). The mouse waits mid-screen otherwise: in a corner it would scroll the map.
-# Pixels are counted over the part's `HUD_AREAS` box. They are `game` for the driver's tree, which has no widget of them.
+# and the touch bar, at the window sizes and settings of `HUD_SETTINGS`), the "M" drop-down (its button) and a hint (`hover`: the mouse stays over the iron value). The mouse waits mid-screen otherwise: in a corner it would scroll the map.
+# Pixels are counted over the part's `HUD_AREAS` box (a hint's starts below the cursor, which the engine
+# draws and a page screenshot does not show). They are `game` for the driver's tree, which has no widget of them.
 ROUTES.update({
     "TopBar": [BLANK, {"hover": [512, 400]}],
     "DropDown": [BLANK, [275, 17], {"hover": [512, 400]}],
+    "Hints": [BLANK, {"hover": [800, 17]}],
     "TopBarWide": [BLANK, {"hover": [960, 540]}],
     "TopBarCentered": [BLANK, {"hover": [960, 540]}],
     "TopBarTouch": [BLANK, {"hover": [792, 360]}],
@@ -92,6 +94,7 @@ HUD_SETTINGS = {
 HUD_AREAS = {
     "TopBar": "243,0,781,44",
     "DropDown": "190,40,180,250",
+    "Hints": "816,49,104,32",
     "TopBarWide": "0,0,1920,44",
     "TopBarCentered": "0,0,1920,44",
     "TopBarTouch": "0,0,1584,70",
@@ -102,7 +105,7 @@ HUD_AREAS = {
 SCREEN_OF = {
     "CampaignMissions": "SingleMission", "RandomMapCombo": "RandomMap", "GameOptionsMore": "GameOptions",
     "GameOptionsRules": "GameOptions", "GameLoadGame": "LoadGame",
-    "TopBar": "game", "DropDown": "game", "TopBarWide": "game",
+    "TopBar": "game", "DropDown": "game", "Hints": "game", "TopBarWide": "game",
     "TopBarCentered": "game", "TopBarTouch": "game", "TopBarTouchOpen": "game",
 }
 

@@ -7,7 +7,7 @@ and their rules in [docs/ui.md](ui.md) stay as they are, the headless driver and
 run on them, and the Svelte app draws a view model Rust publishes and sends raw input back.
 
 What exists now (#317, #322, browser part): the protocol, the bridge, the classic skin, the main menu,
-the player name, the options, the campaigns, the single missions, the load dialog of the main menu, the random map setup, the loading screen and the connection screen of multiplayer (`Placeholder`), and (#325) the HUD's top bar and "M" drop-down over the running game (#326), and (#325) the dialogs over the running game: the game menu, the options with their "Weitere Optionen" and ACR rule pages, the save dialog and the load dialog of the game menu, the mission's message boxes, choices and history. Every other screen is still drawn by the engine, under the UI's input overlay.
+the player name, the options, the campaigns, the single missions, the load dialog of the main menu, the random map setup, the loading screen and the connection screen of multiplayer (`Placeholder`), and (#325) the HUD's top bar, "M" drop-down and hints over the running game (#326), and (#325) the dialogs over the running game: the game menu, the options with their "Weitere Optionen" and ACR rule pages, the save dialog and the load dialog of the game menu, the mission's message boxes, choices and history. Every other screen is still drawn by the engine, under the UI's input overlay.
 
 ## Parts
 
@@ -48,7 +48,7 @@ and clippy never need Bun.
   publishes after each frame's advance (`WebUi::publish`): only changed topics (`mode`, `loading`,
   `stage`, `screen`, `cursor`, `hud`), at most one message a frame, `rev` growing by one. A gap makes the UI
   send `resync`; the answer carries every topic. Scope `ui.bridge` of the profiler.
-- **Claiming:** the registry (`ui/src/screens/registry.ts`: `MainMenu`, `PlayerName`, `Options`, `Campaigns`, `SingleMission`, `LoadGame`, `RandomMap`, `Placeholder`, `Loading`, `GameMenu`, `GameOptions`, `SaveGameDialog`, `MessageWindow`, `HistoryWindow`, and `HUD`: `TopBar`, `DropDown`) is announced in `ready` (`screens`, `hud`).
+- **Claiming:** the registry (`ui/src/screens/registry.ts`: `MainMenu`, `PlayerName`, `Options`, `Campaigns`, `SingleMission`, `LoadGame`, `RandomMap`, `Placeholder`, `Loading`, `GameMenu`, `GameOptions`, `SaveGameDialog`, `MessageWindow`, `HistoryWindow`, and `HUD`: `TopBar`, `DropDown`, `Hints`) is announced in `ready` (`screens`, `hud`).
   `Ui::set_external` makes the engine skip exactly the screens the UI claims, and the cursor, but only
   while `view::screen` can describe the screen completely; otherwise the screen goes on being drawn by
   the engine (`engine_drawn: true`), never half.
@@ -134,7 +134,7 @@ The engine takes a claimed dialog out of its frame (`Ui::set_external`) and noth
 ## The HUD (#326)
 
 The classic skin over the game canvas draws the parts of the in-game interface the registry's `HUD` list names
-(`TopBar`, `DropDown`; announced in `ready.hud`), on the same transparent host as the dialogs
+(`TopBar`, `DropDown`, `Hints`; announced in `ready.hud`), on the same transparent host as the dialogs
 (`WebUi::hud_claim`, only `Host::Web` or the driver's classic skin). The engine goes on drawing the world, the world
 overlays (brackets, life bars, move markers), the selection rectangle, the minimap, the command and army panels and the
 side panels, and the parts not named yet.
@@ -152,17 +152,18 @@ side panels, and the parts not named yet.
   `resync` carry the topic even when empty; a `resync` snapshot makes the UI forget groups it does not list. A group whose
   files are still loading keeps its old version.
 - **Groups:** `top_bar` (layer 0) and `top_bar_text` (1): the resource bar with the "M" plaque, or the touch bar (`top_bar=touch`,
-  open panel included); `center_top_bar` moves them in Rust; `drop_down` (2): the "M" drop-down.
+  open panel included); `center_top_bar` moves them in Rust; `drop_down` (2): the "M" drop-down; `hint` (3): the tooltip, at `hud_scale` where the engine scales it.
 - **Input** is the viewport's, as over the dialogs: Rust hit-tests the "M" button, the rows and the plaques.
-- **Driver:** `--ui classic` claims all four; `{"cmd":"view"}` shows the groups (scenarios `svelte_hud`).
+- **Driver:** `--ui classic` claims all four; `{"cmd":"view"}` shows the groups (scenarios `svelte_hud`, `svelte_hud_scale`).
   `drive::tree::messages` still reads the game's whole overlay.
 
 Parity (`ui_parity.py`, the blank grass field, the mouse waits mid-screen; pixels over the part's area `HUD_AREAS`, layout
 from every sprite's and fill's published rect against the page's (`data-acr-part-rect`), at 1024x768, device pixel ratio 1):
-`TopBar` 100.000%, `DropDown` 100.000%, layout 0 px. At a window whose scale is not whole the
+`TopBar` 100.000%, `DropDown` 100.000%, `Hints` 100.000% (the area starts below the cursor, which only the engine draws in a screenshot), layout 0 px. At a window whose scale is not whole the
 engine's linear filter and the page's differ at glyph edges (the page lays a string out glyph by glyph, the engine scales the
 whole string): `TopBarWide` (1920x1080, scale 1.40625) 96.669%, `TopBarCentered` 96.654%, `TopBarTouch` (1584x720, scale 0.9375) 99.495%,
-`TopBarTouchOpen` 98.102%, so those are measured, not within 99.5%.
+`TopBarTouchOpen` 98.102%, so those are measured, not within 99.5%. Not measured by pixels: a hint at `hud_scale` (no icon to hover in the blank field of the
+page; `svelte_hud_scale` checks its group).
 
 ## Native host spike (Android, #333)
 

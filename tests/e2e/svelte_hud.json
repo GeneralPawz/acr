@@ -1,6 +1,6 @@
 {
   "name": "svelte_hud",
-  "description": "The classic skin draws the HUD parts of #326 (docs/webui.md 'The HUD'): the resource values follow a purchase and only they are resent, the 'M' drop-down opens as a group and its first row opens the game menu",
+  "description": "The classic skin draws the HUD parts of #326 (docs/webui.md 'The HUD'): the resource values follow a purchase and only they are resent, a hint shows at a resource value and at an icon, the 'M' drop-down opens as a group and its first row opens the game menu",
   "args": ["--ui", "classic"],
   "steps": [
     {"cmd": "start", "random": {"nation": 1, "seed": 5}},
@@ -10,13 +10,23 @@
       {"path": "view.hud.groups.1.name", "eq": "top_bar_text"},
       {"path": "view.hud.groups.1.parts", "len_ge": 6}
     ], "capture": {"food": "view.hud.groups.1.parts.3.text"}},
+    {"cmd": "move", "pos": [800, 17]},
+    {"cmd": "view", "expect": [
+      {"path": "view.hud.groups.2.name", "eq": "hint"},
+      {"path": "view.hud.groups.2.parts.13.text", "contains": "EISEN"},
+      {"path": "view.cursor.url", "contains": "CURSOR"}
+    ], "note": "RESHINT4 over the iron value"},
+    {"cmd": "move", "pos": [500, 400]},
     {"cmd": "drag", "around": {"owner": 0, "type": "Kri"}},
     {"cmd": "click", "label": "Fort"},
     {"cmd": "click", "near": {"owner": 0, "type": "Kri"}, "offset": [0, 700]},
     {"cmd": "wait", "until": {"units": {"owner": 0, "type": "Kre", "finished": true}}, "timeout": 20000},
     {"cmd": "click", "unit": {"owner": 0, "type": "Kre"}},
     {"cmd": "click", "label": "Hellebardier", "expect": {"path": "target.label", "contains": "Hellebardier"}},
-    {"cmd": "view", "expect": {"path": "view.hud.groups.1.parts.3.text", "ne": "${food}"}, "note": "food was paid"},
+    {"cmd": "view", "expect": [
+      {"path": "view.hud.groups.1.parts.3.text", "ne": "${food}"},
+      {"path": "view.hud.groups.2.name", "eq": "hint"}
+    ], "note": "food was paid; the mouse is over the unit's icon (its hint)"},
     {"cmd": "click", "pos": [275, 17], "note": "the M button"},
     {"cmd": "view", "expect": [
       {"path": "view.hud.groups.2.name", "eq": "drop_down"},
