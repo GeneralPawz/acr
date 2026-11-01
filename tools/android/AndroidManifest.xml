@@ -1,6 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- The game as a NativeActivity: the Rust library is the app. The dex holds one small class,
-     io.github.generalpawz.acr.WebHost, for the Svelte UI's WebView (native_ui=svelte, docs/webui.md). -->
+<!-- The game as a NativeActivity: the Rust library is the app. The dex holds two small classes:
+     io.github.generalpawz.acr.WebHost, for the Svelte UI's WebView (native_ui=svelte, docs/webui.md),
+     and Shell, for the back gesture and the orientation (docs/android.md). screenOrientation is only
+     the start; the `orientation` setting sets it at run time. configChanges keeps a rotation from
+     recreating the activity. -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="io.github.generalpawz.acr"
     android:versionCode="1"
@@ -18,6 +21,7 @@
         android:icon="@mipmap/icon"
         android:roundIcon="@mipmap/icon"
         android:hasCode="true"
+        android:enableOnBackInvokedCallback="true"
         android:extractNativeLibs="false"
         android:requestLegacyExternalStorage="true"
         android:theme="@android:style/Theme.NoTitleBar.Fullscreen">

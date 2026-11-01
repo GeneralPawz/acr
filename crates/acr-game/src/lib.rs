@@ -77,6 +77,9 @@ pub enum Event {
     },
     /// The page's user gesture: the audio may start now.
     AudioUnlock,
+    /// Android's back gesture or key (`android.rs`, `Shell.java`): Escape.
+    #[cfg(target_os = "android")]
+    Back,
 }
 
 /// GPU resources that exist once the window has a surface.
@@ -342,6 +345,12 @@ impl Game {
         let refresh = self.window.as_ref().and_then(|w| w.current_monitor()).and_then(|m| m.refresh_rate_millihertz());
         let work = started.elapsed().saturating_sub(std::mem::take(&mut self.acquire_wait));
         self.work.frame(sink.as_mut(), pacing::frame_budget(fps, refresh), work);
+    }
+
+    /// The `orientation` setting, which the Android host applies to the activity.
+    #[cfg(target_os = "android")]
+    pub(crate) fn orientation(&self) -> ui::settings::Orientation {
+        self.ui.settings().orientation
     }
 
     /// Reports the main thread's work per frame to `sink` from now on.
@@ -1090,6 +1099,8 @@ impl ApplicationHandler<Event> for Game {
                 Some(web) => web.request_asset(path, reply),
                 None => reply(Err(webui::AssetError::NotFound("the UI is not connected".into()))),
             },
+            #[cfg(target_os = "android")]
+            Event::Back => self.press_escape(event_loop),
             Event::AudioUnlock => {
                 #[cfg(target_arch = "wasm32")]
                 self.audio.start();

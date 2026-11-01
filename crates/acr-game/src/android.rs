@@ -6,6 +6,7 @@
 //! no folder is found, the app opens that permission's system page and looks again on return.
 //! Logs go to logcat under the tag `acr`.
 
+use std::ffi::c_void;
 use std::path::{Path, PathBuf};
 
 use acr_app::NativeAssets;
@@ -16,6 +17,7 @@ use winit::platform::android::EventLoopBuilderExtAndroid;
 use winit::platform::android::activity::AndroidApp;
 use winit::window::WindowId;
 
+use crate::ui::settings::Orientation;
 use crate::{Event, Game};
 
 /// Marker file of an American Conquest installation.
@@ -24,7 +26,11 @@ const MARKER: &str = "ALL.GSC";
 /// The top of the shared storage ("Internal storage" in the phone's file manager).
 const SHARED: &str = "/storage/emulated/0";
 
+/// The Java class for the back gesture and the orientation (`tools/android/java`).
+const SHELL: &str = "io.github.generalpawz.acr.Shell";
+
 static DATA_DIR: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+static BACK_PROXY: std::sync::Mutex<Option<EventLoopProxy<Event>>> = std::sync::Mutex::new(None);
 
 #[unsafe(no_mangle)]
 fn android_main(app: AndroidApp) {
@@ -55,7 +61,16 @@ fn run(app: AndroidApp) -> Result<(), String> {
     let event_loop =
         EventLoop::<Event>::with_user_event().with_android_app(app.clone()).build().map_err(|e| e.to_string())?;
     let proxy = event_loop.create_proxy();
-    let mut launcher = Launcher { app, proxy, game: None, asked: false, pointer_hidden: false, hints_tried: false };
+    let mut launcher = Launcher {
+        app,
+        proxy,
+        game: None,
+        asked: false,
+        pointer_hidden: false,
+        hints_tried: false,
+        shell: None,
+        orientation: None,
+    };
     event_loop.run_app(&mut launcher).map_err(|e| e.to_string())
 }
 
@@ -70,6 +85,10 @@ struct Launcher {
     pointer_hidden: bool,
     /// The performance hint session was tried (once, at the first resume with a game).
     hints_tried: bool,
+    /// The `Shell` class, once loaded (back gesture and orientation).
+    shell: Option<jni::refs::Global<jni::objects::JClass<'static>>>,
+    /// The orientation last applied to the activity.
+    orientation: Option<Orientation>,
 }
 
 impl Launcher {
@@ -93,6 +112,113 @@ impl Launcher {
         }
         Ok(game)
     }
+}
+
+impl Launcher {
+    /// Sets the activity's orientation when the `orientation` setting differs from the one applied.
+    fn apply_orientation(&mut self) {
+        let (Some(game), Some(shell)) = (&self.game, &self.shell) else { return };
+        let wanted = game.orientation();
+        if self.orientation == Some(wanted) {
+            return;
+        }
+        match set_orientation(&self.app, shell, wanted) {
+            Ok(()) => {
+                log::info!("orientation: {}", wanted.name());
+                self.orientation = Some(wanted);
+            }
+            Err(e) => {
+                log::error!("cannot set the orientation: {e}");
+                // Do not retry every loop turn.
+                self.orientation = Some(wanted);
+            }
+        }
+    }
+}
+
+/// Loads `Shell` through the activity's class loader (a native thread's `FindClass` cannot see
+/// app classes), registers its native and installs the back handling.
+fn load_shell(
+    app: &AndroidApp,
+    proxy: &EventLoopProxy<Event>,
+) -> Result<jni::refs::Global<jni::objects::JClass<'static>>, jni::errors::Error> {
+    use jni::objects::{JClass, JObject, JValue};
+    use jni::{NativeMethod, jni_sig, jni_str};
+    if let Ok(mut slot) = BACK_PROXY.lock() {
+        *slot = Some(proxy.clone());
+    }
+    // SAFETY: both pointers come from the running activity and stay valid while it runs.
+    let vm = unsafe { jni::JavaVM::from_raw(app.vm_as_ptr().cast()) };
+    vm.attach_current_thread(|env| {
+        let activity = unsafe { JObject::from_raw(env, app.activity_as_ptr().cast()) };
+        let loader =
+            env.call_method(&activity, jni_str!("getClassLoader"), jni_sig!(() -> java.lang.ClassLoader), &[])?.l()?;
+        let name = env.new_string(SHELL)?;
+        let class = env
+            .call_method(
+                &loader,
+                jni_str!("loadClass"),
+                jni_sig!((java.lang.String) -> java.lang.Class),
+                &[JValue::Object(&name)],
+            )?
+            .l()?;
+        let class = env.cast_local::<JClass>(class)?;
+        // SAFETY: the signature of the function matches the descriptor.
+        let methods = unsafe {
+            [NativeMethod::from_raw_parts(jni_str!("nativeBack"), jni_str!("()V"), native_back as *mut c_void)]
+        };
+        // SAFETY: as above.
+        unsafe { env.register_native_methods(&class, &methods)? };
+        env.call_static_method(
+            &class,
+            jni_str!("installBack"),
+            jni_sig!((android.app.Activity) -> void),
+            &[JValue::Object(&activity)],
+        )?;
+        env.new_global_ref(&class)
+    })
+}
+
+/// `Shell.nativeBack()`: the back gesture, on the UI thread.
+extern "system" fn native_back<'c>(_env: jni::EnvUnowned<'c>, _class: jni::objects::JClass<'c>) {
+    if let Ok(slot) = BACK_PROXY.lock()
+        && let Some(proxy) = slot.as_ref()
+        && proxy.send_event(Event::Back).is_err()
+    {
+        log::debug!("back dropped: the event loop is gone");
+    }
+}
+
+/// `ActivityInfo.SCREEN_ORIENTATION_*` for a setting: the sensor-driven variants, so a flipped
+/// phone stays upright (landscape is what the manifest's `sensorLandscape` was).
+fn requested_orientation(orientation: Orientation) -> i32 {
+    match orientation {
+        Orientation::Landscape => 6,
+        Orientation::Auto => 10,
+        Orientation::Portrait => 7,
+    }
+}
+
+/// `Shell.setOrientation(activity, orientation)`; the Java side hops to the UI thread.
+fn set_orientation(
+    app: &AndroidApp,
+    shell: &jni::refs::Global<jni::objects::JClass<'static>>,
+    orientation: Orientation,
+) -> Result<(), jni::errors::Error> {
+    use jni::objects::{JObject, JValue};
+    use jni::{jni_sig, jni_str};
+    // SAFETY: both pointers come from the running activity and stay valid while it runs.
+    let vm = unsafe { jni::JavaVM::from_raw(app.vm_as_ptr().cast()) };
+    vm.attach_current_thread(|env| {
+        let activity = unsafe { JObject::from_raw(env, app.activity_as_ptr().cast()) };
+        env.call_static_method(
+            shell,
+            jni_str!("setOrientation"),
+            jni_sig!((android.app.Activity, int) -> void),
+            &[JValue::Object(&activity), JValue::Int(requested_orientation(orientation))],
+        )?;
+        Ok(())
+    })
 }
 
 /// Whether the `native_ui` setting of the app's `settings.txt` asks for the Svelte UI and this build
@@ -152,6 +278,13 @@ impl ApplicationHandler<Event> for Launcher {
                     Err(e) => log::info!("performance hints: not available ({e})"),
                 }
             }
+            if self.shell.is_none() {
+                match load_shell(&self.app, &self.proxy) {
+                    Ok(class) => self.shell = Some(class),
+                    Err(e) => log::error!("no back gesture handling: {e}"),
+                }
+            }
+            self.apply_orientation();
             if !self.pointer_hidden {
                 self.pointer_hidden = true;
                 if let Err(e) = hide_system_pointer(&self.app) {
@@ -180,6 +313,7 @@ impl ApplicationHandler<Event> for Launcher {
     }
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        self.apply_orientation();
         if let Some(game) = &mut self.game {
             game.about_to_wait(event_loop);
         }

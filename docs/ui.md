@@ -1046,6 +1046,7 @@ writes are in
 | 2 | | Liegezeit | 1 … 60 Minuten | `corpse_minutes` |
 | 2 | | Schlachtfeldspuren | Verblassen / Bleiben (ganze Schlacht) | `battlefield_marks` |
 | 2 | Anzeige | Leiste mittig | Aus (Original) / An: Leiste mittig | `center_top_bar` (not a rule: centres the top bar on wide screens, see [Options](#options-0x5c9740)) |
+| 2 | | Ausrichtung | Quer (Original) / Automatisch / Hochkant | `orientation` (Android only: the activity's rotation, [android.md](android.md#orientation-and-the-back-gesture); no effect elsewhere) |
 | 3 | 3D-Grafik | 3D-Modelle | Aus (Original) / Einheiten / Einheiten und Gebäude | `models` |
 | 3 | Darstellung | Kamera | Fest (Original) / Frei | `camera` |
 | 3 | | Schatten, Details | An / Schatten aus / Detailstufen aus / Beide aus | `shadows`, `lod` (one box, so the landscape group has room for the weather) |
