@@ -116,7 +116,7 @@ pub const OVER_GAME: &[&str] =
 /// The parts of the in-game interface the UI can claim (`Ready::hud`), over the same transparent
 /// canvas as [`OVER_GAME`].
 pub const HUD_PARTS: &[&str] =
-    &["TopBar", "DropDown", "Hints", "Messages", "Minimap", "CommandPanel", "UnitStats", "ArmyList"];
+    &["TopBar", "DropDown", "Hints", "Messages", "Minimap", "CommandPanel", "UnitStats", "ArmyList", "GamePanel"];
 
 /// The minimap image changes with every unit that moves; the UI gets a new one at most this often
 /// (the camera rectangle is a group of its own and follows every frame).
@@ -201,6 +201,7 @@ impl WebUi {
             commands: has("CommandPanel"),
             stats: has("UnitStats"),
             army: has("ArmyList"),
+            game_panel: has("GamePanel"),
         }
     }
 
