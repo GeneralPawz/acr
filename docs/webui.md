@@ -334,12 +334,34 @@ no WebView is created. The findings of the spike below are the design:
 - **Bridge:** `nativeBridge(assetBase, post)` takes the post function; `androidBridge()` wraps it for
   `acr.post` and `https://acr.local/asset/v1`. The browser and Linux pages are unchanged.
 
-Verified: `cargo test -p acr-game` (the host's claims for `Host::Android`, finger phases), `bun run test`
-(regions, bridge), clippy for `aarch64-linux-android`, the APK builds with the dex and the bundle. Not
-verified (no device was reachable): everything on a phone, namely that the page loads from the intercept,
-the alpha over the game, touch alignment of the popup with the surface (cutout, bars), the forwarded
-touches against the engine's own, HUD touches, suspend and resume, rotation. A mouse over the popup is not
-forwarded as a mouse. No keyboard is available (the popup is not focusable).
+- **Window and insets:** the popup is exactly the activity's window (the size of its decor view, followed on
+  every layout change: rotation, resize, split screen), not the display, so a touch has the same pixel as the
+  game's surface even when the system shrinks the window around a cutout. `WebHost.layout` also reads the system
+  bars and the display cutout from the window's insets and sets `--acr-inset-left/top/right/bottom` (CSS pixels)
+  on the page's root, for a page that wants to keep clear of them (the game and the UI draw under them). The
+  scale of the touch rectangles is the display's density, read again on each layout.
+- **Focus and keys:** the popup and the `WebView` are not focusable and need no input method
+  (`INPUT_METHOD_NOT_NEEDED`), so the activity keeps the focus, the soft keyboard never shows and Back reaches
+  the game (winit's `BrowserBack`, mapped to Escape in `keyboard_input`): it closes the dialog or opens the game
+  menu, as on the engine's UI.
+- **Background:** `NativeHost::set_active` (called from `suspended` and `resumed`): `WebHost.setActive(false)`
+  does `onPause` and `pauseTimers`, and `eval` drops what Rust sends; on return the page is resumed and the
+  `WebUi` resyncs, so the page gets everything again. Console messages of the page go to logcat (tag `acr`,
+  `page:`); `chrome://inspect` works for a debuggable build only.
+
+Verified on the Android emulator (x86_64, API 35, SwiftShader Vulkan, `native_ui=svelte`, 2026-11-01): the page
+loads through the intercept (`https://acr.local/android.html`, the DOM mounts, `data-acr-mode` follows intro,
+menus, game); the main menu, player name and single mission screens are the page's and taps on them work; a
+mission starts and its message dialog is the page's; the map drags with a swipe through `nativeTouch`; Back opens
+and closes the game menu over the game; Home and return keep the game and the page working (autosave, `resync`);
+`wm size` resizes the popup with the window (frame equal to the activity's) and the page re-centres its region;
+the insets arrive as CSS variables; the activity keeps the focus and no keyboard shows. Not verified (needs the
+phone): Adreno and the real GPU, real touch feel (long press, pinch, two-finger pan through the forward), the
+alpha blending cost on a real display, a cutout that makes the system shrink the window (the emulator's overlays
+keep `layoutInDisplayCutoutMode=always`), the battery effect of the pause. A mouse over the popup is not
+forwarded as a mouse. No keyboard is available (the popup is not focusable). Known, not from the host: a
+forced activity relaunch (an overlay change on the emulator) leaves the main thread in android-activity's
+`on_destroy` waiting for the game thread (an ANR), with `native_ui=engine` as well.
 
 ## Native host spike (Linux, #333)
 

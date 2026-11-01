@@ -141,6 +141,17 @@ impl NativeHost for Host {
     }
 
     fn show(&mut self, _show: bool) {}
+
+    /// Pauses the page's timers and rendering while the app is away (`WebHost.setActive`).
+    fn set_active(&mut self, active: bool) {
+        let done = with_class(|env, class| {
+            env.call_static_method(class, jni_str!("setActive"), jni_sig!((boolean) -> void), &[JValue::Bool(active)])?;
+            Ok(())
+        });
+        if let Err(e) = done {
+            log::warn!("webui: cannot set the WebView active={active}: {e}");
+        }
+    }
 }
 
 /// Runs `f` with a JNI env attached to this thread and the `WebHost` class.

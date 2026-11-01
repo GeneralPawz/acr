@@ -57,6 +57,9 @@ pub trait NativeHost {
     /// Shows or hides the webview while the UI does (not) draw the current screen; a host whose
     /// layer is transparent over the game stays shown.
     fn show(&mut self, show: bool);
+    /// The app moved to the background (`false`) or back; a host that has nothing running in its
+    /// page meanwhile does nothing.
+    fn set_active(&mut self, _active: bool) {}
     /// The window changed size or scale; a host that follows the display itself does nothing.
     fn resize(&self, _window: &winit::window::Window) {}
 }

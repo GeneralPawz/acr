@@ -234,6 +234,20 @@ impl Game {
         self.native_host = Some(host);
     }
 
+    /// The app is in the foreground (or not): the native webview does no work while it is away, and
+    /// the page gets everything again when it returns, as the messages sent meanwhile are dropped.
+    fn set_native_host_active(&mut self, active: bool) {
+        #[cfg(any(all(feature = "webview-gtk", target_os = "linux"), target_os = "android"))]
+        if let Some(host) = &mut self.native_host {
+            host.set_active(active);
+            if active && let Some(web) = &mut self.webui {
+                web.resync();
+            }
+        }
+        #[cfg(not(any(all(feature = "webview-gtk", target_os = "linux"), target_os = "android")))]
+        let _ = active;
+    }
+
     /// Answers the Svelte UI's waiting asset requests and publishes what changed.
     fn publish_webui(&mut self) {
         let Some(mut web) = self.webui.take() else { return };
@@ -968,6 +982,7 @@ impl ApplicationHandler<Event> for Game {
                 log::error!("cannot recreate the surface: {e}");
             }
             self.resume_app();
+            self.set_native_host_active(true);
             return;
         }
         #[cfg(not(target_arch = "wasm32"))]
@@ -1022,6 +1037,7 @@ impl ApplicationHandler<Event> for Game {
             g.gpu.suspend();
         }
         self.suspend_app();
+        self.set_native_host_active(false);
     }
 
     fn user_event(&mut self, event_loop: &ActiveEventLoop, event: Event) {
