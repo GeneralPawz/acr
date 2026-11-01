@@ -1,6 +1,7 @@
 {
   "name": "editor_players",
   "description": "The test editor's Kampf rule with more than two players (#405): three players place Füsiliers near each other, Kampf cycles AUS, AN (alle gegen alle); a few hundred ticks later every one of them has lost units. Nobody fights while Kampf is AUS.",
+  "touch": false,
   "steps": [
     {"cmd": "start", "blank": {"editor": true}},
     {"cmd": "wait", "ticks": 5},

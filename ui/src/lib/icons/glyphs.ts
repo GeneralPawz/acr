@@ -195,6 +195,8 @@ export const GLYPHS: Record<string, string> = {
   pause: '<path d="M17 11v26M31 11v26"/>',
   play: '<path d="M16 10l20 14-20 14z" fill="currentColor"/>',
   menu: '<path d="M10 14h28M10 24h28M10 34h28"/>',
+  // The test editor's drawer: a screen with its panel at the right.
+  editor: '<rect x="8" y="11" width="32" height="26" rx="4"/>' + solid('M28 12h8a3 3 0 0 1 3 3v18a3 3 0 0 1-3 3h-8z'),
   'map-open': '<path d="M9 14l10-4 10 4 10-4v24l-10 4-10-4-10 4zM19 10v24M29 14v24"/>',
   'resources-closed': '<circle cx="24" cy="15" r="9" fill="currentColor"/><circle class="ink" cx="24" cy="15" r="4.2" fill="currentColor" stroke="none"/><path d="M14 34l10 8 10-8"/>',
   'resources-open': '<circle cx="24" cy="33" r="9" fill="currentColor"/><circle class="ink" cx="24" cy="33" r="4.2" fill="currentColor" stroke="none"/><path d="M14 14l10-8 10 8"/>',

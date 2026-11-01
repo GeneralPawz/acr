@@ -19,9 +19,12 @@ use acr_sim::formation;
 
 use super::input::Input;
 use super::presets::{self, Block, Doctrine, Era, Error, Role, Size};
+use super::touch::TouchControl;
 use super::{Act as EditorAct, ENTRIES, Editor};
 use super::{CELL, FIRST_EXTRA, Item, Look, OY, ROW, W, X0, sides};
 use crate::tactics::{self, Control, Duty, Style};
+use crate::ui::Ctx;
+use crate::ui::dialog::Reject;
 use crate::ui::draw::Rect;
 
 /// The fronts never stand closer than this, world pixels.
@@ -352,6 +355,78 @@ impl Editor {
         }
         self.apply_sides(world);
         b"Kampf".to_vec()
+    }
+
+    /// The battle view for the touch drawer (`touch.rs`), in the order of the classic lines.
+    pub(super) fn battle_touch(&self, ctx: &Ctx) -> Vec<TouchControl> {
+        let b = &self.battle;
+        let mut out = Vec::new();
+        let stepper = |name: String, text: String| TouchControl::Stepper {
+            less: format!("editor/{name}/-"),
+            more: format!("editor/{name}/+"),
+            text: text.into_bytes(),
+        };
+        for s in 0..2 {
+            out.push(stepper(format!("battle/nation/{s}"), format!("Seite {}: {}", s + 1, ENTRIES[b.nation[s]].0)));
+            let era = b.era_of(s).map_or("ein Heer", Era::label).to_owned();
+            if presets::eras(b.nation[s]).len() > 1 {
+                out.push(stepper(format!("battle/era/{s}"), era));
+            } else {
+                out.push(TouchControl::Line { text: era.into_bytes() });
+            }
+        }
+        out.push(stepper("battle/size".into(), format!("Groesse: {}", b.size.label())));
+        for s in 0..2 {
+            let who = if b.ai[s] { "KI" } else { "Spieler" };
+            let text = format!("Seite {}: {who}", s + 1).into_bytes();
+            out.push(TouchControl::Button { id: format!("editor/battle/control/{s}"), text, on: b.ai[s] });
+        }
+        out.push(TouchControl::Button { id: "editor/battle/go".into(), text: b"Aufstellen".to_vec(), on: false });
+        let fight = Item {
+            rect: Rect::new(0, 0, CELL, CELL),
+            text: b"Kampf".to_vec(),
+            name: "Kampf".into(),
+            hot: b.tactics.is_some(),
+            act: None,
+            look: Look::Icon { frame: self.fight_icon.get() },
+            gp: None,
+        };
+        out.push(TouchControl::Icon {
+            id: "editor/battle/fight".into(),
+            text: b"Kampf".to_vec(),
+            on: b.tactics.is_some(),
+            draws: super::touch::cell_draws(&fight, ctx),
+        });
+        out
+    }
+
+    /// The battle view's act for the drawer's id below `editor/battle/`.
+    pub(super) fn battle_intent(&self, tail: &[&str]) -> Result<Act, Reject> {
+        let side = |s: &str| match s {
+            "0" => Ok(0),
+            "1" => Ok(1),
+            _ => Err(Reject::NoWidget),
+        };
+        let sign = |s: &str| match s {
+            "-" => Ok(-1),
+            "+" => Ok(1),
+            _ => Err(Reject::NoWidget),
+        };
+        match tail {
+            ["nation", s, d] => Ok(Act::Nation(side(s)?, sign(d)?)),
+            ["era", s, d] => {
+                let s = side(s)?;
+                if presets::eras(self.battle.nation[s]).len() < 2 {
+                    return Err(Reject::Hidden);
+                }
+                Ok(Act::Era(s, sign(d)?))
+            }
+            ["size", d] => Ok(Act::Size(sign(d)?)),
+            ["control", s] => Ok(Act::Control(side(s)?)),
+            ["go"] => Ok(Act::Go),
+            ["fight"] => Ok(Act::Fight),
+            _ => Err(Reject::NoWidget),
+        }
     }
 
     /// The battle view's lines inside the window.

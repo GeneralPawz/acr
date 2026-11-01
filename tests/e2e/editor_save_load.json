@@ -1,6 +1,7 @@
 {
   "name": "editor_save_load",
   "description": "A saved editor game keeps what the editor did (#427): the editor window itself, Fuesiliere at an upgrade level (player 1), a finished town hall, an army preset (player 2), Kampf AN. Saved and loaded again, the counts, the upgrade and the window return.",
+  "touch": false,
   "steps": [
     {"cmd": "start", "blank": {"editor": true}},
     {"cmd": "wait", "ticks": 5},

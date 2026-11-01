@@ -25,4 +25,8 @@ hud?: HudPatch | null,
 /**
  * The touch skin's view of the interface (only while the UI named [`Skin::Touch`]).
  */
-touch?: TouchHud | null, };
+touch?: TouchHud | null, 
+/**
+ * The test editor's drawer (touch skin; `null` = not an editor game).
+ */
+editor?: import("./EditorView").EditorView | null, };

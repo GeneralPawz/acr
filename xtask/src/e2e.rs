@@ -127,6 +127,9 @@ pub struct Scenario {
     pub step_timeout: u64,
     /// Error lines in the game's log fail the scenario.
     pub strict_log: bool,
+    /// Whether `--ui touch` applies; false: the scenario clicks the engine's pixels (the classic
+    /// editor window) and runs with the engine's UI whatever `--ui` says.
+    pub touch: bool,
     pub steps: Vec<Value>,
 }
 
@@ -156,6 +159,7 @@ impl Scenario {
                 .unwrap_or_default(),
             step_timeout: v.get("step_timeout_s").and_then(Value::as_u64).unwrap_or(120),
             strict_log: v.get("strict_log").and_then(Value::as_bool).unwrap_or(false),
+            touch: v.get("touch").and_then(Value::as_bool).unwrap_or(true),
             steps,
         })
     }
@@ -165,6 +169,17 @@ impl Scenario {
         let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("scenario");
         Self::parse(&text, stem).map_err(|e| format!("{}: {e}", path.display()))
     }
+}
+
+/// The driver flags of a scenario under the runner's `--ui`: its own `args`, then the runner's
+/// choice (the first `--ui` wins), except that `--ui touch` is not passed to a scenario that
+/// does not take it.
+fn scenario_args(s: &Scenario, ui: Option<&str>) -> Vec<String> {
+    let mut args = s.args.clone();
+    if let Some(ui) = ui.filter(|ui| s.touch || *ui != "touch") {
+        args.extend(["--ui".into(), ui.to_owned()]);
+    }
+    args
 }
 
 /// The value at a dotted path (`state.counts.0.sites`; numbers index lists).
@@ -522,10 +537,7 @@ pub fn e2e(root: &Path, target: &Path, options: &Options, hooks: &mut dyn Hooks)
                 let dir = dir.clone().unwrap_or_default();
                 let work = out.join(&s.name);
                 let _ = std::fs::remove_dir_all(&work);
-                let mut args = s.args.clone();
-                if let Some(ui) = &options.ui {
-                    args.extend(["--ui".into(), ui.clone()]);
-                }
+                let mut args = scenario_args(s, options.ui.as_deref());
                 if options.gpu && !args.iter().any(|a| a == "--drive-gpu") {
                     args.push("--drive-gpu".into());
                 }
@@ -659,6 +671,19 @@ mod tests {
         assert!(fake.got.iter().all(|g| g.get("expect").is_none()), "runner keys are not sent");
         assert_eq!((r.tick, r.dismissed), (Some(5), 1));
         assert!(r.failure.unwrap().contains("step 5"));
+    }
+
+    #[test]
+    fn a_scenario_that_does_not_take_touch_runs_with_the_engines_ui() {
+        let mut s = scenario(json!([{"cmd": "ui"}]));
+        s.args = vec!["--dialogs".into(), "report".into()];
+        assert!(s.touch, "touch applies unless the scenario says no");
+        assert_eq!(scenario_args(&s, Some("touch")), ["--dialogs", "report", "--ui", "touch"]);
+        assert_eq!(scenario_args(&s, None), ["--dialogs", "report"]);
+        let parsed = Scenario::parse(r#"{"touch": false, "steps": [{"cmd": "ui"}]}"#, "x").unwrap();
+        assert!(!parsed.touch);
+        assert_eq!(scenario_args(&parsed, Some("touch")), Vec::<String>::new());
+        assert_eq!(scenario_args(&parsed, Some("classic")), ["--ui", "classic"]);
     }
 
     #[test]

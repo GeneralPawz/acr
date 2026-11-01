@@ -115,7 +115,7 @@ impl Menu {
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use std::sync::Arc;
 
     use acr_formats::defs::{NationDef, UnitDef};
@@ -126,19 +126,19 @@ mod tests {
 
     use super::*;
 
-    const PIKEMAN: &str = "NAME Pik\r\nLIFE 100\r\nGEOMETRY 1 10 40\r\nATTACK_RADIUS 0 0 40\r\nDAMAGE 0 7\r\n\
+    pub(in crate::ingame::editor) const PIKEMAN: &str = "NAME Pik\r\nLIFE 100\r\nGEOMETRY 1 10 40\r\nATTACK_RADIUS 0 0 40\r\nDAMAGE 0 7\r\n\
         WEAPONKIND 0 PIKA\r\n[END]\r\n";
-    const NATION: &[u8] = b"[UPGRADE]\r\n\
-        FAST ICO #POSITION 3 0 #LEVEL 1 M #COST 0 #TIME 3\r\nBUILD GRP 1 Pik(EN) -50%\r\n\
-        PRICE ICO #POSITION 4 0 #LEVEL 1 M #COST 0 #TIME 3\r\nCOST GRP 1 Pik(EN) GRP 1 GOLD -10%\r\n\
-        DMG ICO #POSITION 0 0 #LEVEL 1 M #COST 0 #TIME 3\r\nDAMAGE WEAPONKIND PIKA Pik(EN) +2\r\n\
-        TOUGH ICO #POSITION 1 0 #LEVEL 1 M #COST 0 #TIME 3\r\nLIFE GRP 1 Pik(EN) +50%\r\n\
-        DMG2 ICO #POSITION 2 0 #LEVEL 2 M #COST 0 #TIME 3\r\nDAMAGE WEAPONKIND PIKA Pik(EN) +3\r\n\
-        [ENABLED]\r\nPik(EN)\r\n[UPGRADEPLACE]\r\nPik(EN) 7 FAST\r\nPRICE\r\nDMG\r\nTOUGH\r\nDMG2\r\n[END]\r\n";
+    pub(in crate::ingame::editor) const NATION: &[u8] = b"[UPGRADE]\r\n\
+        FAST ICO #POSITION 3 0 #LEVEL 1 M #COST 0 #TIME 3\r\nBUILD GRP 1 EngPik(EN) -50%\r\n\
+        PRICE ICO #POSITION 4 0 #LEVEL 1 M #COST 0 #TIME 3\r\nCOST GRP 1 EngPik(EN) GRP 1 GOLD -10%\r\n\
+        DMG ICO #POSITION 0 0 #LEVEL 1 M #COST 0 #TIME 3\r\nDAMAGE WEAPONKIND PIKA EngPik(EN) +2\r\n\
+        TOUGH ICO #POSITION 1 0 #LEVEL 1 M #COST 0 #TIME 3\r\nLIFE GRP 1 EngPik(EN) +50%\r\n\
+        DMG2 ICO #POSITION 2 0 #LEVEL 2 M #COST 0 #TIME 3\r\nDAMAGE WEAPONKIND PIKA EngPik(EN) +3\r\n\
+        [ENABLED]\r\nEngPik(EN)\r\n[UPGRADEPLACE]\r\nEngPik(EN) 7 FAST\r\nPRICE\r\nDMG\r\nTOUGH\r\nDMG2\r\n[END]\r\n";
 
     fn pikeman() -> (World, TypeId) {
         let mut c = Catalog::new();
-        let pik = c.add(ObjectType::from_def("Pik(EN)", &UnitDef::parse(PIKEMAN.as_bytes())));
+        let pik = c.add(ObjectType::from_def("EngPik(EN)", &UnitDef::parse(PIKEMAN.as_bytes())));
         let mut tech = Tech::default();
         tech.add_nation(&c, &NationDef::parse(NATION));
         c.tech = tech;

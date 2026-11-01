@@ -1,6 +1,7 @@
 {
   "name": "editor_window",
   "description": "The test editor's placing window (#401, the original's 'Einheit wählen', 0x5bb6c0): the eight colours, the nation combo box, the icon grid under category headers, and ACR's controls in a box under it. Picks Frankreich in the combo box, a unit icon, the count, a training level (right click) and the owner, places the units with a click on the map, then places animals as the neutral player and switches the rules (Kampf, Kanonen, Ich steuere).",
+  "touch": false,
   "steps": [
     {"cmd": "start", "blank": {"editor": true}},
     {"cmd": "wait", "ticks": 5},

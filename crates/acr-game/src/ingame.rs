@@ -65,6 +65,7 @@ mod trample;
 mod water_view;
 use crate::animal_sounds::Cry;
 use crate::unit_sounds::{self, SoundEvent};
+pub use editor::touch::{CELL, TouchButton, TouchControl, TouchEditor};
 pub use interface::{GameKey, GameMouse, HudIntent};
 
 /// A drag shorter than this (window pixels) is a click.
@@ -645,7 +646,10 @@ impl InGame {
             rest.extend(messages);
         }
         if claim.editor {
-            self.interface.claimed.push(crate::hud::editor_group(editor));
+            // The touch skin has no group for it ([`InGame::editor_touch_view`]).
+            if !claim.touch {
+                self.interface.claimed.push(crate::hud::editor_group(editor));
+            }
         } else {
             rest.extend(editor);
         }
@@ -667,6 +671,12 @@ impl InGame {
     /// The touch skin's pieces of this frame, when the UI asked for them.
     pub fn take_touch_view(&mut self) -> Option<crate::hud::touch_skin::TouchView> {
         self.interface.touch_view.take()
+    }
+
+    /// The test editor's drawer of this frame, when the UI asked for the touch skin; `Some(None)`
+    /// outside an editor game.
+    pub fn take_editor_view(&mut self) -> Option<Option<editor::touch::TouchEditor>> {
+        self.interface.editor_view.take()
     }
 
     /// Left button: press starts a selection, release selects by click or rectangle.

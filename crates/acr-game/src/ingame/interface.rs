@@ -187,6 +187,8 @@ pub enum HudIntent<'a> {
     Minimap { uv: [f32; 2], right: bool },
     /// A button of the top bar (`bar/menu`, `bar/pause`).
     Bar { id: &'a str },
+    /// A control of the test editor's drawer (`editor/...`, `editor::touch`); a long press is `right`.
+    Editor { id: &'a str, right: bool },
 }
 
 /// Interface state of the game screen.
@@ -199,6 +201,8 @@ pub struct State {
     pub(super) claimed: Vec<hud::Claimed>,
     /// The touch skin's pieces of the last frame (`hud::Claim::touch`).
     pub(super) touch_view: Option<hud::touch_skin::TouchView>,
+    /// The test editor's drawer of the last frame (`Some(None)`: not an editor game).
+    pub(super) editor_view: Option<Option<super::editor::touch::TouchEditor>>,
     /// The Pause key (op 0x46) stopped the simulation.
     pub paused: bool,
     /// Control groups 0..9.
@@ -304,6 +308,7 @@ impl Default for State {
             claim: hud::Claim::default(),
             claimed: Vec::new(),
             touch_view: None,
+            editor_view: None,
             paused: false,
             groups: vec![Vec::new(); 10],
             markers: Vec::new(),
@@ -2141,6 +2146,7 @@ impl InGame {
         if let Some(touch) = &mut self.interface.touch_view {
             touch.speed = 100 - self.frame_time.clamp(0, 100);
         }
+        self.interface.editor_view = self.interface.claim.touch.then(|| self.editor_touch_view(ctx));
         let mut hud_draws = Vec::new();
         self.dip_draw(ctx, &mut hud_draws);
         if self.interface.paused && self.mission.ended.is_none() {
@@ -2656,6 +2662,10 @@ impl InGame {
                     _ => return Err(Reject::NoWidget),
                 };
                 Ok(self.hud_left_event(event, [window[0] / 2.0, window[1] / 2.0]).unwrap_or(GameMouse::None))
+            }
+            HudIntent::Editor { id, right } => {
+                self.editor_intent(id, right)?;
+                Ok(GameMouse::None)
             }
             HudIntent::Minimap { uv, right } => {
                 let px = self.interface.hud.minimap_pixel(&self.interface.view, uv)?;

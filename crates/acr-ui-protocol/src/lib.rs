@@ -130,6 +130,10 @@ pub struct ViewPatch {
     /// The touch skin's view of the interface (only while the UI named [`Skin::Touch`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub touch: Option<Box<TouchHud>>,
+    /// The test editor's drawer (touch skin; `null` = not an editor game).
+    #[serde(default, skip_serializing_if = "Option::is_none", with = "nullable")]
+    #[cfg_attr(feature = "ts", ts(type = "import(\"./EditorView\").EditorView | null", optional))]
+    pub editor: Option<Option<Box<EditorView>>>,
 }
 
 /// The in-game interface as the touch skin lays it out: semantic pieces, each with the draws of
@@ -406,6 +410,104 @@ pub struct HudGroup {
     pub parts: Vec<Part>,
 }
 
+/// The test editor as the touch skin's drawer shows it (docs/webui.md "Test editor"). Rust sends
+/// every id; a tap goes back as a click intent on it (`editor/...`), a long press as a right click.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export, export_to = export_dir!()))]
+pub struct EditorView {
+    pub title: String,
+    /// Switches between the unit list and the battle view.
+    pub toggle: EditorButton,
+    /// The battle view is shown (`entries`, `swatches` and `groups` are empty then).
+    pub battle: bool,
+    pub status: String,
+    /// What a tap on the map places (`Typ: ..`, `Armee ..`), if anything.
+    pub armed: Option<String>,
+    pub swatches: Vec<EditorSwatch>,
+    /// The nation list; `on` is the current one.
+    pub entries: Vec<EditorButton>,
+    /// The army menu's centuries and sizes (empty for the lists without armies).
+    pub army: Vec<EditorButton>,
+    pub groups: Vec<EditorGroup>,
+    /// The open level list of a unit (`editor/level/<n>`; `editor/close` closes it).
+    pub levels: Vec<EditorButton>,
+    pub controls: Vec<EditorControl>,
+}
+
+/// A button with a text.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export, export_to = export_dir!()))]
+pub struct EditorButton {
+    pub id: String,
+    pub text: String,
+    pub on: bool,
+}
+
+/// A player colour. A long press (a right click) on it cycles the team while `teams`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export, export_to = export_dir!()))]
+pub struct EditorSwatch {
+    pub id: String,
+    pub label: String,
+    pub colour: [u8; 3],
+    /// The team number shown on it in the Teams mode.
+    pub team: Option<u8>,
+    pub on: bool,
+    pub teams: bool,
+}
+
+/// A category of the nation's list.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export, export_to = export_dir!()))]
+pub struct EditorGroup {
+    pub header: String,
+    pub cells: Vec<EditorCell>,
+}
+
+/// A cell of the list: what it picks, drawn in a box of `size`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export, export_to = export_dir!()))]
+pub struct EditorCell {
+    pub id: String,
+    pub name: String,
+    /// `[w, h]` of the draws' box.
+    pub size: [i32; 2],
+    pub parts: Vec<Part>,
+    pub on: bool,
+    /// A long press (a right click) opens the unit's levels.
+    pub levels: bool,
+}
+
+/// A control of the placing or the battle view.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "t", rename_all = "snake_case")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export, export_to = export_dir!()))]
+pub enum EditorControl {
+    /// A value with a button to each side.
+    Stepper {
+        less: String,
+        more: String,
+        text: String,
+    },
+    Button {
+        id: String,
+        text: String,
+        on: bool,
+    },
+    /// A button drawn as an original icon.
+    Icon {
+        id: String,
+        text: String,
+        on: bool,
+        size: [i32; 2],
+        parts: Vec<Part>,
+    },
+    /// A line of text.
+    Line {
+        text: String,
+    },
+}
+
 /// The engine's cursor image; `hotspot` is the pixel of the image that points.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export, export_to = export_dir!()))]
@@ -539,6 +641,19 @@ mod tests {
         assert_eq!(serde_json::from_str::<ToUi>(&json).unwrap(), ToUi::View(Box::new(patch)));
         let json = serde_json::to_string(&ToUi::View(Box::new(ViewPatch { rev: 4, ..Default::default() }))).unwrap();
         assert_eq!(json, r#"{"t":"view","rev":4}"#);
+    }
+
+    #[test]
+    fn the_editor_topic_is_nullable_and_its_controls_are_tagged() {
+        let patch = ViewPatch { rev: 5, editor: Some(None), ..Default::default() };
+        let json = serde_json::to_string(&ToUi::View(Box::new(patch.clone()))).unwrap();
+        assert_eq!(json, r#"{"t":"view","rev":5,"editor":null}"#);
+        assert_eq!(serde_json::from_str::<ToUi>(&json).unwrap(), ToUi::View(Box::new(patch)));
+        let view = EditorView { controls: vec![EditorControl::Line { text: "x".into() }], ..Default::default() };
+        let patch = ViewPatch { rev: 6, editor: Some(Some(Box::new(view))), ..Default::default() };
+        let json = serde_json::to_string(&ToUi::View(Box::new(patch.clone()))).unwrap();
+        assert!(json.contains(r#"{"t":"line","text":"x"}"#), "{json}");
+        assert_eq!(serde_json::from_str::<ToUi>(&json).unwrap(), ToUi::View(Box::new(patch)));
     }
 
     #[test]

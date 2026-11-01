@@ -1,6 +1,7 @@
 {
   "name": "editor_ships",
   "description": "The test editor's Marine list (#406): on the sea ground a ship is put on the water and sails, a land unit and a building are refused.",
+  "touch": false,
   "steps": [
     {
       "cmd": "start",

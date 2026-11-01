@@ -1,6 +1,7 @@
 {
   "name": "editor_battle_save",
   "description": "A fight of the battle controller survives a savegame: England against Frankreich (Mittel), Aufstellen, the swords, 400 ticks, saved and loaded again. The controller's orders are not logged but made again by the replay, so the game loads without the warning that it differs from the saved one, with the same counts and the controller still running.",
+  "touch": false,
   "steps": [
     {"cmd": "start", "blank": {"editor": true}},
     {"cmd": "wait", "ticks": 5},

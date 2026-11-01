@@ -1,0 +1,31 @@
+{
+  "name": "touch_editor",
+  "description": "The test editor in the touch skin (#494, docs/webui.md 'Test editor'): the view names the nation list, the colours and the cells, every control is an editor/ intent that does what the classic window's click does (a nation, a colour, a unit; a right click on a unit opens its levels, a level picks it; stop ends placing and is refused when nothing is armed), the map takes taps where the classic window stood, and the battle view places and fights. Unknown ids and a nation out of range are refused.",
+  "args": ["--ui", "touch"],
+  "steps": [
+    {"cmd": "start", "blank": {"editor": true}},
+    {"cmd": "wait", "ticks": 5},
+    {"cmd": "view", "expect": [{"path": "view.editor.entries.2.on", "eq": true}, {"path": "view.editor.groups.0.cells", "len_ge": 1}, {"path": "view.editor.battle", "eq": false}]},
+    {"cmd": "ui_send", "msg": {"t": "intent", "seq": 1, "id": "editor/nation/3", "action": {"t": "click", "button": "left"}}},
+    {"cmd": "ui_send", "msg": {"t": "intent", "seq": 2, "id": "editor/owner/1", "action": {"t": "click", "button": "left"}}},
+    {"cmd": "ui_send", "msg": {"t": "intent", "seq": 3, "id": "editor/unit/FrnM18(FR)", "action": {"t": "click", "button": "left"}}},
+    {"cmd": "view", "expect": [{"path": "view.editor.entries.3.on", "eq": true}, {"path": "view.editor.swatches.1.on", "eq": true}, {"path": "view.editor.armed", "contains": "FrnM18"}]},
+    {"cmd": "click", "pos": [880, 300], "note": "inside the classic window's old box: the map takes the tap, the window is not drawn"},
+    {"cmd": "wait", "ticks": 2},
+    {"cmd": "state", "expect": {"path": "state.counts.1.units.FrnM18(FR)", "eq": 36}},
+    {"cmd": "ui_send", "msg": {"t": "intent", "seq": 4, "id": "editor/unit/FrnM18(FR)", "action": {"t": "click", "button": "right"}}},
+    {"cmd": "view", "expect": {"path": "view.editor.levels", "len_ge": 2}},
+    {"cmd": "ui_send", "msg": {"t": "intent", "seq": 5, "id": "editor/level/1", "action": {"t": "click", "button": "left"}}},
+    {"cmd": "view", "expect": [{"path": "view.editor.levels", "len_eq": 0}, {"path": "view.editor.controls.2.text", "contains": "1/"}]},
+    {"cmd": "ui_send", "msg": {"t": "intent", "seq": 6, "id": "editor/stop", "action": {"t": "click", "button": "left"}}},
+    {"cmd": "ui_send", "msg": {"t": "intent", "seq": 7, "id": "editor/stop", "action": {"t": "click", "button": "left"}}, "expect": {"ok": false}, "note": "nothing is armed"},
+    {"cmd": "ui_send", "msg": {"t": "intent", "seq": 8, "id": "editor/nope", "action": {"t": "click", "button": "left"}}, "expect": {"ok": false}},
+    {"cmd": "ui_send", "msg": {"t": "intent", "seq": 9, "id": "editor/nation/16", "action": {"t": "click", "button": "left"}}, "expect": {"ok": false}},
+    {"cmd": "ui_send", "msg": {"t": "intent", "seq": 10, "id": "editor/battle", "action": {"t": "click", "button": "left"}}},
+    {"cmd": "ui_send", "msg": {"t": "intent", "seq": 11, "id": "editor/count/+", "action": {"t": "click", "button": "left"}}, "expect": {"ok": false}, "note": "the battle view has no count"},
+    {"cmd": "ui_send", "msg": {"t": "intent", "seq": 12, "id": "editor/battle/go", "action": {"t": "click", "button": "left"}}},
+    {"cmd": "wait", "ticks": 2},
+    {"cmd": "state", "expect": {"path": "state.counts.0.units.EngM18(EN)", "eq": 360}},
+    {"cmd": "ui_send", "msg": {"t": "intent", "seq": 13, "id": "editor/battle/fight", "action": {"t": "click", "button": "left"}}}
+  ]
+}

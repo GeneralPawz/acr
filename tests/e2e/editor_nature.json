@@ -1,6 +1,7 @@
 {
   "name": "editor_nature",
   "description": "The editor's Natur list (#429): a tree and a stone are put on the map, one click on the deep water of the field is refused, and a saved and loaded game keeps both.",
+  "touch": false,
   "steps": [
     {"cmd": "start", "blank": {"editor": true, "water": {"x": 7680, "y": 7000, "w": 2000, "h": 1500}}},
     {"cmd": "wait", "ticks": 5},

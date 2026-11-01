@@ -567,7 +567,10 @@ changes the options' last control and a drop-down (a full-width list), goes back
 setup) and with Escape (Android's back gesture), starts the game, selects a unit with a tap and orders it with a long press,
 and per step checks the skin is `touch`, no element lies outside the viewport (menu sheets scroll vertically, so only their
 width counts), every button is at least 44 CSS pixels, a sheet is one centred column of at most 560 CSS pixels, there is no
-console error, and `state` shows the selection and the order. Screenshots `touch332-<viewport>-<step>.png` go to `--shots`.
+console error, and `state` shows the selection and the order. On a page of its own it then starts a blank editor game (#494):
+a swipe left from the right edge opens the editor drawer (width at most `min(88vw, 420px)`, the map's left strip free, every
+button 44 CSS pixels), a cell is armed, a swipe right closes it, a tap on the free map places the units, and the bar button
+opens and closes it. Screenshots `touch332-<viewport>-<step>.png` go to `--shots`.
 Run it with `~/browser/venv/bin/python tools/browser/touch_skin.py --url 'http://127.0.0.1:8090/?game=/game/'`.
 
 ## Scenario files
@@ -581,6 +584,7 @@ Run it with `~/browser/venv/bin/python tools/browser/touch_skin.py --url 'http:/
   "args": ["--dialogs", "report"],
   "step_timeout_s": 120,
   "strict_log": false,
+  "touch": true,
   "steps": [
     {"cmd": "start", "random": {"nation": 1, "seed": 5}},
     {"cmd": "state", "capture": {"wood": "state.resources.wood"}},
@@ -598,7 +602,9 @@ expects `{"ok": false}`. Checks: `{"path": "a.b.0", OP: value}` with `eq`, `ne`,
 `ge`, `lt`, `le`, `contains` (substring, list element or object key), `exists`,
 `nonempty`, `len_eq`, `len_ge`; shorthands `{"screen": "game"}`, `{"dismissed": true}`,
 `{"blocking": false}`, `{"no_errors": true}`. The scenario stops at the first failing
-step.
+step. `"touch": false` keeps the runner's `--ui touch` from the scenario (it runs with the engine's UI;
+`--ui classic` still applies): for scenarios that click the engine's pixels, like the test editor's
+`editor_*` ones. `touch_editor` is the editor's touch drawer, through intents.
 
 A `jev_check` step asks Jev whether the current `ui` and `state` match a sentence:
 `{"cmd": "jev_check", "expectation": "A game is running and the player has peasants",

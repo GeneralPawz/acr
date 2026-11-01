@@ -121,6 +121,7 @@ code the press ends in (`Dialog::press_plain`, `choose_param`, `reveal`, the HUD
 | same, a slider | `set_value { value }` | `Dialog::set_value`: the drag to `value` (`0..=max`) |
 | same, an input box | `set_text { text }` | `Dialog::set_text`: focus and the text as if typed into the emptied box (CP1252, printable, at most `capacity - 1`) |
 | `hud/<slot>`, `army/<slot>` | `click { button, mods }` | `InGame::hud_event`: the command of the icon, left or right (`Hud::icon_click`); `mods` are held for this click (Ctrl: an endless order) |
+| `editor/...` | `click { button }` | `InGame::editor_intent` (`ViewPatch.editor`, `EditorView`, `editor/touch.rs`): the test editor's drawer. Rust sends every id with the view; the effect is `Editor::apply` of the act a click on the classic window's item sends. Right: a long press on a colour (its team, in the Teams mode) or on a unit cell (its level list). Refused as the classic window refuses: an id the view does not offer (`NoWidget`), a control of the other view or of another list (`Hidden`), a number out of range (`Range`), `editor/stop` with nothing armed (`Disabled`). `editor/close` closes the level list, `editor/stop` ends placing |
 | `minimap` | `minimap_at { uv, button }` | `InGame::hud_event`: left centres the camera, right orders the selection to the point (`Hud::minimap_pixel`) |
 
 **Back** (`FromUi::Back { seq }`, the touch skin's header arrow): presses the top screen's own back or cancel widget as
@@ -145,8 +146,9 @@ names its buttons, lists, combo boxes, sliders, input boxes and text viewers; th
 none. Keys are unique within a screen.
 
 `InGame.interface.hud_input` (default on; `InGame::set_hud_input`): off, a window pixel never reaches the HUD
-(press, right press, minimap drag), so the HUD takes `hud_event`s only. The top bar's drop-down, the unit and
-game panels and the test editor's window have no intent yet; they stay pixel-driven.
+(press, right press, minimap drag), so the HUD takes `hud_event`s only. The top bar's drop-down and the unit and
+game panels have no intent yet; they stay pixel-driven. The test editor's window takes no pixel then either (it is not
+drawn; a map tap where it stood places, `InGame::editor_left`), its drawer is the `editor/...` intents.
 
 Driver, `--ui touch`: connected like `--ui classic`, `hud_input` off in a running game, and a left click
 (`click`, `move` excepted) on a target the tree names goes in as an intent: a row `Screen/3#5` as `select_row`, an
@@ -158,6 +160,9 @@ lists, sliders and scroll bars by their centre, the editor's icons, double click
 command (`intent N refused: ...`). Scenarios whose steps click the HUD by pixel
 (`mission_history`: the M button; `touch_*`: the engine's own touch controls) pin `--ui engine` in their `args`;
 the first `--ui` wins over the runner's.
+
+A scenario with `"touch": false` (the `editor_*` ones, which click the classic window's pixels) does not get `--ui touch`
+from the runner and runs with the engine's UI; `touch_editor` covers the drawer's intents.
 
 `cargo xtask e2e --ui touch` passes every scenario the way the default and `--ui classic` do; `touch_intents`
 checks the intents themselves.
@@ -495,7 +500,7 @@ the touch skin only renders it and sends intents.
     canister fire and load), work that stops and resumes (production, fishing, sowing), formations (line, column, square,
     wedge, crescent, cavalry line, fill, bigger and smaller, group, ungroup, disband), the army list, rally point, idle
     peasants and mines, the building's pages I to III, the market (trade, clear, plus and minus by ten to ten thousand),
-    and the top bar's speed (a gauge), pause, play, menu, resource fold (a coin with a caret) and minimap fold. A command without a glyph (and any new `HudCommand`) falls back
+    and the top bar's speed (a gauge), pause, play, menu, the editor drawer (a screen with a panel), resource fold (a coin with a caret) and minimap fold. A command without a glyph (and any new `HudCommand`) falls back
     to the original's picture; the unit, building, production, build, upgrade, leave and market resource icons are
     portraits and always do.
   - *Portraits* (and every fallback) are fetched through `scale/4/..`: Rust enlarges the 40 pixel frame to 160 with
@@ -515,7 +520,22 @@ the touch skin only renders it and sends intents.
   claimed at any canvas scale (`Claim::touch`), so the engine draws none of it.
 - **The map** keeps the engine's touch gestures: the page sends a finger as `FromUi::Touch` (`id`, phase, physical pixels)
   to `touch.rs` (tap, long press = right click and order, pan, pinch), which also puts the game in touch mode.
+- **Test editor (#494)** (`ViewPatch.editor`, `EditorView`; intents `editor/...`, docs "Intents"): in an editor game the
+  top bar's first button (`bar/editor`, a screen with its panel at the right) and a swipe left from a strip at the
+  right edge (20 CSS pixels wide, `min(200px, 40vh)` high, centred, with a gold tab; the finger must travel 24 pixels
+  along the axis and at least 1.5 times its travel across, `ui/src/lib/touch/swipe.ts`) open the drawer
+  (`EditorDrawer.svelte`), which is as wide as `min(88vw, 420px)` below the bar. It does not dim the map: a tap on the
+  map places while it is open. It lists the colours (a long press of 450 ms on one cycles the team in the Teams mode),
+  the nation (a list over the drawer), the army sizes, every cell of the nation's list (a long press on a unit opens its
+  level list, on another cell shows its name), the controls and the status; it scrolls itself. A swipe right of 48
+  pixels on the drawer, the cross or Escape closes it (Escape first closes an open level list; the click that ends a swipe
+  is swallowed). An army size and "Aufstellen" close it so the map is free; picking a cell does not (the count and the
+  formation are set after the pick). While it is closed, a chip under the resources shows what a tap on the map places
+  (`Typ: ..`, `Armee ..`): its name opens the drawer, the cross sends `editor/stop`. The drawer is the page's transient
+  state; it closes when the game is no editor game. The classic window is neither drawn nor hit by pixels in this skin.
+  Android takes an edge swipe as Back (Escape): the host must exclude the strip from the system gestures (#495).
+  Test: `tests/e2e/touch_editor.json`, `touch_skin.py` (phase `play_editor`).
 - **Not in the touch skin yet:** the top bar's drop-down entries beyond the game menu (unit and game panels, minimap
-  size, history), the unit statistics (life, attacks, protections), the test editor's window, the hints of the top bar,
+  size, history), the unit statistics (life, attacks, protections), the hints of the top bar,
   the right-click commands of icons (cancelling a production), IME/soft-keyboard handling beyond a plain input, and the engine-drawn screens.
 - **Test:** `tools/browser/touch_skin.py` (docs/testing.md "Browser").

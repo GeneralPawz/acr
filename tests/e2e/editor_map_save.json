@@ -1,6 +1,7 @@
 {
   "name": "editor_map_save",
   "description": "A saved editor map keeps what was painted and put on it (#430, #406): a hill, a pool of water with a ship on it, Erde, a tree, a finished town hall and a formation at a training level. Saved and loaded again, the ground, the objects and the units return.",
+  "touch": false,
   "steps": [
     {"cmd": "start", "blank": {"editor": true}},
     {"cmd": "wait", "ticks": 5},
