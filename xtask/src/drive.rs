@@ -9,7 +9,7 @@ use crate::e2e::{self, Transport};
 use crate::{Result, jev, target_dir, workspace_root};
 
 /// Flags that take a value, to tell them from file names.
-const VALUE_FLAGS: [&str; 7] = ["--filter", "--game-dir", "--exe", "--goal", "--steps", "--png", "--expect"];
+const VALUE_FLAGS: [&str; 8] = ["--ui", "--filter", "--game-dir", "--exe", "--goal", "--steps", "--png", "--expect"];
 
 fn flag_value(args: &[String], name: &str) -> Option<String> {
     args.windows(2).find(|w| w[0] == name).map(|w| w[1].clone())
@@ -77,6 +77,7 @@ pub fn run_e2e(args: &[String], game_dir: Option<PathBuf>) -> Result<()> {
         exe: flag_value(args, "--exe").map(PathBuf::from),
         build: !args.iter().any(|a| a == "--no-build"),
         gpu: args.iter().any(|a| a == "--gpu"),
+        ui: flag_value(args, "--ui"),
         list: args.iter().any(|a| a == "--list"),
         files,
         verbose: args.iter().any(|a| a == "-v" || a == "--verbose"),
@@ -94,6 +95,9 @@ fn spawn_driver(args: &[String], game_dir: Option<PathBuf>, name: &str) -> Resul
     let exe = driver_exe(args)?;
     let dir = game_dir_or_env(game_dir)?;
     let mut extra = Vec::new();
+    if let Some(ui) = flag_value(args, "--ui") {
+        extra.extend(["--ui".to_owned(), ui]);
+    }
     if args.iter().any(|a| a == "--gpu") {
         extra.push("--drive-gpu".to_owned());
     }

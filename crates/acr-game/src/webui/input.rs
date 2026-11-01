@@ -20,14 +20,15 @@ pub fn on_message(game: &mut Game, event_loop: &ActiveEventLoop, json: &str) {
     }
 }
 
-fn apply(game: &mut Game, event_loop: &ActiveEventLoop, message: FromUi) {
+/// Applies a message the caller already parsed (the driver's `ui_send`).
+pub fn apply(game: &mut Game, event_loop: &ActiveEventLoop, message: FromUi) {
     match message {
         FromUi::Ready { protocol, screens, viewport, dpr } => {
             if protocol != PROTOCOL {
                 log::error!("webui: the UI speaks protocol {protocol}, the game {PROTOCOL}; the engine draws");
                 return;
             }
-            let Some(send) = super::sender() else {
+            let Some(send) = super::sender(game) else {
                 log::error!("webui: no way to reach the UI; the engine draws");
                 return;
             };

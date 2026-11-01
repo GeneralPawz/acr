@@ -81,8 +81,23 @@ A screen joins the registry when `cargo xtask ui-diff` of its screenshots, `ui=e
 `ui=svelte` at 1024x768, device pixel ratio 1, shows at least 99.5% of the pixels within +-8 per
 channel. Main menu: 100.000% (#317).
 
+## Driver and parity tooling (#320)
+
+- `--ui engine|classic` of the game's driver (`cargo xtask e2e|drive --ui classic`): classic plays the
+  UI's side headless. The driver announces `Ready` (viewport, dpr 1) and claims every screen
+  `view::screen` can describe; the messages go to a collecting outbox (`Game.ui_outbox`, no page).
+  After each command the driver resolves every asset path the published patches refer to
+  (`webui::referenced`, `WebUi::check_asset`) and fails the command on an asset that cannot be made or a
+  screen whose description failed on an asset; screens the protocol cannot express stay with the engine
+  (not an error). `--ui touch` is refused in the `ready` line until the touch skin exists.
+- Requests: `{"cmd":"view"}` resyncs and answers the whole `ViewPatch` as `view`;
+  `{"cmd":"ui_send","msg":{...}}` hands a `FromUi` message to the game (`webui::input::apply`), erroring on
+  a message that does not parse or arrives before the UI is connected. Input still enters through the
+  game's own handlers, so every scenario runs unchanged: `cargo xtask e2e --ui classic`.
+- The web driver (`acr_drive`) also takes `click`, `key` and `text`.
+- `tools/browser/ui_parity.py --screens <names>`: see docs/testing.md "Browser".
+
 ## Not yet
 
-The touch skin, the HUD, the native webview host (`wry`, spike on Windows), the driver's `view` and
-`ui_send` requests, the other screens, and the start screen's layout for other screen ratios
+The touch skin, the HUD, the native webview host (`wry`, spike on Windows), the other screens, and the start screen's layout for other screen ratios
 (#316 section 8).

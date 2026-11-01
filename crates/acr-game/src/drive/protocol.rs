@@ -213,6 +213,10 @@ pub enum Request {
     Wheel {
         lines: f32,
     },
+    /// The Svelte UI's whole view model as one `ViewPatch` (needs `--ui classic`, docs/webui.md).
+    View,
+    /// A message from the Svelte UI (`FromUi`) as if the page had sent it (needs `--ui classic`).
+    UiSend(Value),
     Wait(Wait),
     State {
         units: bool,
@@ -600,6 +604,10 @@ pub fn parse(line: &str) -> Result<(Option<Value>, Request), String> {
             button: button(&v, Button::Left)?,
             mods: mods(&v),
         },
+        "view" => Request::View,
+        "ui_send" => {
+            Request::UiSend(v.get("msg").filter(|m| m.is_object()).cloned().ok_or("ui_send: missing \"msg\" object")?)
+        }
         "text" => Request::Text { text: string(&v, "text").ok_or("text: missing \"text\"")? },
         "wheel" => Request::Wheel { lines: v.get("lines").and_then(Value::as_f64).unwrap_or(1.0) as f32 },
         "wait" => {
@@ -796,6 +804,15 @@ pub fn pick_label<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parses_the_ui_requests() {
+        assert_eq!(parse(r#"{"cmd": "view"}"#).unwrap().1, Request::View);
+        let (seq, r) = parse(r#"{"cmd": "ui_send", "seq": 4, "msg": {"t": "resync"}}"#).unwrap();
+        assert_eq!((seq, r), (Some(serde_json::json!(4)), Request::UiSend(serde_json::json!({"t": "resync"}))));
+        assert!(parse(r#"{"cmd": "ui_send"}"#).is_err());
+        assert!(parse(r#"{"cmd": "ui_send", "msg": "resync"}"#).is_err());
+    }
 
     #[test]
     fn parses_the_touch_request() {

@@ -72,6 +72,8 @@ impl Resolver {
             return Ok(placed.clone());
         }
         let (image, url) = match sprite {
+            // A picture widget without a file (a mission without an image) draws nothing.
+            Sprite::Bitmap(path) if path.is_empty() => return Ok(None),
             Sprite::Bitmap(path) => (assets::bitmap_image(lib, path)?.map(Some), assets::bmp_url(path)),
             Sprite::Frame { gp, frame } => (
                 assets::frame_image(lib, FramePalette::Menu, 0, gp, *frame)?.map(Some),
@@ -234,4 +236,21 @@ pub fn screen(resolver: &mut Resolver, ui: &Ui) -> Result<Option<ScreenView>, Fa
 
 pub fn canvas_view(canvas: Canvas) -> CanvasView {
     CanvasView { scale: canvas.scale, origin: canvas.origin, size: canvas.size() }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_picture_without_a_file_draws_nothing_and_a_missing_file_is_an_error() {
+        let ui = Ui::new(&[]);
+        let (lib, fonts) = ui.assets();
+        let mut resolver = Resolver::default();
+        assert!(resolver.place(lib, fonts, &Sprite::Bitmap(String::new())).unwrap().is_none());
+        assert!(matches!(
+            resolver.place(lib, fonts, &Sprite::Bitmap("NO\\SUCH.BMP".into())),
+            Err(Failure::Asset(AssetError::NotFound(_)))
+        ));
+    }
 }
