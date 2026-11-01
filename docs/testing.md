@@ -559,6 +559,14 @@ WebGPU on SwiftShader: `--enable-unsafe-webgpu --enable-unsafe-swiftshader
 --use-webgpu-adapter=swiftshader --enable-features=Vulkan,WebGPU`. The UI's own tests are
 `cd ui && bun run check && bun run test` (not `bun test`, which is Bun's own runner).
 
+**The touch skin** (`tools/browser/touch_skin.py`, #332): Playwright with `hasTouch`, `isMobile` and device pixel ratio 3
+at 390x844, 844x390 and 820x1180 against `cargo xtask serve --release --game-dir ...` (with the bundle). With fingers only
+(`locator.tap()`, `touchscreen.tap()`, a long press by DevTools touch events) it taps the main menu down to the random map
+setup, starts the game, selects a unit with a tap and orders it with a long press, and per step checks the skin is `touch`,
+no element lies outside the viewport (menu sheets scroll vertically, so only their width counts), every button is at least
+44 CSS pixels, and `state` shows the selection and the order. Screenshots `touch332-<viewport>-<step>.png` go to `--shots`.
+Run it with `~/browser/venv/bin/python tools/browser/touch_skin.py --url 'http://127.0.0.1:8090/?game=/game/'`.
+
 ## Scenario files
 
 `tests/e2e/<name>.json`:

@@ -414,3 +414,38 @@ webview, the `capture` and `shrink` modes, a soft keyboard (the popup is not foc
 
 The touch skin, the rest of the HUD (the pause text, the diplomacy panel, the world overlays), the native host on Windows and macOS, the other screens, and the start screen's layout for other screen ratios
 (#316 section 8).
+
+## Touch skin (#332)
+
+The second skin of the one bundle, for phones and tablets (`ui/src/lib/touch/`, design: #316 section 5). The page
+resolves which skin it draws (`ui/src/lib/skin.ts`) and tells the game with `FromUi::Skin`; Rust keeps all state and
+the touch skin only renders it and sends intents.
+
+- **Size classes** by the viewport's short side in CSS pixels: `compact` < 500, `medium` 500-767, `expanded` >= 768;
+  orientation from width and height, `(pointer: coarse)` for the finger. **Setting** `ui_skin=auto|classic|touch` in
+  `settings.txt` (`Hello.skin` carries it, default `auto`, no options row): `auto` is the classic skin on an expanded
+  viewport with a fine pointer, so a desktop keeps what it has, and the touch skin everywhere else.
+- **Menus** are full-screen sheets (`TouchMenu`): the dialog's widgets in reading order as entries of at least 48 CSS
+  pixels, from `WidgetView.label` (a button's or check's text) and `WidgetView.value` (a list's rows, a combo box's options,
+  a slider, an input box, a text viewer). A text button that reports nothing is a `text` widget; a picture button (OK)
+  keeps its original picture. Every tap is an intent (`Dialog::activate`, `select_row`, `select_option`, `set_value`,
+  `set_text`). The frames are CSS `border-image` 9-slice of `nine/box.png`, cut at runtime from `BORDER.GP` of the player's
+  files (`assets::nine_box`, 3 x 3 cells of 64 pixels); texts are glyph images of the game's fonts, scaled; the one native
+  piece is the text field of an input box (the soft keyboard), in the system font.
+- **HUD** (`TouchHud`, from `ViewPatch.touch`, built by `Hud::touch_view` when the touch skin is on): the resource strip
+  on top (icon cut from `ResPanel` and the number), pause and menu buttons, the minimap top right (the classic skin's
+  three minimap groups cut to the map image, folds with its button), the command grid as a bottom sheet in portrait
+  (4, 5 or 6 columns by size class) and a side column in landscape, the selection summary (icons whose command keeps a
+  type or formation, and the army list) above the grid. The icons are the original's draws (`draw_icon`) in a 40 pixel
+  box, scaled to a 52-64 pixel cell. **Long press** (450 ms) on an icon shows its hint; on the minimap it orders the
+  selection there. Safe areas: `viewport-fit=cover`, `env(safe-area-inset-*)`, `100dvh`.
+- **Intents added:** `bar/menu` (the game menu, `HudEvent::GameMenu`) and `bar/pause` (`HudEvent::TogglePause`), both
+  `click` left, through `InGame::hud_event` (`HudIntent::Bar`). In touch skin `hud_input` is off and the whole HUD is
+  claimed at any canvas scale (`Claim::touch`), so the engine draws none of it.
+- **The map** keeps the engine's touch gestures: the page sends a finger as `FromUi::Touch` (`id`, phase, physical pixels)
+  to `touch.rs` (tap, long press = right click and order, pan, pinch), which also puts the game in touch mode.
+- **Not in the touch skin yet:** the top bar's drop-down entries beyond the game menu (unit and game panels, minimap
+  size, history), the unit statistics (life, attacks, protections), the test editor's window, the hints of the top bar,
+  the right-click commands of icons (cancelling a production), a background picture for the sheets (#316 section 8),
+  IME/soft-keyboard handling beyond a plain input, and the engine-drawn screens.
+- **Test:** `tools/browser/touch_skin.py` (docs/testing.md "Browser").
