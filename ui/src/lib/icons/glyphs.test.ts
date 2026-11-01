@@ -49,4 +49,15 @@ describe('the glyph set', () => {
     const plaque = render(Glyph, { name: 'rally', plaque: true });
     expect(plaque.container.querySelector('.leather')).not.toBeNull();
   });
+
+  it('draws the markup in a shadow, an outline, a body and two bevel layers, with gradients of its own per glyph', () => {
+    const a = render(Glyph, { name: 'rally' });
+    const b = render(Glyph, { name: 'rally' });
+    for (const layer of ['sh', 'ol', 'bd', 'hi', 'lo']) {
+      expect(a.container.querySelectorAll(`.${layer} path`).length, layer).toBeGreaterThan(0);
+    }
+    const ids = (c: HTMLElement) => [...c.querySelectorAll('linearGradient')].map((g) => g.id);
+    expect(ids(a.container).length).toBeGreaterThan(0);
+    expect(ids(a.container).some((id) => ids(b.container).includes(id))).toBe(false);
+  });
 });

@@ -483,8 +483,11 @@ the touch skin only renders it and sends intents.
   box, scaled to a 52-64 pixel cell; see **Icons** below for what replaces the original's pictures. **Long press** (450 ms) on an icon shows its hint, and on a production icon (`IconView.endless`) also sends the click with Ctrl held, an endless order; on the minimap it orders the
   selection there. Safe areas: `viewport-fit=cover`, `env(safe-area-inset-*)`, `100dvh`.
 - **Icons** (#488): commands are drawn by the skin, portraits are the original's pictures made smooth.
-  - *Commands* are original line art (`ui/src/lib/icons/glyphs.ts`, `Glyph.svelte`): one 48 x 48 grid, 2.4 wide round
-    strokes, gold on a dark leather plaque (the theme's `--touch-*` colours), switch pairs as the same drawing with a bar or a pause or play badge.
+  - *Commands* are original drawings (`ui/src/lib/icons/glyphs.ts`, `Glyph.svelte`): one 48 x 48 grid, 2.4 wide round
+    strokes and a few solid shapes. `Glyph` draws the markup five times (shadow, dark outline, body, bevel highlight and
+    shade) with light from the upper left, as the original icons are lit; the body is gold by default or a material by
+    class (`iron`, `wood`, `red`, `skin`, `ink`), on a chiselled, grained leather plaque (the theme's `--touch-*`
+    colours are the ramps' ends). Switch pairs are the same drawing with a bar or a pause or play badge.
     `touch_skin::glyph` names the glyph from the icon's `HudCommand` (never from its picture; a formation's from its
     `[ORDERICONS]` group) and sends it as `IconView.glyph`; the icon's `parts` are then only what goes over it (the
     owner's outline, life bar, numbers). The set covers stance (stand ground, advance, attack-move, patrol), fire modes
