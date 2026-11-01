@@ -8,6 +8,7 @@
   import type { Part as PartView } from '../protocol/Part';
   import { gridColumns, portrait as isPortrait, sizeClass } from '../skin';
   import { ctrlClick, intent, leftClick } from './intents';
+  import { STOPS, nearestStop, speedOf, ticksPerSecond } from './speed';
   import Sprite from './Sprite.svelte';
 
   const { bridge, model } = ui();
@@ -48,6 +49,23 @@
   const mapImage = $derived(mapGroups[0]?.parts.find((p): p is Extract<PartView, { t: 'sprite' }> => p.t === 'sprite') ?? null);
   const mapScale = $derived(mapImage ? mapWidth / mapImage.w : 1);
   let mapOpen = $state(true);
+
+  // The game speed popover: one slider with a few stops (speed.ts); `dragStop` is the stop under the finger
+  // until it lets go (transient), the game's value otherwise.
+  let speedOpen = $state(false);
+  let dragStop = $state<number | null>(null);
+  const stop = $derived(dragStop ?? nearestStop(touch?.speed ?? 50));
+  const rate = $derived(ticksPerSecond(STOPS[stop]));
+
+  function pickSpeed(e: Event) {
+    dragStop = Number((e.currentTarget as HTMLInputElement).value);
+  }
+
+  function setSpeed(e: Event) {
+    const value = speedOf(Number((e.currentTarget as HTMLInputElement).value));
+    dragStop = null;
+    intent(bridge, 'bar/speed', { t: 'set_value', value });
+  }
 
   /** A press that lasts this long shows the hint instead of tapping. */
   const LONG_PRESS_MS = 450;
@@ -153,6 +171,9 @@
     style:--cell="{cell}px"
     style:--cols={columns}
   >
+    {#if speedOpen}
+      <button class="scrim" aria-label="close" data-acr-hit onclick={() => (speedOpen = false)}></button>
+    {/if}
     <div class="upper">
     <header class="top" data-acr-hit>
       {#if goldIcon}
@@ -162,6 +183,9 @@
         </button>
       {/if}
       <div class="buttons">
+        <button class="bar" aria-label="speed" aria-expanded={speedOpen} data-acr-id="bar/speed" onclick={() => (speedOpen = !speedOpen)}>
+          <span class="gauge" aria-hidden="true"></span>
+        </button>
         <button class="bar" aria-label="pause" data-acr-id="bar/pause" onclick={() => tapBar('bar/pause')}>
           <span class="glyph" class:play={touch.paused} aria-hidden="true"></span>
         </button>
@@ -174,6 +198,27 @@
           </button>
         {/if}
       </div>
+      {#if speedOpen}
+        <div class="speed" role="group" aria-label="speed" data-acr-hit data-acr-touch="speed">
+          <div class="ends"><span>{touch.speed_text[0]}</span><span class="now">{rate} / s</span><span>{touch.speed_text[1]}</span></div>
+          <input
+            type="range"
+            min="0"
+            max={STOPS.length - 1}
+            step="1"
+            value={stop}
+            aria-label="speed"
+            data-acr-id="bar/speed/slider"
+            oninput={pickSpeed}
+            onchange={setSpeed}
+          />
+          <div class="ticks" aria-hidden="true">
+            {#each STOPS as fps, i (fps)}
+              <span class:normal={fps === 50} class:on={i === stop}></span>
+            {/each}
+          </div>
+        </div>
+      {/if}
     </header>
     {#if resourcesOpen}
       <ul class="resources" data-acr-hit data-acr-touch="resources">
@@ -258,6 +303,7 @@
   }
   .upper {
     position: absolute;
+    z-index: 1;
     top: 0;
     left: 0;
     right: 0;
@@ -273,6 +319,8 @@
   }
   /* The bar: the resources' fold at the left, pause and menu at the right; it never wraps under them. */
   .top {
+    position: relative;
+    z-index: 2;
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -338,6 +386,74 @@
     border-top-color: transparent;
     border-bottom-color: #e2c27a;
     margin-top: -6px;
+  }
+  .gauge {
+    width: 24px;
+    height: 12px;
+    border: 3px solid #e8cf93;
+    border-bottom: 0;
+    border-radius: 12px 12px 0 0;
+    background: linear-gradient(#e8cf93, #e8cf93) 9px 1px / 3px 9px no-repeat;
+    transform: rotate(35deg);
+    transform-origin: 50% 100%;
+    margin-top: 8px;
+  }
+  .scrim {
+    position: absolute;
+    inset: 0;
+    padding: 0;
+    background: none;
+    border: 0;
+    pointer-events: auto;
+    -webkit-tap-highlight-color: transparent;
+  }
+  /* The speed popover under the bar, one slider with a stop per step. */
+  .speed {
+    position: absolute;
+    top: 100%;
+    right: var(--pad);
+    box-sizing: border-box;
+    width: min(340px, calc(100vw - 2 * var(--pad)));
+    padding: 8px 14px 10px;
+    background: #1e1309;
+    border: 1px solid #8a6a32;
+    border-radius: 0 0 8px 8px;
+    box-shadow: 0 3px 10px rgb(0 0 0 / 0.5);
+    pointer-events: auto;
+  }
+  .ends {
+    display: flex;
+    justify-content: space-between;
+    font: 400 17px/1.2 var(--touch-body);
+    color: #e8cf93;
+  }
+  .ends .now {
+    color: #f3dc9c;
+  }
+  .speed input {
+    display: block;
+    width: 100%;
+    height: 48px;
+    margin: 4px 0 0;
+    accent-color: #e2c27a;
+    touch-action: pan-y;
+  }
+  .ticks {
+    display: flex;
+    justify-content: space-between;
+    padding: 0 10px;
+  }
+  .ticks span {
+    width: 2px;
+    height: 8px;
+    background: #8a6a32;
+  }
+  .ticks .normal {
+    height: 14px;
+    background: #e8cf93;
+  }
+  .ticks .on {
+    background: #ffc840;
   }
   .glyph {
     width: 16px;

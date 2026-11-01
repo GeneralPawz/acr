@@ -337,6 +337,24 @@ def play(browser, url, name, size, shots, timeout_s, prefix):
             "() => ['bar/pause', 'bar/menu'].every((id) => { const el = document.querySelector(`[data-acr-id=\"${id}\"]`); const r = el.getBoundingClientRect(); const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2); return el.contains(hit); })"
         )
 
+    # The speed button opens one slider; a tap near its right end snaps to the fast stops, a tap outside closes it.
+    speed = page.locator('[data-acr-id="bar/speed"]')
+    run.report["speed_popover"] = False
+    if speed.count():
+        speed.tap()
+        time.sleep(0.5)
+        run.shot("3c-speed")
+        slider = page.locator("[data-acr-touch=speed] input[type=range]")
+        box = slider.bounding_box()
+        before = slider.input_value()
+        page.touchscreen.tap(box["x"] + box["width"] * 0.9, box["y"] + box["height"] / 2)
+        time.sleep(0.8)
+        run.shot("3d-speed-fast")
+        after = page.locator("[data-acr-touch=speed] input[type=range]").input_value()
+        page.touchscreen.tap(8, size[1] / 2)
+        time.sleep(0.4)
+        run.report["speed_popover"] = before == "2" and int(after) >= 5 and page.locator("[data-acr-touch=speed]").count() == 0
+
     # A unit of the player's: select it with a tap, order it with a long press.
     # The camera is put over the player's first unit, so it stands in the middle of the free map.
     state = run.drive({"cmd": "state", "units": True})["state"]
@@ -392,6 +410,7 @@ def play(browser, url, name, size, shots, timeout_s, prefix):
         and run.report["last_control_changed"]
         and run.report["picker_full_width"]
         and run.report["resources_fold"]
+        and run.report["speed_popover"]
         and run.report.get("bar_clear")
         # One column of at most 560 CSS pixels, centred, whose whole area is the host's.
         and all(s["columns"] == 1 and s["width"] <= 560.5 and abs(s["left"] - s["right"]) < 1 and s["hit"] for s in sheets)

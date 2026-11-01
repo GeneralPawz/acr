@@ -29,7 +29,7 @@ const icon = (id: string, endless: boolean): IconView => ({
 
 function hud(icons: IconView[]) {
   const model = new UiState(bridge);
-  model.receive({ t: 'view', rev: 1, mode: 'game', touch: { resources: [], icons, army: [], paused: false, minimap: true } } as never);
+  model.receive({ t: 'view', rev: 1, mode: 'game', touch: { resources: [], icons, army: [], paused: false, minimap: true, speed: 52, speed_text: ['Langsam', 'Schnell'] } } as never);
   model.hud = [
     { name: 'minimap', layer: 0, anchor: [0, 0], scale: 1, offset: [0, 0], parts: [{ t: 'sprite', url: 'map', x: 0, y: 0, w: 100, h: 100, alpha: 1, clip: null }] },
   ];
@@ -83,5 +83,22 @@ describe('touch skin icons', () => {
     const buttons = [...container.querySelectorAll('header.top button')];
     expect(buttons.at(-1)!.getAttribute('aria-label')).toBe('minimap');
     expect(container.querySelector('.minimap button')).toBeNull();
+  });
+
+  it('the speed button opens one slider on the stop nearest the game speed and sets a stop', async () => {
+    const { container, getByLabelText } = hud([]);
+    const buttons = [...container.querySelectorAll('header.top button')].map((b) => b.getAttribute('aria-label'));
+    expect(buttons.slice(-4)).toEqual(['speed', 'pause', 'menu', 'minimap']);
+    await fireEvent.click(container.querySelector('[data-acr-id="bar/speed"]')!);
+    const slider = container.querySelector('input[type=range]') as HTMLInputElement;
+    expect(slider.value).toBe('2');
+    expect(container.querySelector('[data-acr-touch="speed"]')!.textContent).toContain('10 / s');
+    slider.value = '6';
+    await fireEvent.input(slider);
+    expect(sent).toEqual([]);
+    await fireEvent.change(slider);
+    expect(actions()).toMatchObject([{ id: 'bar/speed', action: { t: 'set_value', value: 90 } }]);
+    await fireEvent.click(getByLabelText('close'));
+    expect(container.querySelector('[data-acr-touch="speed"]')).toBeNull();
   });
 });

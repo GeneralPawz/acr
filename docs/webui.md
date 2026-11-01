@@ -474,13 +474,19 @@ the touch skin only renders it and sends intents.
   team's "X"), and a picture Rust names with a key (`color_i`, `team_i`) is a control. The text field draws its text in
   the game font (`TextField`); the real `<input>` lies over it, invisible, as the soft keyboard's target (IME: #457).
 - **HUD** (`TouchHud`, from `ViewPatch.touch`, built by `Hud::touch_view` when the touch skin is on): the bar on top
-  (flush with the top edge, the safe-area inset padded inside it: the fold button of the resources at the left, then pause, menu and the minimap's fold at the right, each 44 CSS pixels tall, never covered) with the resource panel
+  (flush with the top edge, the safe-area inset padded inside it: the fold button of the resources at the left, then the speed button, pause, menu and the minimap's fold at the right, each 44 CSS pixels tall, never covered) with the resource panel
   under it (icon cut from `ResPanel`, the number in the skin's type; folded by the button like the minimap, open by default), the minimap top right under the bar (its fold button, in the bar, draws a CSS minus or plus) (the classic skin's
   three minimap groups cut to the map image, folds with its button), the command grid as a bottom sheet in portrait
   (4, 5 or 6 columns by size class) and a side column in landscape, the selection summary (icons whose command keeps a
   type or formation, and the army list) above the grid. The icons are the original's draws (`draw_icon`) in a 40 pixel
   box, scaled to a 52-64 pixel cell. **Long press** (450 ms) on an icon shows its hint, and on a production icon (`IconView.endless`) also sends the click with Ctrl held, an endless order; on the minimap it orders the
   selection there. Safe areas: `viewport-fit=cover`, `env(safe-area-inset-*)`, `100dvh`.
+- **Game speed** (`bar/speed`, `set_value`, the options' slider position `100 - FPSTime`, `0..=100`; `InGame` stores it in the settings
+  like the options page and applies the tick rate): the speed button opens a popover with one slider of eight stops
+  (`ui/src/lib/touch/speed.ts`: `FPSTime` 100, 70, 50 (normal), 35, 25, 17, 10, 5, that is 5, 7, 10, 14, 20, 29, 50, 100 ticks
+  per second, about doubling every two steps) between the original's `SLOWMOD` and `FASTMOD` words (`TouchHud.speed_text`), with the
+  current rate; `TouchHud.speed` shows the nearest stop. The options page's own slider is the original's 1:1 mapping (hyperbolic in
+  speed), so it is unchanged. Test: `tests/e2e/touch_game_speed.json`.
 - **Intents added:** `bar/menu` (the game menu, `HudEvent::GameMenu`) and `bar/pause` (`HudEvent::TogglePause`), both
   `click` left, through `InGame::hud_event` (`HudIntent::Bar`). In touch skin `hud_input` is off and the whole HUD is
   claimed at any canvas scale (`Claim::touch`), so the engine draws none of it.

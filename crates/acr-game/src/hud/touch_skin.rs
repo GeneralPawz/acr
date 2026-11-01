@@ -44,6 +44,10 @@ pub struct TouchView {
     pub army: Vec<TouchIcon>,
     pub paused: bool,
     pub minimap: bool,
+    /// The game speed slider's position, `100 - FPSTime` (set by the game, which owns the setting).
+    pub speed: i32,
+    /// `SLOWMOD` and `FASTMOD`.
+    pub speed_text: [Vec<u8>; 2],
 }
 
 /// Names of the resource bar's slots, left to right (the classic bar swaps `FOOD` and `GOLD`
@@ -111,6 +115,10 @@ impl Hud {
             })
             .collect();
         let army = Self::army_icons(view).map(|i| icon(i, format!("army/{}", i.slot), Role::Army)).collect();
-        Some(TouchView { resources, icons, army, paused: view.paused, minimap: self.minimap.is_some() })
+        Some(TouchView { resources, icons, army, paused: view.paused,
+            minimap: self.minimap.is_some(),
+            speed: 50,
+            speed_text: [ctx.texts.get("SLOWMOD").to_vec(), ctx.texts.get("FASTMOD").to_vec()],
+        })
     }
 }

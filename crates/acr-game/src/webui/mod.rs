@@ -521,6 +521,8 @@ impl WebUi {
             army: icons(&view.army)?,
             paused: view.paused,
             minimap: view.minimap,
+            speed: view.speed,
+            speed_text: view.speed_text.each_ref().map(|t| text(t)),
         };
         // Recorded only once everything could be made: a retry sends it all.
         self.sent.touch = Some(view);

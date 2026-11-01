@@ -27,4 +27,13 @@ paused: boolean,
 /**
  * The game has a minimap (`minimap` takes taps on it).
  */
-minimap: boolean, };
+minimap: boolean, 
+/**
+ * The game speed as the options' slider shows it, `100 - FPSTime` (`0..=100`); `bar/speed`
+ * sets it (`set_value`).
+ */
+speed: number, 
+/**
+ * The original's words for the slow and the fast end (`SLOWMOD`, `FASTMOD`).
+ */
+speed_text: [string, string], };

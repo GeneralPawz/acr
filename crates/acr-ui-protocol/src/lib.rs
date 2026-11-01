@@ -148,6 +148,11 @@ pub struct TouchHud {
     pub paused: bool,
     /// The game has a minimap (`minimap` takes taps on it).
     pub minimap: bool,
+    /// The game speed as the options' slider shows it, `100 - FPSTime` (`0..=100`); `bar/speed`
+    /// sets it (`set_value`).
+    pub speed: i32,
+    /// The original's words for the slow and the fast end (`SLOWMOD`, `FASTMOD`).
+    pub speed_text: [String; 2],
 }
 
 /// A resource of the top bar: its icon and number.

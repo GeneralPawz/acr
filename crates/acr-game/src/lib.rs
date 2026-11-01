@@ -1415,6 +1415,22 @@ impl Game {
         }
     }
 
+    /// The touch skin's speed button (`bar/speed`, `set_value`): the options' game speed slider,
+    /// `FPSTime = 100 - value`, kept and applied like the options page does.
+    fn set_game_speed(&mut self, action: &acr_ui_protocol::Action) -> Result<(), String> {
+        let acr_ui_protocol::Action::SetValue { value } = action else {
+            return Err("bar/speed takes a set_value".into());
+        };
+        if !(0..=100).contains(value) {
+            return Err(format!("the game speed is 0..=100, not {value}"));
+        }
+        let Mode::InGame(game) = &mut self.mode else { return Err("no game is running".into()) };
+        let frame_time = 100 - value;
+        self.ui.change_settings(|s| s.frame_time = frame_time);
+        game.apply_settings(self.ui.settings(), self.input_mode);
+        Ok(())
+    }
+
     /// The touch skin's widget input (`FromUi::Intent`): a HUD icon or the minimap over the
     /// running game, else a widget of the top screen. The reason if it was refused.
     fn ui_intent(
@@ -1424,6 +1440,9 @@ impl Game {
         event_loop: &ActiveEventLoop,
     ) -> Result<(), String> {
         use acr_ui_protocol::{Action, Button};
+        if id == "bar/speed" {
+            return self.set_game_speed(action);
+        }
         let hud = match (id, action) {
             ("minimap", Action::MinimapAt { uv, button }) => {
                 Some(ingame::HudIntent::Minimap { uv: *uv, right: *button == Button::Right })
