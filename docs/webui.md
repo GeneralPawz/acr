@@ -89,19 +89,68 @@ overlay for IME and soft keyboards is not built yet.
 
 ## Driver and parity tooling (#320)
 
-- `--ui engine|classic` of the game's driver (`cargo xtask e2e|drive --ui classic`): classic plays the
+- `--ui engine|classic|touch` of the game's driver (`cargo xtask e2e|drive --ui classic`): classic plays the
   UI's side headless. The driver announces `Ready` (viewport, dpr 1) and claims every screen
   `view::screen` can describe; the messages go to a collecting outbox (`Game.ui_outbox`, no page).
   After each command the driver resolves every asset path the published patches refer to
   (`webui::referenced`, `WebUi::check_asset`) and fails the command on an asset that cannot be made or a
   screen whose description failed on an asset; screens the protocol cannot express stay with the engine
-  (not an error). `--ui touch` is refused in the `ready` line until the touch skin exists.
+  (not an error). `--ui touch` connects the same way and sends widget clicks as intents (next section).
 - Requests: `{"cmd":"view"}` resyncs and answers the whole `ViewPatch` as `view`;
   `{"cmd":"ui_send","msg":{...}}` hands a `FromUi` message to the game (`webui::input::apply`), erroring on
   a message that does not parse or arrives before the UI is connected. Input still enters through the
   game's own handlers, so every scenario runs unchanged: `cargo xtask e2e --ui classic`.
 - The web driver (`acr_drive`) also takes `click`, `key` and `text`.
 - `tools/browser/ui_parity.py --screens <names>`: see docs/testing.md "Browser".
+
+## Intents (#330)
+
+The touch skin (#316 section 5, built in #332) does not hit-test: it sends what a click on one of its own
+components means, `FromUi::Intent { seq, id, action }`, and Rust checks it and applies it. The classic skin
+never sends one. An intent that cannot be applied changes nothing and is answered `ToUi::Rejected { seq,
+reason }` (the reason is for the log; the driver turns it into a failed command). Each setter ends in the
+code the press ends in (`Dialog::press_plain`, `choose_param`, `reveal`, the HUD's `icon_event`), so the
+`Outcome` and the state are those of the original input, and `docs/ui.md` stays the one place for the rules.
+
+| `id` | `action` | Effect |
+| --- | --- | --- |
+| `<Screen>/<index>` (the widget's id in the driver's tree, also `WidgetView.id`) | `click` (left) | `Dialog::activate`: a widget with a `param` reports it with the click sound; a combo box opens or closes; a radio button or check changes state; an input box or text viewer takes the focus |
+| same, a list | `select_row { row }` | `Dialog::select_row`: row `row` (index into all rows) is selected and scrolled into view as the keys do; a list with a `param` reports it instead, as the press does |
+| same, a combo box | `select_option { option }` | `Dialog::select_option`: the click on the box and on the entry, open or not |
+| same, a slider | `set_value { value }` | `Dialog::set_value`: the drag to `value` (`0..=max`) |
+| same, an input box | `set_text { text }` | `Dialog::set_text`: focus and the text as if typed into the emptied box (CP1252, printable, at most `capacity - 1`) |
+| `hud/<slot>`, `army/<slot>` | `click { button, mods }` | `InGame::hud_event`: the command of the icon, left or right (`Hud::icon_click`); `mods` are held for this click (Ctrl: an endless order) |
+| `minimap` | `minimap_at { uv, button }` | `InGame::hud_event`: left centres the camera, right orders the selection to the point (`Hud::minimap_pixel`) |
+
+Refused: a screen that is not the top one, not built yet or busy (the main menu sliding), a widget that does
+not exist, is disabled, hidden or outside its clip window, the wrong kind for the action, a row, entry or
+value out of range, text that does not fit or has a control character, an icon that does nothing, a
+middle-button click. Nothing is clamped or substituted. `Dialog::check` answers without applying; `Ui::intent`
+checks first and then feeds `Input::Intent` to the screen, so the screen reacts as it does to a click (its
+`ItemChoose` handling, the selection of a list showing a briefing).
+
+`Dialog::set_key` gives a widget a name that survives layout changes (`WidgetView.key`): `ok`, `cancel`,
+`start`, `name`, a list's own name (`missions`, `saves`), `choice_<row>`, `option_<n>`, `player_<i>`. Every screen
+names its buttons, lists, combo boxes, sliders, input boxes and text viewers; the pictures and static texts have
+none. Keys are unique within a screen.
+
+`InGame.interface.hud_input` (default on; `InGame::set_hud_input`): off, a window pixel never reaches the HUD
+(press, right press, minimap drag), so the HUD takes `hud_event`s only. The top bar's drop-down, the unit and
+game panels and the test editor's window have no intent yet; they stay pixel-driven.
+
+Driver, `--ui touch`: connected like `--ui classic`, `hud_input` off in a running game, and a left click
+(`click`, `move` excepted) on a target the tree names goes in as an intent: a row `Screen/3#5` as `select_row`, an
+entry `Screen/3~2` as `select_option`, a button, text, combo box, input box or viewer as `click`, an icon
+`hud/N` or `army/N` as `click` with the step's `mods` (right clicks on `hud/N` too). The answer carries it as
+`intent`. A frame runs before the intent, as the pixel click's move gives one. The automatic dismissal of
+mission boxes (`--dialogs auto`) sends its intent too. Everything else stays raw pixels: `pos` and map targets,
+lists, sliders and scroll bars by their centre, the editor's icons, double clicks. A refused intent fails the
+command (`intent N refused: ...`). Scenarios whose steps click the HUD by pixel
+(`mission_history`: the M button; `touch_*`: the engine's own touch controls) pin `--ui engine` in their `args`;
+the first `--ui` wins over the runner's.
+
+`cargo xtask e2e --ui touch` passes every scenario the way the default and `--ui classic` do; `touch_intents`
+checks the intents themselves.
 
 ## Dialogs over the running game (#325)
 

@@ -1,7 +1,7 @@
 {
   "name": "mission_history",
   "description": "After a mission's briefing, the 'M' drop-down offers the mission history (UM_HIST, #325): its window shows the briefing, Zurück and Weiter stay at the ends, Schließen goes back to the game",
-  "args": ["--dialogs", "report"],
+  "args": ["--dialogs", "report", "--ui", "engine"],
   "steps": [
     {"cmd": "click", "label": "Einzelspieler"},
     {"cmd": "click", "label": "Einzelmission"},

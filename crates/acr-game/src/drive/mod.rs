@@ -79,7 +79,11 @@ pub enum UiSkin {
     /// the view model can describe, resolves every asset the view refers to after each answer,
     /// and answers `view` and `ui_send`.
     Classic,
-    /// The touch skin (#316 section 5), not built yet.
+    /// The touch skin (#316 section 5): connected like the classic one, but clicks on widgets
+    /// the tree names go in as intents (`Dialog::activate` and the other setters,
+    /// `InGame::hud_event`) and the game's HUD takes no pixels. Pointer targets (`pos`, objects
+    /// on the map) and kinds without an intent (lists by their centre, sliders, scroll bars,
+    /// the editor's window) stay raw input.
     Touch,
 }
 
@@ -88,7 +92,7 @@ impl UiSkin {
         match name {
             "engine" => Ok(Self::Engine),
             "classic" => Ok(Self::Classic),
-            "touch" => Err("--ui touch: the touch skin is not built yet (#316 section 5)".into()),
+            "touch" => Ok(Self::Touch),
             other => Err(format!("--ui {other:?}: expected engine, classic or touch")),
         }
     }
@@ -142,6 +146,8 @@ enum Step {
     Wheel(f32),
     /// A finger (`id`, event, window position) and the touch clock in ms; no event: the clock only.
     Touch(u64, Option<crate::touch::Phase>, [f32; 2], Option<u64>),
+    /// A message of the Svelte UI, as if the page had sent it (the touch skin's intents).
+    Ui(acr_ui_protocol::FromUi),
     /// Run one frame before the next step.
     Frame,
 }
@@ -242,6 +248,8 @@ pub struct Driver {
     frame_seconds: Option<f64>,
     /// The classic skin still to announce itself (`--ui classic`).
     ui_connect: bool,
+    /// The last intent number sent (`--ui touch`).
+    intents: u32,
     /// Why the UI could not be set up, reported by the `ready` line.
     ui_error: Option<String>,
 }
@@ -270,6 +278,7 @@ impl Driver {
             quit: false,
             frame_seconds: None,
             ui_connect: false,
+            intents: 0,
             ui_error: None,
         }
     }
@@ -394,11 +403,11 @@ impl Game {
         self.mode = Mode::Menus;
         let mut driver = Driver::new(options);
         match driver.options.ui.clone() {
-            Ok(UiSkin::Classic) => {
+            Ok(UiSkin::Classic | UiSkin::Touch) => {
                 self.ui_outbox = Some(Default::default());
                 driver.ui_connect = true;
             }
-            Ok(_) => {}
+            Ok(UiSkin::Engine) => {}
             Err(e) => driver.ui_error = Some(e),
         }
         self.driver = Some(Box::new(driver));
@@ -419,6 +428,52 @@ impl Game {
 }
 
 impl Driver {
+    /// `--ui touch`: widgets are clicked by intent.
+    fn touch(&self) -> bool {
+        matches!(self.options.ui, Ok(UiSkin::Touch))
+    }
+
+    fn next_seq(&mut self) -> u32 {
+        self.intents += 1;
+        self.intents
+    }
+
+    /// A click on what the widget tree named, as the touch skin sends it: the intent the
+    /// widget takes, or `None` for a raw click (not `--ui touch`, a pixel target, a double or
+    /// modified click, or a kind without an intent).
+    fn touch_click(
+        &mut self,
+        hit: &Value,
+        button: Button,
+        double: bool,
+        mods: Mods,
+    ) -> Option<acr_ui_protocol::FromUi> {
+        use acr_ui_protocol::{Action, Button as Pointer};
+        if !self.touch() || double {
+            return None;
+        }
+        let held = acr_ui_protocol::Mods { shift: mods.shift, ctrl: mods.ctrl, alt: mods.alt, meta: false };
+        let id = hit.get("id")?.as_str()?;
+        let kind = hit.get("kind")?.as_str()?;
+        let (id, action) = if button != Button::Left {
+            // Only the HUD's icons do something with another button.
+            let right = id.starts_with("hud/") && button == Button::Right;
+            (id, right.then_some(Action::Click { button: Pointer::Right, mods: held })?)
+        } else if let Some((widget, row)) = id.split_once('#') {
+            (widget, Action::SelectRow { row: row.parse().ok()? })
+        } else if let Some((widget, option)) = id.split_once('~') {
+            (widget, Action::SelectOption { option: option.parse().ok()? })
+        } else if (kind == "icon" && (id.starts_with("hud/") || id.starts_with("army/")))
+            || matches!(kind, "text" | "button" | "combo" | "input" | "viewer" | "picture")
+        {
+            (id, Action::Click { button: Pointer::Left, mods: held })
+        } else {
+            return None;
+        };
+        let seq = self.next_seq();
+        Some(acr_ui_protocol::FromUi::Intent { seq, id: id.to_owned(), action })
+    }
+
     fn run(&mut self, game: &mut Game, event_loop: &ActiveEventLoop) {
         let start = Instant::now();
         let mut frames = 0;
@@ -467,7 +522,7 @@ impl Driver {
         crate::webui::input::apply(game, event_loop, ready);
         match game.webui.as_mut() {
             Some(web) => web.claim_everything(),
-            None => self.ui_error = Some("--ui classic: the game did not accept the UI".into()),
+            None => self.ui_error = Some("--ui classic|touch: the game did not accept the UI".into()),
         }
     }
 
@@ -485,6 +540,9 @@ impl Driver {
             return Ok(true);
         }
         for message in std::mem::take(&mut job.ui_messages) {
+            if let Ok(acr_ui_protocol::ToUi::Rejected { seq, reason }) = serde_json::from_str(&message) {
+                return Err(format!("intent {seq} refused: {reason}"));
+            }
             if let Ok(acr_ui_protocol::ToUi::View(patch)) = serde_json::from_str(&message) {
                 job.ui_pending.extend(crate::webui::referenced(&patch));
                 if job.view == ViewWait::Resynced {
@@ -550,6 +608,11 @@ impl Driver {
             Mode::InGame(g) if g.ready() && !game.ui.dialog_open() => self.frame_seconds.unwrap_or(g.tick_seconds()),
             _ => 1.0 / ui::TICK_RATE,
         };
+        if self.touch()
+            && let Mode::InGame(g) = &mut game.mode
+        {
+            g.set_hud_input(false);
+        }
         game.advance(dt, event_loop);
         game.perf_frame();
         self.frames += 1;
@@ -571,6 +634,14 @@ impl Driver {
         m.insert("tick".into(), state::tick(game).into());
         log::info!("driver: pressed {:?} of {} {:?}", button.label, modal.screen, modal.texts.join(" / "));
         self.dismissed.push(entry);
+        if self.touch() {
+            let seq = self.next_seq();
+            let id = button.id.clone();
+            let action =
+                acr_ui_protocol::Action::Click { button: acr_ui_protocol::Button::Left, mods: Default::default() };
+            crate::webui::input::apply(game, event_loop, acr_ui_protocol::FromUi::Intent { seq, id, action });
+            return;
+        }
         let [x, y] = button.centre();
         game.cursor_moved(PhysicalPosition::new(f64::from(x), f64::from(y)), event_loop);
         game.mouse_input(ElementState::Pressed, MouseButton::Left, event_loop);
@@ -596,6 +667,7 @@ impl Driver {
             Step::Mods(m) => game.modifiers_changed(m),
             Step::Wheel(l) => game.mouse_wheel(l, event_loop),
             Step::Touch(id, phase, pos, t) => game.drive_touch(id, phase, pos, t, event_loop),
+            Step::Ui(message) => crate::webui::input::apply(game, event_loop, message),
             Step::Frame => {}
         }
     }
@@ -635,9 +707,16 @@ impl Driver {
             }
             match tree::resolve(game, &target) {
                 Ok((p, hit)) => {
-                    job.reply.insert("target".into(), hit);
+                    job.reply.insert("target".into(), hit.clone());
                     job.steps = match pointer {
-                        Pointer::Click { button, double, mods } => click_steps(p, button, double, mods),
+                        Pointer::Click { button, double, mods } => match self.touch_click(&hit, button, double, mods) {
+                            // A frame first, as the pixel click has (the move): the HUD follows the last input.
+                            Some(intent) => {
+                                job.reply.insert("intent".into(), serde_json::to_value(&intent).unwrap_or_default());
+                                VecDeque::from([Step::Frame, Step::Ui(intent), Step::Frame])
+                            }
+                            None => click_steps(p, button, double, mods),
+                        },
                         Pointer::Move => VecDeque::from([Step::Move(p), Step::Frame]),
                     };
                 }
@@ -876,7 +955,7 @@ impl Driver {
             }
             Request::View => {
                 if game.ui_outbox.is_none() {
-                    return Err("no Svelte UI: start the driver with --ui classic".into());
+                    return Err("no Svelte UI: start the driver with --ui classic or touch".into());
                 }
                 job.view = ViewWait::Wanted;
                 job.settle = true;
@@ -886,7 +965,7 @@ impl Driver {
                 let message: acr_ui_protocol::FromUi =
                     serde_json::from_value(msg).map_err(|e| format!("ui_send: {e}"))?;
                 if game.webui.is_none() && !matches!(message, acr_ui_protocol::FromUi::Ready { .. }) {
-                    return Err("ui_send: the UI is not connected: start the driver with --ui classic".into());
+                    return Err("ui_send: the UI is not connected: start the driver with --ui classic or touch".into());
                 }
                 crate::webui::input::apply(game, event_loop, message);
                 job.settle = true;
@@ -1346,6 +1425,7 @@ pub(crate) fn web_request(game: &mut Game, event_loop: &ActiveEventLoop, line: &
         quit: false,
         frame_seconds: None,
         ui_connect: false,
+        intents: 0,
         ui_error: None,
     };
     let (seq, request) = match protocol::parse(line) {
@@ -1414,7 +1494,7 @@ mod tests {
         assert_eq!(o, Options { gpu: false, size: [800, 600], dialogs: DialogPolicy::Report, ui: Ok(UiSkin::Engine) });
         let o = Options::from_args(&args("game --drive --ui classic")).unwrap();
         assert_eq!(o.ui, Ok(UiSkin::Classic));
-        assert!(Options::from_args(&args("game --drive --ui touch")).unwrap().ui.is_err());
+        assert_eq!(Options::from_args(&args("game --drive --ui touch")).unwrap().ui, Ok(UiSkin::Touch));
         assert!(Options::from_args(&args("game --drive --ui nope")).unwrap().ui.is_err());
         assert_eq!(strip_args(&args("--drive --ui classic C:\\AC")), args("C:\\AC"));
         let o = Options::from_args(&args("game --drive-gpu")).unwrap();

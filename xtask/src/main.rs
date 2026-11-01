@@ -16,9 +16,9 @@
 //! - `cargo xtask ground [--src DIR] [--out DIR] [--size N]`   pack the detailed ground's CC0 textures
 //!   (`assets/ground/pack.py`, Python with Pillow) into `<out>/ground/` (default `target/assets`;
 //!   see `docs/ground.md`)
-//! - `cargo xtask e2e [FILE..] [--filter S] [--game-dir DIR] [--exe PATH] [--no-build] [--gpu] [--ui engine|classic] [--list] [-v]`
+//! - `cargo xtask e2e [FILE..] [--filter S] [--game-dir DIR] [--exe PATH] [--no-build] [--gpu] [--ui engine|classic|touch] [--list] [-v]`
 //!   run the scenario tests in `tests/e2e/` through the game's driver mode (see `docs/testing.md`)
-//! - `cargo xtask drive [--game-dir DIR] [--exe PATH] [--no-build] [--gpu] [--ui engine|classic]`   driver requests from
+//! - `cargo xtask drive [--game-dir DIR] [--exe PATH] [--no-build] [--gpu] [--ui engine|classic|touch]`   driver requests from
 //!   stdin (one JSON object per line), answers on stdout
 //! - `cargo xtask jev status | explore --goal TEXT [--steps N] | shot --png FILE --expect TEXT`
 //!   cheap decisions with TypeSafe's Jev (key from `~/.config/typesafe/api_key`)
@@ -111,8 +111,8 @@ fn main() -> ExitCode {
                         cargo xtask ui [--watch]
                         cargo xtask ui-diff A.png B.png [--out D.png] [--min PERCENT] [--rect X,Y,W,H]
                         cargo xtask assets [NAME..] [--game-dir DIR] [--compress none|meshopt|draco] [--check] [--blend]
-                        cargo xtask e2e [FILE..] [--filter S] [--game-dir DIR] [--exe PATH] [--no-build] [--gpu] [--ui engine|classic] [--list] [-v]
-                        cargo xtask drive [--game-dir DIR] [--exe PATH] [--no-build] [--gpu] [--ui engine|classic]
+                        cargo xtask e2e [FILE..] [--filter S] [--game-dir DIR] [--exe PATH] [--no-build] [--gpu] [--ui engine|classic|touch] [--list] [-v]
+                        cargo xtask drive [--game-dir DIR] [--exe PATH] [--no-build] [--gpu] [--ui engine|classic|touch]
                         cargo xtask jev status | explore --goal TEXT [--steps N] | shot --png FILE --expect TEXT"
             );
             return ExitCode::from(2);

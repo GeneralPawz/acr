@@ -1,6 +1,7 @@
 {
   "name": "touch_build",
   "description": "Touch mode (#439): after picking the Fort with a finger its outline appears in the middle of the window; a tap moves it, a drag slides it (nothing is placed, not even by a slow second tap), a double tap places it, a long press cancels, and Escape cancels",
+  "args": ["--ui", "engine"],
   "steps": [
     {"cmd": "start", "random": {"nation": 1, "seed": 5}},
     {"cmd": "wait", "ticks": 200},

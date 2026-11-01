@@ -1,0 +1,19 @@
+{
+  "name": "touch_intents",
+  "description": "The touch skin's semantic intents (#330, docs/webui.md 'Intents'): under --ui touch a click on a widget the tree names goes in as an intent (buttons and combo boxes as clicks, a drop-down entry as select_option), set_text fills the player name's input box, and an intent that cannot be applied is refused with the reason and changes nothing",
+  "args": ["--ui", "touch"],
+  "steps": [
+    {"cmd": "ui", "expect": {"screen": "MainMenu"}},
+    {"cmd": "click", "label": "Einzelspieler", "expect": [{"path": "intent.t", "eq": "intent"}, {"path": "intent.action.t", "eq": "click"}]},
+    {"cmd": "click", "label": "Zufallskarte", "expect": {"screen": "PlayerName"}},
+    {"cmd": "ui_send", "msg": {"t": "intent", "seq": 90, "id": "PlayerName/4", "action": {"t": "set_text", "text": "NEWTON"}}},
+    {"cmd": "ui", "expect": [{"path": "ui.widgets.3.kind", "eq": "input"}, {"path": "ui.widgets.3.label", "eq": "NEWTON"}, {"path": "ui.widgets.3.selected", "eq": true}]},
+    {"cmd": "ui_send", "msg": {"t": "intent", "seq": 91, "id": "PlayerName/6", "action": {"t": "set_text", "text": "x"}}, "expect": {"ok": false}, "note": "a button takes no text"},
+    {"cmd": "ui_send", "msg": {"t": "intent", "seq": 92, "id": "PlayerName/4", "action": {"t": "set_text", "text": "ABCDEFGHIJKLMNOPQRSTUVWXYZ"}}, "expect": {"ok": false}, "note": "the box holds 15 characters"},
+    {"cmd": "ui_send", "msg": {"t": "intent", "seq": 93, "id": "RandomMap/1", "action": {"t": "click", "button": "left"}}, "expect": {"ok": false}, "note": "not the top screen"},
+    {"cmd": "ui", "expect": {"path": "ui.widgets.3.label", "eq": "NEWTON"}, "note": "the refused intents changed nothing"},
+    {"cmd": "click", "label": "OK", "expect": [{"screen": "RandomMap"}, {"path": "intent.action.t", "eq": "click"}]},
+    {"cmd": "click", "label": "Spanien", "expect": {"path": "intent.action.t", "eq": "click"}, "note": "opens the player's nation combo box"},
+    {"cmd": "click", "label": "England", "exact": true, "expect": [{"screen": "RandomMap"}, {"path": "intent.action.t", "eq": "select_option"}]}
+  ]
+}
