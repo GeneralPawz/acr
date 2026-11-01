@@ -501,7 +501,9 @@ impl InGame {
         let edge = EDGE * self.interface.canvas.scale.max(1.0);
         let modern = self.modern();
         let key_speed = if modern { self.interface.scroll_speed } else { KEY_SCROLL };
-        let edge_on = self.interface.modern.edge_scroll && self.interface.modern.pan.is_none();
+        // A finger is no hovering cursor: its last position stays after the finger lifts (or the
+        // screen turns, #492) and would keep scrolling at the edge, so only a mouse scrolls there.
+        let edge_on = self.interface.modern.edge_scroll && self.interface.modern.pan.is_none() && !self.interface.touch;
         let keys = self.interface.modern.keys;
         while self.interface.scroll_time >= frame {
             self.interface.scroll_time -= frame;
@@ -3512,6 +3514,34 @@ fn leave_commands(player: u8, buildings: &[EntityId], kind: TypeId, n: usize) ->
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A finger that lifted near the bottom edge, then the window turned (#492): the cursor stays
+    /// at the old place, below the new bottom, and the view must not scroll on its own.
+    #[test]
+    fn a_stale_finger_position_does_not_edge_scroll() {
+        use crate::input_mode::InputMode;
+        use crate::ui::setup::{BlankSetup, GameKind, GameSetup};
+        let setup = GameSetup {
+            kind: GameKind::Blank(BlankSetup::default()),
+            players: Vec::new(),
+            local_player: 0,
+            rules: acr_sim::Rules::default(),
+        };
+        let run = |mode: InputMode| {
+            let mut game = InGame::new(Box::new(setup.clone()));
+            game.set_input_mode(&Settings::default(), mode);
+            game.camera.x = 1000.0;
+            game.camera.y = 1000.0;
+            game.cursor = Some([300.0, 700.0]);
+            let before = game.camera.y;
+            for _ in 0..60 {
+                game.scroll_view(0.05, [400.0, 300.0]);
+            }
+            game.camera.y - before
+        };
+        assert_eq!(run(InputMode::Touch), 0.0, "touch mode has no edge scrolling");
+        assert!(run(InputMode::Mouse) > 0.0, "a mouse at the edge still scrolls");
+    }
 
     #[test]
     fn occupant_slots_follow_the_original() {
