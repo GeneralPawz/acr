@@ -504,6 +504,7 @@ impl Driver {
         }
         job.ui_pending.sort();
         job.ui_pending.dedup();
+        crate::webui::newest_images(&mut job.ui_pending);
         let mut waiting = false;
         for path in std::mem::take(&mut job.ui_pending) {
             match web.check_asset(&game.ui, &path) {

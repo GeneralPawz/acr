@@ -6,14 +6,14 @@
     {"cmd": "start", "random": {"nation": 1, "seed": 5}},
     {"cmd": "wait", "ticks": 200},
     {"cmd": "view", "expect": [
-      {"path": "view.hud.groups.0.name", "eq": "top_bar"},
-      {"path": "view.hud.groups.1.name", "eq": "top_bar_text"},
-      {"path": "view.hud.groups.1.parts", "len_ge": 6}
-    ], "capture": {"food": "view.hud.groups.1.parts.3.text"}},
+      {"path": "view.hud.groups.6.name", "eq": "top_bar"},
+      {"path": "view.hud.groups.7.name", "eq": "top_bar_text"},
+      {"path": "view.hud.groups.7.parts", "len_ge": 6}
+    ], "capture": {"food": "view.hud.groups.7.parts.3.text"}},
     {"cmd": "move", "pos": [800, 17]},
     {"cmd": "view", "expect": [
-      {"path": "view.hud.groups.2.name", "eq": "hint"},
-      {"path": "view.hud.groups.2.parts.13.text", "contains": "EISEN"},
+      {"path": "view.hud.groups.8.name", "eq": "hint"},
+      {"path": "view.hud.groups.8.parts.13.text", "contains": "EISEN"},
       {"path": "view.cursor.url", "contains": "CURSOR"}
     ], "note": "RESHINT4 over the iron value"},
     {"cmd": "move", "pos": [500, 400]},
@@ -24,18 +24,18 @@
     {"cmd": "click", "unit": {"owner": 0, "type": "Kre"}},
     {"cmd": "click", "label": "Hellebardier", "expect": {"path": "target.label", "contains": "Hellebardier"}},
     {"cmd": "view", "expect": [
-      {"path": "view.hud.groups.1.parts.3.text", "ne": "${food}"},
-      {"path": "view.hud.groups.2.name", "eq": "hint"},
-      {"path": "view.hud.groups.3.name", "eq": "messages"},
-      {"path": "view.hud.groups.3.parts.1.text", "contains": "BAUERN"}
+      {"path": "view.hud.groups.7.parts.3.text", "ne": "${food}"},
+      {"path": "view.hud.groups.8.name", "eq": "hint"},
+      {"path": "view.hud.groups.9.name", "eq": "messages"},
+      {"path": "view.hud.groups.9.parts.1.text", "contains": "BAUERN"}
     ], "note": "food was paid; the mouse is over the unit's icon (its hint) and the hint line for the queued unit shows"},
     {"cmd": "click", "pos": [275, 17], "note": "the M button"},
     {"cmd": "view", "expect": [
-      {"path": "view.hud.groups.2.name", "eq": "drop_down"},
-      {"path": "view.hud.groups.2.parts", "len_ge": 20}
+      {"path": "view.hud.groups.8.name", "eq": "drop_down"},
+      {"path": "view.hud.groups.8.parts", "len_ge": 20}
     ]},
     {"cmd": "click", "pos": [276, 72], "note": "its first row", "expect": {"screen": "GameMenu"}},
     {"cmd": "key", "key": "Escape", "expect": {"screen": "game"}},
-    {"cmd": "view", "expect": {"path": "view.hud.groups.2.name", "ne": "drop_down"}}
+    {"cmd": "view", "expect": {"path": "view.hud.groups.8.name", "ne": "drop_down"}}
   ]
 }
