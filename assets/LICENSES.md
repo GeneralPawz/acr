@@ -1,7 +1,7 @@
 # Third-party assets
 
 Assets made by others that the pipeline builds on. Everything else under `assets/` is
-made for ACR. Only CC0 or CC-BY sources; CC-BY needs the credit below to ship with the
+made for ACR. Only CC0 or CC-BY sources (the fonts of the UI at the end are SIL OFL, the licence fonts come under); CC-BY needs the credit below to ship with the
 game (credits screen or bundled licence file). Exception: the bought WildMesh pack below,
 used locally only (its files and the models built from it are never committed).
 
@@ -151,3 +151,9 @@ Notes:
   september 2020" (Data Collection AB, Joel Palmius, Jonas Hauquier).
 - **How it is used:** upscaled to the 4k albedo of the HD human prototype, with the face
   portrait baked over it. The result stays on the VM and in ACR-analysis.
+
+## Fonts of the UI
+
+| Font | Used for | Author | Licence | Source |
+|---|---|---|---|---|
+| IM Fell English, IM Fell English SC (Latin subset) | the touch skin's text (docs/webui.md "Touch skin"); bundled by `ui/`, licence text in `ui/public/licenses/IM-Fell-OFL.txt` | Igino Marini (Fell Types revival), via Google Fonts / Fontsource | SIL OFL 1.1 | https://iginomarini.com/fell/ , `@fontsource/im-fell-english`, `@fontsource/im-fell-english-sc` |

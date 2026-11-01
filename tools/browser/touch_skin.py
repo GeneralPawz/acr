@@ -274,6 +274,24 @@ def play(browser, url, name, size, shots, timeout_s, prefix):
     run.tap_label("Optionen")
     run.wait("() => document.querySelector('[data-acr-screen=Options]')", "the options sheet again")
     run.back_arrow("MainMenu")
+    # The campaigns: a list, its description and picture on parchment.
+    run.tap_label("Einzelspieler")
+    run.wait("() => document.querySelector('[data-acr-touch=sheet]')", "the single player entries")
+    page.locator('[data-acr-key="campaigns"]').tap()
+    run.wait("() => document.querySelector('[data-acr-screen]:not([data-acr-screen=MainMenu])')", "the campaigns")
+    if page.evaluate("() => document.querySelector('[data-acr-screen]').dataset.acrScreen") == "PlayerName":
+        # The first visit asks for the player's name.
+        page.locator('[data-acr-key="ok"]').tap()
+        run.wait("() => !['MainMenu', 'PlayerName'].includes(document.querySelector('[data-acr-screen]')?.dataset.acrScreen)", "the campaigns after the name")
+    time.sleep(1.0)
+    run.shot("1e-campaigns")
+    run.audit("campaigns")
+    run.reach_all("campaigns")
+    page.locator("[role=option]").nth(1).tap()
+    time.sleep(0.8)
+    run.shot("1f-campaign-chosen")
+    run.back_arrow("MainMenu")
+    run.back_arrow("MainMenu")
     for label in ROUTE:
         run.tap_label(label)
         run.wait("() => document.querySelector('[data-acr-touch=sheet]')", "the sheet after " + label)
@@ -303,6 +321,21 @@ def play(browser, url, name, size, shots, timeout_s, prefix):
     time.sleep(2.0)
     run.shot("3-game")
     in_game = run.audit("game")
+    # The resources fold like the minimap: the bar's buttons stay, the panel goes.
+    fold = page.locator('[data-acr-id="bar/resources"]')
+    run.report["resources_fold"] = False
+    if fold.count():
+        was = page.locator("[data-acr-touch=resources]").count()
+        fold.tap()
+        time.sleep(0.5)
+        run.shot("3b-resources-folded")
+        run.report["resources_fold"] = was == 1 and page.locator("[data-acr-touch=resources]").count() == 0
+        fold.tap()
+        time.sleep(0.5)
+        # Pause and menu are never covered by the resources.
+        run.report["bar_clear"] = page.evaluate(
+            "() => ['bar/pause', 'bar/menu'].every((id) => { const el = document.querySelector(`[data-acr-id=\"${id}\"]`); const r = el.getBoundingClientRect(); const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2); return el.contains(hit); })"
+        )
 
     # A unit of the player's: select it with a tap, order it with a long press.
     # The camera is put over the player's first unit, so it stands in the middle of the free map.
@@ -358,6 +391,8 @@ def play(browser, url, name, size, shots, timeout_s, prefix):
         and not run.report["unreachable"]
         and run.report["last_control_changed"]
         and run.report["picker_full_width"]
+        and run.report["resources_fold"]
+        and run.report.get("bar_clear")
         # One column of at most 560 CSS pixels, centred, whose whole area is the host's.
         and all(s["columns"] == 1 and s["width"] <= 560.5 and abs(s["left"] - s["right"]) < 1 and s["hit"] for s in sheets)
         # The arrow is a 44 pixel target; a sheet that overflows was scrolled.

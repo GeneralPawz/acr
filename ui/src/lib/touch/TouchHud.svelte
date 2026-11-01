@@ -1,14 +1,14 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { ui } from '../context';
+  import './theme.css';
   import Part from '../Part.svelte';
   import type { IconView } from '../protocol/IconView';
+  import type { ResourceView } from '../protocol/ResourceView';
   import type { Part as PartView } from '../protocol/Part';
   import { gridColumns, portrait as isPortrait, sizeClass } from '../skin';
-  import GameLabel from './GameLabel.svelte';
   import { intent, leftClick } from './intents';
   import Sprite from './Sprite.svelte';
-  import { words } from './sheet';
 
   const { bridge, model } = ui();
 
@@ -26,14 +26,22 @@
   const selection = $derived(touch?.icons.filter((i) => i.role === 'select') ?? []);
   const commands = $derived(touch?.icons.filter((i) => i.role !== 'select') ?? []);
 
-  // The font the interface text is in, with the set its own parts used.
-  const font = $derived.by(() => {
-    for (const r of touch?.resources ?? []) {
-      const text = r.parts.find((p): p is Extract<PartView, { t: 'text' }> => p.t === 'text');
-      if (text) return { font: text.font, set: text.set };
-    }
-    return { font: 'YellowFont', set: 1 };
-  });
+  // The resource panel's fold, like the minimap's (transient: per session, the page's own state).
+  let resourcesOpen = $state(true);
+  const goldIcon = $derived(touch?.resources.find((r) => r.key === 'gold') ?? touch?.resources[0] ?? null);
+
+  /** The number the game drew for a resource (a lot of money has its own word). */
+  function numberOf(r: ResourceView): string {
+    const text = r.parts.find((p): p is Extract<PartView, { t: 'text' }> => p.t === 'text');
+    return text ? text.text : String(r.value);
+  }
+
+  /** The icon of a resource: its sprites only, the number is drawn here in the skin's type. */
+  function iconOf(r: ResourceView): { parts: PartView[]; size: [number, number] } {
+    const parts = r.parts.filter((p) => p.t === 'sprite');
+    const clip = parts.find((p) => p.clip)?.clip;
+    return { parts, size: [clip ? clip[2] : r.size[0], r.size[1]] };
+  }
 
   // The minimap is the classic skin's three groups, cut to the map image.
   const mapGroups = $derived(['minimap', 'minimap_frame', 'minimap_view'].map((n) => model.hud.find((g) => g.name === n)));
@@ -141,20 +149,32 @@
   >
     <div class="upper">
     <header class="top" data-acr-hit>
-      <ul class="resources">
-        {#each touch.resources as r (r.key)}
-          <li data-acr-resource={r.key}><Sprite parts={r.parts} size={r.size} /></li>
-        {/each}
-      </ul>
+      {#if goldIcon}
+        <button class="fold toggle" aria-label="resources" aria-expanded={resourcesOpen} data-acr-id="bar/resources" onclick={() => (resourcesOpen = !resourcesOpen)}>
+          <Sprite parts={iconOf(goldIcon).parts} size={iconOf(goldIcon).size} scale={0.8} />
+          <span class="caret" class:up={resourcesOpen} aria-hidden="true"></span>
+        </button>
+      {/if}
       <div class="buttons">
-      <button class="bar" aria-label="pause" data-acr-id="bar/pause" onclick={() => tapBar('bar/pause')}>
-        <GameLabel {...font} text={touch.paused ? '>' : 'II'} scale={2} maxHeight={24} />
-      </button>
-      <button class="bar" aria-label="menu" data-acr-id="bar/menu" onclick={() => tapBar('bar/menu')}>
-        <GameLabel {...font} text="M" scale={2} maxHeight={24} />
-      </button>
+        <button class="bar" aria-label="pause" data-acr-id="bar/pause" onclick={() => tapBar('bar/pause')}>
+          <span class="glyph" class:play={touch.paused} aria-hidden="true"></span>
+        </button>
+        <button class="bar" aria-label="menu" data-acr-id="bar/menu" onclick={() => tapBar('bar/menu')}>
+          <span class="burger" aria-hidden="true"></span>
+        </button>
       </div>
     </header>
+    {#if resourcesOpen}
+      <ul class="resources" data-acr-hit data-acr-touch="resources">
+        {#each touch.resources as r (r.key)}
+          {@const icon = iconOf(r)}
+          <li data-acr-resource={r.key}>
+            <Sprite parts={icon.parts} size={icon.size} />
+            <span class="num">{numberOf(r)}</span>
+          </li>
+        {/each}
+      </ul>
+    {/if}
 
     {#if touch.minimap && mapImage}
       <div class="minimap" data-acr-touch="minimap" data-acr-hit>
@@ -193,9 +213,7 @@
 
     {#if hint}
       <div class="hint" role="status" data-acr-touch="hint">
-        {#each words(hint) as word, i (i)}
-          <GameLabel {...font} text={word} scale={1.5} />
-        {/each}
+        {hint}
       </div>
     {/if}
 
@@ -228,7 +246,7 @@
     height: 100dvh;
     padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
     pointer-events: none;
-    color: #f2e3bd;
+    color: #e8cf93;
   }
   .upper {
     position: absolute;
@@ -244,33 +262,92 @@
   .landscape .upper {
     right: calc(env(safe-area-inset-right) + var(--cols) * (var(--cell) + 4px) + 2 * var(--pad));
   }
+  /* The bar: the resources' fold at the left, pause and menu at the right; it never wraps under them. */
   .top {
     display: flex;
     align-items: center;
-    justify-content: flex-end;
+    justify-content: space-between;
     gap: 6px;
     box-sizing: border-box;
     padding: 2px var(--pad);
-    background: rgb(20 14 8 / 0.78);
+    background: linear-gradient(rgb(52 34 18 / 0.9), rgb(30 19 9 / 0.88));
+    border-bottom: 1px solid #8a6a32;
     pointer-events: auto;
   }
+  /* The panel under the bar: three columns on a narrow screen, six where there is room. */
   .resources {
     display: grid;
-    grid-template-columns: repeat(6, auto);
-    flex: 1 1 0;
-    min-width: 0;
-    gap: 2px 8px;
+    grid-template-columns: repeat(var(--res-cols, 3), auto);
+    justify-content: start;
+    gap: 2px 14px;
+    box-sizing: border-box;
+    align-self: flex-start;
     margin: 0;
-    padding: 0;
+    padding: 4px var(--pad) 6px;
     list-style: none;
+    background: rgb(30 19 9 / 0.86);
+    border-radius: 0 0 8px 0;
+    box-shadow: 0 3px 10px rgb(0 0 0 / 0.5);
+    pointer-events: auto;
   }
-  .portrait[data-acr-size='compact'] .resources {
-    grid-template-columns: repeat(3, auto);
+  .hud[data-acr-size='medium'] .resources,
+  .hud[data-acr-size='expanded'] .resources {
+    --res-cols: 6;
+  }
+  .landscape .resources {
+    --res-cols: 3;
+  }
+  .resources li {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .num {
+    font: 400 18px/1 var(--touch-body);
+    letter-spacing: 0.02em;
+    color: #f3dc9c;
+    text-shadow: 0 1px 2px #000;
+    font-variant-numeric: lining-nums;
   }
   .buttons {
     display: flex;
     flex: none;
     gap: 6px;
+  }
+  .toggle {
+    gap: 4px;
+    min-width: 64px;
+  }
+  .caret {
+    width: 0;
+    height: 0;
+    border: 6px solid transparent;
+    border-top-color: #e2c27a;
+    margin-top: 6px;
+  }
+  .caret.up {
+    border-top-color: transparent;
+    border-bottom-color: #e2c27a;
+    margin-top: -6px;
+  }
+  .glyph {
+    width: 16px;
+    height: 20px;
+    background: linear-gradient(90deg, #e8cf93 0 5px, transparent 5px 11px, #e8cf93 11px);
+  }
+  .glyph.play {
+    width: 0;
+    height: 0;
+    background: none;
+    border: 10px solid transparent;
+    border-left: 16px solid #e8cf93;
+    border-right: 0;
+  }
+  .burger {
+    width: 22px;
+    height: 18px;
+    background: linear-gradient(#e8cf93, #e8cf93) 0 0 / 100% 3px no-repeat, linear-gradient(#e8cf93, #e8cf93) 0 7.5px / 100% 3px no-repeat,
+      linear-gradient(#e8cf93, #e8cf93) 0 15px / 100% 3px no-repeat;
   }
   .bar,
   .fold {
@@ -282,9 +359,10 @@
     min-height: 44px;
     padding: 0;
     color: inherit;
-    background: #3a2a18 var(--acr-nine-fill, none);
-    border: 10px solid transparent;
-    border-image: var(--acr-nine, none) 64 / 10px round;
+    background: linear-gradient(#4f341b, #2b1b0e);
+    border: 9px solid transparent;
+    border-image: var(--acr-nine, none) 64 / 9px round;
+    box-shadow: inset 0 0 14px rgb(98 62 22 / 0.5), 0 2px 6px rgb(0 0 0 / 0.55);
     cursor: pointer;
     -webkit-tap-highlight-color: transparent;
   }
@@ -306,13 +384,13 @@
     position: relative;
     width: 20px;
     height: 20px;
-    background: linear-gradient(#f2e3bd, #f2e3bd) center / 100% 4px no-repeat;
+    background: linear-gradient(#e8cf93, #e8cf93) center / 100% 4px no-repeat;
   }
   .fold-glyph.plus::after {
     content: '';
     position: absolute;
     inset: 0 8px;
-    background: #f2e3bd;
+    background: #e8cf93;
   }
   .map {
     position: relative;
@@ -330,14 +408,15 @@
     top: calc(env(safe-area-inset-top) + 84px);
     left: 50%;
     transform: translateX(-50%);
-    display: flex;
-    flex-wrap: wrap;
-    gap: 4px 10px;
+    display: block;
     box-sizing: border-box;
-    max-width: calc(100% - 24px);
+    max-width: min(420px, calc(100% - 24px));
     padding: 8px 12px;
-    background: rgb(20 14 8 / 0.92);
-    border: 2px solid #d9b46a;
+    font: 400 17px/1.35 var(--touch-body);
+    color: var(--touch-ink);
+    background: var(--touch-parchment) var(--acr-parchment, none) 0 0 / 200px 200px;
+    border: 2px solid #6b4a22;
+    box-shadow: 0 3px 10px rgb(0 0 0 / 0.6);
     pointer-events: none;
   }
   .landscape .hint {

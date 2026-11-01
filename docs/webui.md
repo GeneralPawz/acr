@@ -441,14 +441,29 @@ the touch skin only renders it and sends intents.
   becomes. The sheet's root carries `data-acr-hit` (the Android host's interactive rectangles), so the whole sheet
   gets the touches. A drop-down opens as a full-width list over the sheet that scrolls, closed by a tap beside it. The
   dialog's widgets in reading order as entries of at least 44 CSS
-  pixels (the game font's height, at most 30 CSS pixels, plus the frame and padding), left out when `WidgetView.shown` is false (hidden, or outside its
-  clip window: the main menu keeps its submenus' entries off to the side), and a label is scaled down to the entry's inner width (whole and half steps while
-  it stays as large as the game's pixels, smooth below that) so that it never overflows. The content is `WidgetView.label` (a button's or check's text) and `WidgetView.value` (a list's rows, a combo box's options,
+  pixels, left out when `WidgetView.shown` is false (hidden, or outside its
+  clip window: the main menu keeps its submenus' entries off to the side), and a label wraps inside the entry. The content is `WidgetView.label` (a button's or check's text) and `WidgetView.value` (a list's rows, a combo box's options,
   a slider, an input box, a text viewer). A text button that reports nothing is a `text` widget; a picture button (OK)
   keeps its original picture. Every tap is an intent (`Dialog::activate`, `select_row`, `select_option`, `set_value`,
   `set_text`). The frames are CSS `border-image` 9-slice of `nine/box.png`, cut at runtime from `BORDER.GP` of the player's
-  files (`assets::nine_box`, 3 x 3 cells of 64 pixels); texts are glyph images of the game's fonts, scaled; the one native
-  piece is the text field of an input box (the soft keyboard), in the system font.
+  files (`assets::nine_box`, 3 x 3 cells of 64 pixels).
+- **Type and look (decision of #332, replacing the "game fonts only" rule of #316 for this skin):** the original's small
+  bitmap fonts were enlarged by non-integer factors and looked pixelated on a phone, so the touch skin sets all its text
+  in real type: **IM Fell English** (body, list rows, descriptions, text fields, HUD numbers and hints) and **IM Fell
+  English SC** (title, section headings, captions), the Fell Types revival by Igino Marini under the **SIL Open Font
+  License 1.1**, from the npm packages `@fontsource/im-fell-english` and `@fontsource/im-fell-english-sc` (Latin subset
+  of 400 normal, about 60 KB each, inlined by the build; umlauts and ß included). The licence text ships in the bundle
+  (`ui/public/licenses/IM-Fell-OFL.txt`) and the font is listed in `assets/LICENSES.md`. `touch/theme.css` holds the
+  `@font-face` and the palette (gold, leather, ink); the classic skin keeps the game's bitmap fonts (parity unchanged).
+  Scale: title 18-24 px small caps, section headings 18 px small caps, entries 19 px, body and rows 17-18 px,
+  captions 14 px small caps, 44 px or taller targets. The look is the original's art, resolved at runtime and never
+  stored: behind the sheets the main menu's painting (`INTERF2\BACKGROUND_MAIN_MENU.BMP`, `bmp/`), cover-fitted, dimmed
+  and slightly blurred; entries, lists, text viewers and fields on parchment (`nine/parchment.png`, a clean patch of the
+  map's paper in `MAINMENU.GP` frame 4 mirrored into a seamless tile, `assets::parchment`) with `nine/box.png` as the
+  frame; a header of dark leather with the gold title; the chosen list row as leather with gold type; photos and
+  paintings scale smoothly (`--acr-image-rendering: auto` on the sheet), pixel-art icons stay crisp. The page loads the
+  three images as the CSS variables `--acr-nine`, `--acr-parchment` and `--acr-backdrop` (`Ui.svelte`). The one native
+  piece is the invisible `<input>` of a text field (the soft keyboard).
 - **Form layout** (`sheetBlocks` in `sheet.ts`, from the classic layout's widget rects, no per-label cases): the blocks
   are read per column region of the classic layout (the left column whole, then the right one), each top to bottom; a
   static text with another static text close below it and indented (the captions of its group) is a section heading,
@@ -458,8 +473,9 @@ the touch skin only renders it and sends intents.
   column headers as captions (the random map's players); a static text lying on a picture-only control is its mark (the
   team's "X"), and a picture Rust names with a key (`color_i`, `team_i`) is a control. The text field draws its text in
   the game font (`TextField`); the real `<input>` lies over it, invisible, as the soft keyboard's target (IME: #457).
-- **HUD** (`TouchHud`, from `ViewPatch.touch`, built by `Hud::touch_view` when the touch skin is on): the resource strip
-  on top (icon cut from `ResPanel` and the number), pause and menu buttons (in one row with the strip, 44 CSS pixels tall), the minimap top right (its fold button draws a CSS minus or plus) (the classic skin's
+- **HUD** (`TouchHud`, from `ViewPatch.touch`, built by `Hud::touch_view` when the touch skin is on): the bar on top
+  (the fold button of the resources, then pause and menu, each 44 CSS pixels tall, never covered) with the resource panel
+  under it (icon cut from `ResPanel`, the number in the skin's type; folded by the button like the minimap, open by default), the minimap top right (its fold button draws a CSS minus or plus) (the classic skin's
   three minimap groups cut to the map image, folds with its button), the command grid as a bottom sheet in portrait
   (4, 5 or 6 columns by size class) and a side column in landscape, the selection summary (icons whose command keeps a
   type or formation, and the army list) above the grid. The icons are the original's draws (`draw_icon`) in a 40 pixel
@@ -472,6 +488,5 @@ the touch skin only renders it and sends intents.
   to `touch.rs` (tap, long press = right click and order, pan, pinch), which also puts the game in touch mode.
 - **Not in the touch skin yet:** the top bar's drop-down entries beyond the game menu (unit and game panels, minimap
   size, history), the unit statistics (life, attacks, protections), the test editor's window, the hints of the top bar,
-  the right-click commands of icons (cancelling a production), a background picture for the sheets (#316 section 8),
-  IME/soft-keyboard handling beyond a plain input, and the engine-drawn screens.
+  the right-click commands of icons (cancelling a production), IME/soft-keyboard handling beyond a plain input, and the engine-drawn screens.
 - **Test:** `tools/browser/touch_skin.py` (docs/testing.md "Browser").

@@ -284,6 +284,35 @@ pub fn nine_box(lib: &Library) -> Result<Option<Image>, AssetError> {
     Ok(Some(nine_grid(&cells)))
 }
 
+/// Side of the clean parchment patch cut from the main menu's map (`nine/parchment.png`).
+const PARCHMENT_PATCH: u32 = 128;
+/// Where it lies in frame 4 of `MAINMENU.GP`: a stretch of the paper without ink or folds.
+const PARCHMENT_AT: [u32; 2] = [24, 120];
+
+/// The paper of the main menu's map as a seamless tile (`nine/parchment.png`): a clean patch of
+/// `MAINMENU.GP` mirrored into a 2 x 2 block, so that the edges meet. `None` while its files load.
+pub fn parchment(lib: &Library) -> Result<Option<Image>, AssetError> {
+    let Some((map, _)) = frame_image(lib, FramePalette::Menu, 0, "INTERF2\\MAINMENU.GP", 4)? else { return Ok(None) };
+    let side = PARCHMENT_PATCH;
+    let [ox, oy] = PARCHMENT_AT;
+    if map.width < ox + side || map.height < oy + side {
+        return Err(AssetError::Decode(format!(
+            "MAINMENU.GP frame 4 is {}x{}, too small for the paper",
+            map.width, map.height
+        )));
+    }
+    let mut out = Image::new(side * 2, side * 2);
+    for y in 0..side * 2 {
+        for x in 0..side * 2 {
+            let (sx, sy) = (if x < side { x } else { side * 2 - 1 - x }, if y < side { y } else { side * 2 - 1 - y });
+            let from = (((oy + sy) * map.width + ox + sx) * 4) as usize;
+            let to = ((y * side * 2 + x) * 4) as usize;
+            out.rgba[to..to + 4].copy_from_slice(&map.rgba[from..from + 4]);
+        }
+    }
+    Ok(Some(out))
+}
+
 /// A bitmap as an image; `None` while it loads.
 pub fn bitmap_image(lib: &Library, path: &str) -> Result<Option<Placed>, AssetError> {
     lib.want(path);
@@ -376,6 +405,10 @@ pub fn resolve(lib: &Library, fonts: &Fonts, cache: &mut AssetCache, path: &str)
         }
         ["nine", "box.png"] => match nine_box(lib)? {
             Some(image) => ready(Some((image, [0, 0])), "the box frame"),
+            None => Ok(Resolved::Pending),
+        },
+        ["nine", "parchment.png"] => match parchment(lib)? {
+            Some(image) => ready(Some((image, [0, 0])), "the parchment"),
             None => Ok(Resolved::Pending),
         },
         ["remap", player, gp, frame, table, row] => {
@@ -487,6 +520,7 @@ mod tests {
             "font/1/NoSuchFont.png",
             "font/7/fonG60w.png",
             "nine/other.png",
+            "nine/parchment",
         ] {
             let e = resolve(&lib, &fonts, &mut cache, path).err().unwrap_or_else(|| panic!("{path}"));
             assert_eq!(e.status(), 400, "{path}");
@@ -502,6 +536,12 @@ mod tests {
         let mut cache = AssetCache::default();
         assert!(matches!(resolve(&lib, &fonts, &mut cache, "bmp/A.BMP"), Ok(Resolved::Pending)));
         assert_eq!(lib.take_requests(), vec!["A.BMP".to_owned()]);
+        // The parchment waits for the map's frames, and is absent without them.
+        let mut lib = Library::new(&["INTERF2\\MAINMENU.GP".to_owned()]);
+        assert!(matches!(resolve(&lib, &fonts, &mut cache, "nine/parchment.png"), Ok(Resolved::Pending)));
+        assert!(lib.take_requests().contains(&"INTERF2\\MAINMENU.GP".to_owned()));
+        let none = Library::new(&[]);
+        assert_eq!(resolve(&none, &fonts, &mut cache, "nine/parchment.png").err().map(|e| e.status()), Some(404));
     }
 
     #[test]

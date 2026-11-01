@@ -16,7 +16,8 @@
   let page = $state({ width: window.innerWidth, height: window.innerHeight, coarse: coarse?.matches ?? false });
   const skin = $derived(resolveSkin(model.skinSetting, page));
   // The 9-slice source of the original's frame, from the player's files.
-  let nine = $state<string | undefined>();
+  // and the paper and painting of the touch skin's sheets, as CSS `url()`s.
+  let art = $state<Record<string, string>>({});
 
   // The game learns the skin once it has answered (it knows the player's `ui_skin`), and
   // whenever the page changes it: the touch skin takes the interface's pixels away from the game.
@@ -24,15 +25,22 @@
     if (model.protocol !== null) bridge.send({ t: 'skin', skin });
   });
 
+  const ART = {
+    '--acr-nine': 'nine/box.png',
+    '--acr-parchment': 'nine/parchment.png',
+    '--acr-backdrop': 'bmp/INTERF2%5CBACKGROUND_MAIN_MENU.BMP',
+  };
   $effect(() => {
     if (skin !== 'touch') return;
     let live = true;
-    bridge.assetUrl('nine/box.png').then(
-      (url) => {
-        if (live) nine = `url(${url})`;
-      },
-      (e) => console.error('nine/box.png:', e),
-    );
+    for (const [name, path] of Object.entries(ART)) {
+      bridge.assetUrl(path).then(
+        (url) => {
+          if (live) art[name] = `url(${url})`;
+        },
+        (e) => console.error(`${path}:`, e),
+      );
+    }
     return () => {
       live = false;
     };
@@ -62,7 +70,7 @@
   });
 </script>
 
-<div class="acr-ui" data-acr-mode={model.mode} data-acr-skin={skin} style:--acr-nine={nine}>
+<div class="acr-ui" data-acr-mode={model.mode} data-acr-skin={skin} style={Object.entries(art).map(([k, v]) => `${k}:${v}`).join(";")}>
   {#if skin === 'touch'}
     <GameViewport {dpr} touch />
     {#if model.mode === 'game'}

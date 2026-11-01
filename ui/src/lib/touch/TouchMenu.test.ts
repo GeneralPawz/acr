@@ -60,6 +60,40 @@ describe('TouchMenu', () => {
     expect([...container.querySelectorAll('[data-acr-id]')].map((e) => (e as HTMLElement).dataset.acrId)).toEqual(['Options/1', 'Options/2', 'Options/0']);
   });
 
+  it('sets the labels as text, repeated title left out, and marks the page switch', () => {
+    const b = bridge([]);
+    const model = new UiState(b);
+    const w = (id: string, key: string, kind: 'text' | 'button', label: string, y: number) =>
+      ({ id, key, kind, rect: [0, y, 9, 9], enabled: true, shown: true, hover: false, label, parts: [] }) as never;
+    model.receive({
+      t: 'view',
+      rev: 1,
+      mode: 'menus',
+      screen: {
+        name: 'GameOptions',
+        stack: ['GameOptions'],
+        in_game: true,
+        busy: false,
+        engine_drawn: false,
+        hint: null,
+        widgets: {
+          t: 'full',
+          widgets: [
+            w('G/0', 'title', 'text', 'Einstellungen', 0),
+            w('G/1', 'x', 'text', 'Einstellungen', 20),
+            w('G/2', 'next_page', 'button', 'Seite 2/6: Grafik \u00bb', 40),
+            w('G/3', 'ok', 'button', 'Zur\u00fcck', 60),
+          ],
+        },
+      },
+    });
+    const { container } = render(TouchMenu, { context: new Map([[KEY, { bridge: b, fonts: new FontCache(b), model }]]) });
+    expect(container.querySelector('h1')?.textContent).toBe('Einstellungen');
+    expect(container.querySelectorAll('.plain')).toHaveLength(0);
+    expect(container.querySelector('[data-acr-key="next_page"]')?.classList.contains('pager')).toBe(true);
+    expect(container.querySelector('[data-acr-key="ok"]')?.textContent?.trim()).toBe('Zur\u00fcck');
+  });
+
   it('has a header with the title and a back arrow that asks the game to go back', async () => {
     const sent: FromUi[] = [];
     const b = bridge(sent);
