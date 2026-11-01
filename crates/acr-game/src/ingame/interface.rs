@@ -466,8 +466,7 @@ impl InGame {
         let key_speed = if modern { self.interface.scroll_speed } else { KEY_SCROLL };
         // A finger is no hovering cursor: its last position stays after the finger lifts (or the
         // screen turns, #492) and would keep scrolling at the edge, so only a mouse scrolls there.
-        let edge_on =
-            self.interface.modern.edge_scroll && self.interface.modern.pan.is_none() && !self.interface.touch;
+        let edge_on = self.interface.modern.edge_scroll && self.interface.modern.pan.is_none() && !self.interface.touch;
         let keys = self.interface.modern.keys;
         while self.interface.scroll_time >= frame {
             self.interface.scroll_time -= frame;
