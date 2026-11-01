@@ -1,0 +1,17 @@
+{
+  "name": "menu_campaign",
+  "description": "Einzelspieler -> Kampagne: the campaigns list opens the campaign's missions, a mission starts with its briefing, and Abbruch leads back out",
+  "args": ["--dialogs", "report"],
+  "steps": [
+    {"cmd": "click", "label": "Einzelspieler"},
+    {"cmd": "click", "label": "Kampagne"},
+    {"cmd": "click", "label": "OK", "expect": {"screen": "Campaigns"}},
+    {"cmd": "click", "label": "Mission spielen!", "expect": {"screen": "SingleMission"}},
+    {"cmd": "click", "label": "Vorheriges Menü", "expect": {"screen": "Campaigns"}},
+    {"cmd": "click", "label": "Mission spielen!", "expect": {"screen": "SingleMission"}},
+    {"cmd": "click", "label": "Mission spielen!"},
+    {"cmd": "wait", "until": {"dialog": "MessageWindow"}, "timeout": 3000, "expect": {"blocking": true}},
+    {"cmd": "click", "label": "OK", "expect": [{"screen": "game"}, {"blocking": false}]},
+    {"cmd": "wait", "ticks": 50, "expect": {"path": "tick", "ge": 50}}
+  ]
+}
