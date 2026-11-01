@@ -80,8 +80,31 @@ const MARKET_BUTTONS: &[(usize, &str, &str, HudCommand)] = &[
     (30, "r_Plus10k", "ECONOMA", HudCommand::MarketAmount(10000)),
 ];
 
-/// Slots of the occupant icons, one per unit type inside (the first at column 11 of row 1).
-const LEAVE_SLOTS: [usize; 3] = [11 + 12, 11 + 24, 11];
+/// Slot of occupant type `i` (0-based, in type order) on a building's page 3 (0x5f5db9,
+/// layout A): `i % 11 + i / 12 * 12 + 1`. Type 11 lands on slot 1 again, as in the original.
+fn occupant_slot(i: usize) -> usize {
+    i % 11 + i / 12 * 12 + 1
+}
+
+/// The unit types inside the `buildings`, ascending by type id, with their counts, minus
+/// the units already ordered out (`LeaveMine` orders, 0x5f522e); types left with none are
+/// dropped.
+fn occupant_counts(world: &acr_sim::World, buildings: &[&Unit]) -> Vec<(TypeId, i32)> {
+    let mut counts: std::collections::BTreeMap<TypeId, i32> = std::collections::BTreeMap::new();
+    for b in buildings {
+        for u in b.inside.iter().filter_map(|id| world.unit(*id)) {
+            *counts.entry(u.kind).or_default() += 1;
+        }
+        for order in &b.orders {
+            if let acr_sim::world::Order::LeaveMine { kind, .. } = order
+                && let Some(n) = counts.get_mut(kind)
+            {
+                *n -= 1;
+            }
+        }
+    }
+    counts.into_iter().filter(|(_, n)| *n > 0).collect()
+}
 
 /// What a key does for the app.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -711,6 +734,9 @@ impl InGame {
         self.switch_icons(ctx, &data, outline, &mut view.icons);
         self.mortar_icons(&data, outline, &mut view.icons);
         self.aim_guide_icon(&data, outline, &mut view.icons);
+        if let ([(kind, ..)], []) = (&types[..], &brigades[..]) {
+            self.free_occupant_icons(ctx, &data, outline, *kind, &mut view.icons);
+        }
         let Some(world) = &self.world else { return view };
         let objects = self.objects.objects();
         // The type icons, then the formation icons, take the first slots the commands leave
@@ -1397,8 +1423,23 @@ impl InGame {
         if objects.definition(&t.id).is_some_and(|d| d.has("TORG")) {
             self.market_icons(ctx, data, icons);
         }
-        // Page buttons in column 0 (`PAGE1..3` and `PAGE1HINT..` of the building, 0x609b18).
+        // Occupants (0x5f5db9): a type whose MD defines `PAGE3` lists them on that page
+        // (layout A, marking it used); the others get free slots in `build_view` (layout B).
         let def = objects.definition(&t.id);
+        if def.is_some_and(|d| d.has("PAGE3")) {
+            let inside = occupant_counts(world, &working);
+            if !inside.is_empty() {
+                pages_used[2] = true;
+                if page == 2 {
+                    for (i, (k, count)) in inside.into_iter().enumerate() {
+                        let icon = self.occupant_icon(ctx, data, outline, k, count, occupant_slot(i));
+                        icons.retain(|e| e.slot != icon.slot);
+                        icons.push(icon);
+                    }
+                }
+            }
+        }
+        // Page buttons in column 0 (`PAGE1..3` and `PAGE1HINT..` of the building, 0x609b18).
         if pages_used[1] || pages_used[2] {
             for (p, _) in pages_used.iter().enumerate().filter(|(_, used)| **used) {
                 let word = |key: String| def.and_then(|d| d.get(&key)).and_then(|c| c.word(0)).map(str::to_owned);
@@ -1427,27 +1468,41 @@ impl InGame {
                 ..Icon::default()
             });
         }
-        // One icon per unit type inside, in type order, with its count over the selected
-        // buildings (0x5f71d3); a click lets one unit of that type out (`0x5f5a66`).
-        let mut inside: std::collections::BTreeMap<TypeId, i32> = std::collections::BTreeMap::new();
-        for id in working.iter().flat_map(|b| b.inside.iter()) {
-            if let Some(u) = world.unit(*id) {
-                *inside.entry(u.kind).or_default() += 1;
-            }
+    }
+
+    /// The icon of `count` occupants of type `kind`; a click lets one out (`0x5f5a66`).
+    fn occupant_icon(&self, ctx: &Ctx, data: &HudData, outline: u8, kind: TypeId, count: i32, slot: usize) -> Icon {
+        let it = self.world.as_ref().expect("a world while the panel is built").catalog.get(kind);
+        let frame =
+            self.objects.objects().definition(&it.id).and_then(|d| d.icon()).and_then(|i| data.icon(i)).unwrap_or(0);
+        Icon {
+            frame,
+            slot,
+            outline: Some(outline),
+            count: Some(count),
+            hint: unit_name(ctx, &it.md_name),
+            action: Some(HudCommand::Leave(usize::from(kind.0))),
+            ..Icon::default()
         }
-        icons.retain(|i| !LEAVE_SLOTS.contains(&i.slot) || inside.is_empty());
-        for ((kind, count), slot) in inside.into_iter().zip(LEAVE_SLOTS) {
-            let it = catalog.get(kind);
-            let frame = objects.definition(&it.id).and_then(|d| d.icon()).and_then(|i| data.icon(i)).unwrap_or(0);
-            icons.push(Icon {
-                frame,
-                slot,
-                outline: Some(outline),
-                count: Some(count),
-                hint: unit_name(ctx, &it.md_name),
-                action: Some(HudCommand::Leave(usize::from(kind.0))),
-                ..Icon::default()
-            });
+    }
+
+    /// Layout B of 0x5f5db9: the occupants of a building type without a `PAGE3`, one icon
+    /// per type in the first slot nothing else uses.
+    fn free_occupant_icons(&self, ctx: &Ctx, data: &HudData, outline: u8, kind: TypeId, icons: &mut Vec<Icon>) {
+        let Some(world) = &self.world else { return };
+        let t = world.catalog.get(kind);
+        let player = self.own();
+        let has_page3 = self.objects.objects().definition(&t.id).is_some_and(|d| d.has("PAGE3"));
+        if !t.building || has_page3 {
+            return;
+        }
+        let working: Vec<&Unit> = self
+            .selected_units()
+            .filter(|u| u.kind == kind && u.owner == player && u.stage >= world.max_stage(u))
+            .collect();
+        for (k, count) in occupant_counts(world, &working) {
+            let Some(slot) = (0..36).find(|s| !icons.iter().any(|i| i.slot == *s)) else { break };
+            icons.push(self.occupant_icon(ctx, data, outline, k, count, slot));
         }
     }
 
@@ -3455,6 +3510,41 @@ fn leave_commands(player: u8, buildings: &[EntityId], kind: TypeId, n: usize) ->
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn occupant_slots_follow_the_original() {
+        let slots: Vec<usize> = (0..14).map(occupant_slot).collect();
+        assert_eq!(slots, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 1, 14, 15]);
+    }
+
+    #[test]
+    fn occupants_are_counted_per_type_minus_pending_exits() {
+        use acr_sim::Pos;
+        use acr_sim::catalog::{Catalog, ObjectType};
+        use acr_sim::formation::Formations;
+        use acr_sim::map::MapGrid;
+        use std::sync::Arc;
+        let mut c = Catalog::new();
+        let mut add = |name: &str| {
+            c.add(ObjectType::from_def(
+                name,
+                &acr_formats::defs::UnitDef::parse(b"NAME X\r\nLIFE 100\r\nGEOMETRY 1 10 40\r\n[END]\r\n"),
+            ))
+        };
+        let (a, b) = (add("Mus(EN)"), add("Pez(EN)"));
+        let mut w = acr_sim::World::new(Arc::new(MapGrid::open(1)), Arc::new(c), Arc::new(Formations::default()));
+        let house = w.spawn(a, 0, Pos::from_pixels(950, 900), 0);
+        for kind in [b, a, b, b] {
+            let u = w.spawn(kind, 0, Pos::from_pixels(900, 900), 0);
+            w.units[u.0 as usize].inside_of = Some(house);
+            w.units[house.0 as usize].inside.push(u);
+        }
+        let counts = |w: &acr_sim::World| occupant_counts(w, &[w.unit(house).unwrap()]);
+        assert_eq!(counts(&w), [(a, 1), (b, 3)]);
+        w.units[house.0 as usize].orders.push(acr_sim::world::Order::LeaveMine { kind: a, delay: 0 });
+        w.units[house.0 as usize].orders.push(acr_sim::world::Order::LeaveMine { kind: b, delay: 0 });
+        assert_eq!(counts(&w), [(b, 2)]);
+    }
 
     #[test]
     fn the_panel_skips_housed_units() {

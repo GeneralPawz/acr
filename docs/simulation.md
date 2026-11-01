@@ -2216,7 +2216,7 @@ No game option writes it. How the map view draws the fog is in
     sender is the building panel's occupant button (0x5f5a66, command 0x2e through 0x4d713a,
     five commands with Shift): 0x5f71d3 counts the occupants of the selected buildings per
     unit type and makes one icon per type present, in type order, whose click sends that
-    type. Our panel shows up to three (`LEAVE_SLOTS`); Shift repeats the command five times. Replays: the
+    type. Our panel makes one icon per type (see docs/ui.md "Leave"); Shift repeats the command five times. Replays: the
     high bit of the player byte of opcode 9 says a type word follows; older ones decode to
     `kind: None`, which lets everybody out at once (#365), through the same walk-out
     (`economy::release` calls `walk_out`: born points, spawn priority, rally point), so the
