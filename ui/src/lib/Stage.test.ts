@@ -57,6 +57,8 @@ describe('Ui', () => {
       const stage = container.querySelector<HTMLElement>('.stage');
       expect(stage?.style.transform).toBe('scale(2)');
       expect(stage?.style.left).toBe('100px');
+      // The Android host leaves the touches on a drawn screen to the page (`android.ts`).
+      expect(stage?.hasAttribute('data-acr-hit')).toBe(true);
       expect(container.querySelector('[data-acr-id="MainMenu/0"]')).not.toBeNull();
       model.receive({
         t: 'view',

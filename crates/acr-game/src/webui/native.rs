@@ -22,7 +22,7 @@ use wry::dpi::{LogicalPosition, LogicalSize};
 use wry::http::{Request, Response, StatusCode};
 use wry::{Rect, RequestAsyncResponder, WebView, WebViewBuilder};
 
-use super::{AssetBody, Sender, bundle};
+use super::{AssetBody, NativeHost, Sender, bundle};
 use crate::Event;
 
 /// Where the page is served.
@@ -90,9 +90,11 @@ impl Host {
         }
         Ok(Self { webview: Rc::new(webview), visible: false })
     }
+}
 
+impl NativeHost for Host {
     /// The way to the page: one `evaluate_script` per message.
-    pub fn sender(&self) -> Sender {
+    fn sender(&self) -> Sender {
         let webview = self.webview.clone();
         Box::new(move |json| {
             // The JSON text goes in as a JS string literal; the page parses it.
@@ -104,12 +106,12 @@ impl Host {
     }
 
     /// Whether the webview is shown now.
-    pub fn visible(&self) -> bool {
+    fn visible(&self) -> bool {
         self.visible
     }
 
     /// Shows or hides the webview; input follows it (the page while shown, else the window).
-    pub fn show(&mut self, show: bool) {
+    fn show(&mut self, show: bool) {
         if show == self.visible {
             return;
         }
@@ -125,7 +127,7 @@ impl Host {
     }
 
     /// The window changed size or scale: the webview covers it again.
-    pub fn resize(&self, window: &Window) {
+    fn resize(&self, window: &Window) {
         if let Err(e) = self.webview.set_bounds(bounds(window)) {
             log::warn!("webui: cannot resize the webview: {e}");
         }
@@ -172,7 +174,7 @@ fn serve(proxy: &EventLoopProxy<Event>, request: Request<Vec<u8>>, responder: Re
         other => other,
     };
     responder.respond(match bundle::file(name) {
-        Some(bytes) => response(StatusCode::OK, mime(name), bytes.to_vec(), None),
+        Some(bytes) => response(StatusCode::OK, bundle::mime(name), bytes.to_vec(), None),
         None => response(StatusCode::NOT_FOUND, "text/plain", Vec::new(), Some(&format!("not in the bundle: {name}"))),
     });
 }
@@ -193,30 +195,9 @@ fn response(
     builder.body(body.into()).expect("a valid response")
 }
 
-fn mime(name: &str) -> &'static str {
-    match name.rsplit('.').next() {
-        Some("html") => "text/html",
-        Some("js") => "text/javascript",
-        Some("css") => "text/css",
-        Some("json") => "application/json",
-        Some("png") => "image/png",
-        Some("svg") => "image/svg+xml",
-        Some("woff2") => "font/woff2",
-        _ => "application/octet-stream",
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn bundle_files_get_their_type() {
-        assert_eq!(mime("index.html"), "text/html");
-        assert_eq!(mime("acr-ui.js"), "text/javascript");
-        assert_eq!(mime("acr-ui.css"), "text/css");
-        assert_eq!(mime("other.bin"), "application/octet-stream");
-    }
 
     #[test]
     fn an_error_travels_as_status_and_ascii_header() {

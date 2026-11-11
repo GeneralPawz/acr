@@ -1,4 +1,5 @@
 import { mount } from 'svelte';
+import { androidBridge, onAndroid } from './lib/android';
 import type { Bridge } from './lib/bridge';
 import { nativeBridge, webBridge } from './lib/bridge';
 import { FontCache } from './lib/fonts';
@@ -24,5 +25,5 @@ export function mountUi(target: HTMLElement, bridge: Bridge) {
   return app;
 }
 
-export { nativeBridge, webBridge };
+export { androidBridge, nativeBridge, onAndroid, webBridge };
 export type { Bridge };

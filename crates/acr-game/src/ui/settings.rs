@@ -190,6 +190,9 @@ pub struct Settings {
     /// the game itself stays engine-drawn. Read at start; needs the `webview-gtk` feature and the
     /// embedded bundle, else the engine draws.
     pub native_ui: NativeUi,
+    /// ACR: `orientation=landscape|auto|portrait` (landscape by default, as before): how the
+    /// Android activity may rotate (docs/android.md "Orientation"). Ignored elsewhere.
+    pub orientation: Orientation,
 }
 
 /// Who draws the menus on desktop (`native_ui` in `settings.txt`).
@@ -215,6 +218,37 @@ impl NativeUi {
         match self {
             Self::Engine => "engine",
             Self::Svelte => "svelte",
+        }
+    }
+}
+
+/// How the Android activity may rotate (`orientation` in `settings.txt`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Orientation {
+    /// Landscape, either way up (the original's screen).
+    #[default]
+    Landscape,
+    /// Follows the sensor and the user's rotation lock.
+    Auto,
+    /// Portrait.
+    Portrait,
+}
+
+impl Orientation {
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "landscape" => Some(Self::Landscape),
+            "auto" => Some(Self::Auto),
+            "portrait" => Some(Self::Portrait),
+            _ => None,
+        }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Landscape => "landscape",
+            Self::Auto => "auto",
+            Self::Portrait => "portrait",
         }
     }
 }
@@ -352,6 +386,7 @@ impl Default for Settings {
             power_save: None,
             render_scale: None,
             native_ui: NativeUi::Engine,
+            orientation: Orientation::Landscape,
         }
     }
 }
@@ -432,11 +467,16 @@ impl Settings {
         } else {
             format!("native_ui={}\n", self.native_ui.name())
         };
+        let orientation = if self.orientation == Orientation::Landscape {
+            String::new()
+        } else {
+            format!("orientation={}\n", self.orientation.name())
+        };
         format!(
             "sound_volume={}\nmusic_volume={}\nmusic_mode={}\ngame_mode={}\nscroll_speed={}\nframe_time={}\n\
              resolution={}\nrecord={}\nrecord_file={hex}\ncontrols={controls}\nedge_scroll={}\n\
              models={models}\ncamera={camera}\ngore={gore}\ncorpse_minutes={}\ncorpse_decay={}\nhit_locations={}\nbody_spacing={}\nmortars={}\ncorpse_piles={}\ncannon_fire={}\nformation_attack={}\nanimal_give_up={}\ndart_fire={}\naimed_fire={}\nshadows={}\nlod={}\nmaterial_detail={}\nwind={}\nmap_models={}\nwater={}\n\
-             ground={}\nground_cover={}\nbattlefield_marks={}\nweather={}\nsea_state={}\naim_guides={}\ncenter_top_bar={}\n{top_bar}{hud_scale}{native_ui}graphics={}\nframe_cap={}\n{}{}{}{}{}{}",
+             ground={}\nground_cover={}\nbattlefield_marks={}\nweather={}\nsea_state={}\naim_guides={}\ncenter_top_bar={}\n{top_bar}{hud_scale}{native_ui}{orientation}graphics={}\nframe_cap={}\n{}{}{}{}{}{}",
             self.sound_volume,
             self.music_volume,
             self.music_mode,
@@ -589,6 +629,12 @@ impl Settings {
                         NativeUi::Engine
                     })
                 }
+                "orientation" => s.orientation = Orientation::parse(value).unwrap_or_else(|| {
+                    log::warn!(
+                        "settings: unknown orientation value {value:?} (landscape, auto or portrait), using landscape"
+                    );
+                    Orientation::Landscape
+                }),
                 "hud_scale" => s.hud_scale = crate::hud::zoom::parse(value),
                 "weather" => s.weather = Weather::parse(value).unwrap_or_default(),
                 "sea_state" => s.sea_state = SeaState::parse(value).unwrap_or_default(),
@@ -707,6 +753,7 @@ mod tests {
             power_save: Some(true),
             render_scale: Some(RenderScale::P85),
             native_ui: NativeUi::Svelte,
+            orientation: Orientation::Portrait,
         };
         assert_eq!(Settings::decode(&s.encode()), s);
         // The removed "Spotify mitmischen" (music_mode=2) reads as no music.
@@ -766,6 +813,10 @@ group_move=off"
         assert!(!Settings::default().encode().contains("native_ui"));
         assert_eq!(Settings::decode("native_ui=svelte").native_ui, NativeUi::Svelte);
         assert_eq!(Settings::decode("native_ui=html").native_ui, NativeUi::Engine);
+        assert_eq!(Settings::default().orientation, Orientation::Landscape);
+        assert!(!Settings::default().encode().contains("orientation"));
+        assert_eq!(Settings::decode("orientation=auto").orientation, Orientation::Auto);
+        assert_eq!(Settings::decode("orientation=sideways").orientation, Orientation::Landscape);
         assert_eq!(Settings::decode("weather=fog").weather, Weather::Fog);
         assert_eq!(Settings::decode("weather=hail").weather, Weather::Off);
         assert_eq!(Settings::decode("sea_state=storm").sea_state, SeaState::Storm);

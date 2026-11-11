@@ -23,7 +23,9 @@ adb logcat -s acr                                              # the game's log
 ```
 
 `ACR_ANDROID_ABIS="arm64-v8a x86_64"` adds the emulator's ABI. The APK is signed with a local
-debug key (`~/.android/acr-debug.keystore`, created on first use).
+debug key (`~/.android/acr-debug.keystore`, created on first use). The script builds the Svelte bundle with
+Bun (`ui/`) unless `ACR_UI_DIST` names one, embeds it, and compiles `tools/android/java` into the APK's dex
+(`hasCode=true`) for `native_ui=svelte` (docs/webui.md "Native host (Android, #479)").
 
 ## Launcher icon
 
@@ -46,6 +48,31 @@ The app looks for the original's folder (the one with `dmcr.exe`) in this order:
    folder is found, the app opens that system settings page and looks again on return.
 
 Saves, profiles and settings are kept in the app's own folder (`data_dir()` in `android.rs`).
+
+## Orientation and the back gesture
+
+`orientation=landscape|auto|portrait` in `settings.txt` (and the "Ausrichtung" line on the options
+dialog's page 2, "Anzeige": Quer (Original) / Automatisch / Hochkant). `landscape` is the default and
+the old behaviour (`sensorLandscape`, also the manifest's `screenOrientation` until the game starts);
+`auto` is `SCREEN_ORIENTATION_FULL_SENSOR` (follows the sensor, every way up); `portrait` is
+`SCREEN_ORIENTATION_SENSOR_PORTRAIT`. The launcher applies it at the first resume and again when the
+setting changes (`Launcher::apply_orientation`, once per change, from `about_to_wait`): JNI
+`Shell.setOrientation` (`tools/android/java/.../Shell.java`), which hops to the UI thread for
+`Activity.setRequestedOrientation`. The row exists on every platform (the settings file is shared) and
+does nothing off Android. `configChanges` in the manifest names `orientation|screenSize|screenLayout|
+smallestScreenSize`, so a rotation resizes the surface and does not recreate the activity (a relaunch
+can ANR, #484). The window is simply a different size: the menus' 1024x768 canvas is letterboxed
+(black above and below in portrait), the in-game view and the engine HUD follow the window; the Svelte
+popup follows the decor view's layout (`WebHost.layout`).
+
+Back: with `targetSdk` 36 Android 13+ no longer sends `KEYCODE_BACK` to the app, and a back nobody
+handles finishes the activity. `Shell.installBack` therefore registers an `OnBackInvokedCallback`
+(API 33+, at the first resume; the manifest opts in with `enableOnBackInvokedCallback`), which calls
+`nativeBack` and becomes `Event::Back`, then Escape (`Game::press_escape`), in every state. The
+gesture, the 3-button back and `adb shell input keyevent KEYCODE_BACK` take the same path; nothing
+finishes the activity, and the WebView popup (not focusable) does not matter. Before API 33 the back
+key arrives as a key event (winit's `BrowserBack`, mapped to Escape). The system shows no predictive
+animation because the app handles the back itself. What Escape does in a menu is the game's.
 
 ## Switching to another app
 

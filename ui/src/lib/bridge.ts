@@ -63,9 +63,9 @@ interface NativeWindow {
   __acr_ui?: { recv(json: string): void };
 }
 
-/** The native webview: messages over wry's IPC, assets from the custom protocol. Untested
- * until the native host exists (tracking issue #316, section 3). */
-export function nativeBridge(assetBase = 'acr://localhost/asset/v1'): Bridge {
+/** The native webview: messages over wry's IPC (or `post`, the Android host's `acr.post`), assets
+ * from the host's origin (`acr://localhost` on Linux, `https://acr.local` on Android). */
+export function nativeBridge(assetBase = 'acr://localhost/asset/v1', post?: (json: string) => void): Bridge {
   const host = window as unknown as NativeWindow;
   let listener: (message: ToUi) => void = () => {};
   host.__acr_ui = { recv: (json) => listener(JSON.parse(json) as ToUi) };
@@ -76,7 +76,7 @@ export function nativeBridge(assetBase = 'acr://localhost/asset/v1'): Bridge {
     return new Uint8Array(await response.arrayBuffer());
   };
   return {
-    send: (message) => host.ipc.postMessage(JSON.stringify(message)),
+    send: (message) => (post ?? ((json) => host.ipc.postMessage(json)))(JSON.stringify(message)),
     onMessage: (callback) => {
       listener = callback;
     },

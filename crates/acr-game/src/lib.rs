@@ -62,6 +62,14 @@ pub enum Event {
     },
     /// A message from the Svelte UI (JSON, `acr-ui-protocol`).
     Ui(String),
+    /// A finger the Svelte UI's host did not leave to the page (Android, `webui::android`): it
+    /// takes the path of the window's touches. `x`, `y` are window pixels.
+    UiTouch {
+        id: u64,
+        phase: winit::event::TouchPhase,
+        x: f64,
+        y: f64,
+    },
     /// The Svelte UI asks for an asset (`webui::assets`).
     UiAsset {
         path: String,
@@ -69,6 +77,9 @@ pub enum Event {
     },
     /// The page's user gesture: the audio may start now.
     AudioUnlock,
+    /// Android's back gesture or key (`android.rs`, `Shell.java`): Escape.
+    #[cfg(target_os = "android")]
+    Back,
 }
 
 /// GPU resources that exist once the window has a surface.
@@ -104,9 +115,10 @@ pub struct Game {
     /// `native_ui=svelte` is in effect: the window gets the webview host once the GPU is ready.
     #[cfg(all(feature = "webview-gtk", target_os = "linux"))]
     native_ui: bool,
-    /// The webview that shows the Svelte UI's full-screen menus (`webui::native`).
-    #[cfg(all(feature = "webview-gtk", target_os = "linux"))]
-    native_host: Option<webui::native::Host>,
+    /// The webview that shows the Svelte UI: the opaque full-screen menus on Linux
+    /// (`webui::native`), the transparent popup on Android (`webui::android`).
+    #[cfg(any(all(feature = "webview-gtk", target_os = "linux"), target_os = "android"))]
+    native_host: Option<Box<dyn webui::NativeHost>>,
     mode: Mode,
     audio: music::Audio,
     suspension: suspend::Suspension,
@@ -163,7 +175,7 @@ impl Game {
             ui_outbox: None,
             #[cfg(all(feature = "webview-gtk", target_os = "linux"))]
             native_ui: false,
-            #[cfg(all(feature = "webview-gtk", target_os = "linux"))]
+            #[cfg(any(all(feature = "webview-gtk", target_os = "linux"), target_os = "android"))]
             native_host: None,
             mode: Mode::Intro,
             audio: music::Audio::new(&paths),
@@ -218,6 +230,27 @@ impl Game {
         self.native_ui = true;
     }
 
+    /// The Android WebView host of `native_ui=svelte` (`webui::android::Host`), created before
+    /// the window exists.
+    #[cfg(target_os = "android")]
+    pub fn set_native_host(&mut self, host: Box<dyn webui::NativeHost>) {
+        self.native_host = Some(host);
+    }
+
+    /// The app is in the foreground (or not): the native webview does no work while it is away, and
+    /// the page gets everything again when it returns, as the messages sent meanwhile are dropped.
+    fn set_native_host_active(&mut self, active: bool) {
+        #[cfg(any(all(feature = "webview-gtk", target_os = "linux"), target_os = "android"))]
+        if let Some(host) = &mut self.native_host {
+            host.set_active(active);
+            if active && let Some(web) = &mut self.webui {
+                web.resync();
+            }
+        }
+        #[cfg(not(any(all(feature = "webview-gtk", target_os = "linux"), target_os = "android")))]
+        let _ = active;
+    }
+
     /// Answers the Svelte UI's waiting asset requests and publishes what changed.
     fn publish_webui(&mut self) {
         let Some(mut web) = self.webui.take() else { return };
@@ -235,9 +268,9 @@ impl Game {
             _ => Vec::new(),
         };
         web.publish(&mut self.ui, mode, loading, size, hud);
-        // The webview covers the window exactly while the UI draws the screen; the movies and
-        // the game are the engine's.
-        #[cfg(all(feature = "webview-gtk", target_os = "linux"))]
+        // An opaque webview covers the window exactly while the UI draws the screen; the movies and
+        // the game are the engine's. A transparent one ignores this and stays shown.
+        #[cfg(any(all(feature = "webview-gtk", target_os = "linux"), target_os = "android"))]
         if let Some(host) = &mut self.native_host {
             host.show(web.shown() && !matches!(self.mode, Mode::Intro));
         }
@@ -312,6 +345,12 @@ impl Game {
         let refresh = self.window.as_ref().and_then(|w| w.current_monitor()).and_then(|m| m.refresh_rate_millihertz());
         let work = started.elapsed().saturating_sub(std::mem::take(&mut self.acquire_wait));
         self.work.frame(sink.as_mut(), pacing::frame_budget(fps, refresh), work);
+    }
+
+    /// The `orientation` setting, which the Android host applies to the activity.
+    #[cfg(target_os = "android")]
+    pub(crate) fn orientation(&self) -> ui::settings::Orientation {
+        self.ui.settings().orientation
     }
 
     /// Reports the main thread's work per frame to `sink` from now on.
@@ -952,6 +991,7 @@ impl ApplicationHandler<Event> for Game {
                 log::error!("cannot recreate the surface: {e}");
             }
             self.resume_app();
+            self.set_native_host_active(true);
             return;
         }
         #[cfg(not(target_arch = "wasm32"))]
@@ -1006,6 +1046,7 @@ impl ApplicationHandler<Event> for Game {
             g.gpu.suspend();
         }
         self.suspend_app();
+        self.set_native_host_active(false);
     }
 
     fn user_event(&mut self, event_loop: &ActiveEventLoop, event: Event) {
@@ -1036,7 +1077,7 @@ impl ApplicationHandler<Event> for Game {
                     && let Some(window) = &self.window
                 {
                     match webui::native::Host::new(window, self.proxy.clone()) {
-                        Ok(host) => self.native_host = Some(host),
+                        Ok(host) => self.native_host = Some(Box::new(host)),
                         Err(e) => log::error!("webui: no native host, the engine draws: {e}"),
                     }
                 }
@@ -1049,10 +1090,17 @@ impl ApplicationHandler<Event> for Game {
                 }
             }
             Event::Ui(json) => webui::input::on_message(self, event_loop, &json),
+            Event::UiTouch { id, phase, x, y } => {
+                let at = self.to_render(PhysicalPosition::new(x, y));
+                self.switch_input(input_mode::InputMode::Touch);
+                self.touch_at(id, phase, at, event_loop)
+            }
             Event::UiAsset { path, reply } => match self.webui.as_mut() {
                 Some(web) => web.request_asset(path, reply),
                 None => reply(Err(webui::AssetError::NotFound("the UI is not connected".into()))),
             },
+            #[cfg(target_os = "android")]
+            Event::Back => self.press_escape(event_loop),
             Event::AudioUnlock => {
                 #[cfg(target_arch = "wasm32")]
                 self.audio.start();
@@ -1212,8 +1260,19 @@ impl Game {
     /// A finger on the screen, through the touch gestures (`touch.rs`): tap, drag and long
     /// press (with a swipe: the order's arrow) work as the mouse, two fingers pan and zoom, a ▶ unpauses.
     fn touch(&mut self, touch: winit::event::Touch, event_loop: &ActiveEventLoop) {
+        self.touch_at(touch.id, touch.phase, touch.location, event_loop)
+    }
+
+    /// [`Game::touch`] for a finger `id` at `location` (render pixels).
+    fn touch_at(
+        &mut self,
+        id: u64,
+        phase: winit::event::TouchPhase,
+        location: PhysicalPosition<f64>,
+        event_loop: &ActiveEventLoop,
+    ) {
         use winit::event::TouchPhase;
-        let phase = match touch.phase {
+        let phase = match phase {
             TouchPhase::Started => touch::Phase::Started,
             TouchPhase::Moved => touch::Phase::Moved,
             TouchPhase::Ended | TouchPhase::Cancelled => touch::Phase::Ended,
@@ -1223,7 +1282,7 @@ impl Game {
         }
         let paused = matches!(&self.mode, Mode::InGame(g) if g.paused());
         let now = self.touch_now();
-        let gestures = self.touches.event(touch.id, phase, [touch.location.x, touch.location.y], now, paused);
+        let gestures = self.touches.event(id, phase, [location.x, location.y], now, paused);
         self.gestures(gestures, event_loop);
     }
 
