@@ -565,7 +565,9 @@ sideways touch window, the top 52 % of an upright one. Every frame the camera is
 the middle of the scene, 27 px above the ground, stands in the middle of the free picture
 (`InGame::editor_inspect`, `View3d::pan`), so the unit stays put while the camera turns. **A
 drag on the picture turns and tilts the camera round the unit** (the modern controls' orbit,
-started by the left button or one finger); "Ansicht drehen" turns it by eighths.
+started by the left button or one finger); "Ansicht drehen" turns it by eighths. The wheel and the pinch zoom up to 16 here
+(`controls::INSPECT_ZOOM`; 2 elsewhere), under either control scheme. The touch skin leaves
+out the stock, its fold and the minimap while the inspector is on.
 
 | Line | |
 | --- | --- |
@@ -575,14 +577,16 @@ started by the left button or one finger); "Ansicht drehen" turns it by eighths.
 | Ansicht drehen `<` `>` | the camera an eighth of a turn round the unit |
 | Gegner `<` `>` | who stands in front of the unit: keiner; zu Fuss, steht; zu Fuss, kaempft; Reiter, steht; Reiter, kaempft; am Boden (a man who lost a leg at the knee: he crawls). The enemy is England's line musketeer `EngM18` or dragoon `EngD18` (France's `FrnM18`, `FrnD18` against an English unit), player 2's, with 20000 life so the fight lasts; one who "steht" does not look for victims (`Unit::no_search_victim`), against one who "kaempft" the unit gets 20000 life too |
 | Abstand | nah (110 px to a man on foot, 140 to a rider, 70 to a man on the ground) or fern (480 px: musket and bow range) |
+| Kampf | endlos (the 20000 life above) or toedlich: both keep their own life, so the fight ends with a death and its animation |
+| Blut und Wunden | an or aus: the 3D view's gore over the setting (`ThreeD::set_gore`, render only), from the next frame |
 | Neu aufstellen | the same scene again: the fight starts over |
-| Bewegungen des Modells | the clips of the unit's 3D model, as the model file names them. A click loops that clip on the unit whatever the simulation does; "wie die Simulation" ends it. The classic window pages the list by ten, the touch drawer shows it whole |
+| Bewegungen des Modells | the clips of the unit's 3D model, as the model file names them. A click loops that clip on the unit whatever the simulation does; "wie die Simulation" ends it. The classic window pages the list by eight, the touch drawer shows it whole |
 
 In the touch skin the drawer opens by itself with the inspector, shows these controls above the
 unit cells, and in an upright window lies along the bottom (46 % of the height) instead of the
 right (`EditorView::inspector`).
 
-Every change of the scene is one editor input (`Inspect { kind, enemy, far, dir }`, savegame tag
+Every change of the scene is one editor input (`Inspect { kind, enemy, far, fatal, dir }`, savegame tag
 10): what the inspector placed before is removed, the unit stands in the middle of the map
 facing south-east and, with an enemy, Kampf goes on and the unit is ordered to attack him
 (`combat::attack_obj`), so blow, reach and contact are the simulation's. The camera then looks
@@ -596,10 +600,10 @@ apply when the simulation's state calls for them.
 The driver starts it with `{"cmd": "start", "blank": {"inspector": true, "ground": "dark"}}`;
 `state.inspector` has `unit` and `enemy` (`id`, `type`, `life`, `alive`, `anim`), `clip`, `clips`
 and `models`. The classic window's items are `Inspektor Nation -`/`+`, `Inspektor Einheit -`/`+`,
-`Inspektor Bewegung -`/`+`, `Inspektor Drehen -`/`+`, `Inspektor Gegner -`/`+`, `Inspektor Abstand`,
+`Inspektor Bewegung -`/`+`, `Inspektor Drehen -`/`+`, `Inspektor Gegner -`/`+`, `Inspektor Abstand`, `Inspektor Kampf`, `Inspektor Blut`,
 `Inspektor Neu`, `Inspektor Simulation`, `Bewegung <clip>` and `Inspektor Seite -`/`+`; the
 drawer's ids are `editor/inspect/nation/<n>`, `pick/<n>`, `unit/+`, `clipstep/+`, `turn/+`,
-`enemy/+`, `range`, `again`, `sim` and `clip/<n>`, and `editor/inspect` for the switch.
+`enemy/+`, `range`, `fatal`, `gore`, `again`, `sim` and `clip/<n>`, and `editor/inspect` for the switch.
 Scenarios: `tests/e2e/inspector.json` (from the main menu, classic) and `touch_inspector.json`;
 the phone layouts are checked in a browser by `tools/browser/touch_inspector.py`
 (`run_touch_inspector.sh`, docs/testing.md "Browser"). The code is

@@ -2725,6 +2725,16 @@ impl ThreeD {
         self.weather_override = Some(Weather::Off);
     }
 
+    /// Blood, wounds and torn bodies on or off, over the setting (the unit inspector's switch).
+    pub fn set_gore(&mut self, on: bool) {
+        self.gore = if on { Gore::Full } else { Gore::Off };
+    }
+
+    /// Whether any gore is drawn (the setting `gore` is not `off`).
+    pub fn gore_on(&self) -> bool {
+        self.gore != Gore::Off
+    }
+
     /// Whether units are drawn as 3D models (the setting `models`).
     pub fn models_on(&self) -> bool {
         self.models != Models::Off

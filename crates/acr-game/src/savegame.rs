@@ -560,11 +560,11 @@ impl Writer {
                 self.u(8);
                 self.u(u64::from(ai[0]) | u64::from(ai[1]) << 1);
             }
-            EditorInput::Inspect { kind, enemy, far, dir } => {
+            EditorInput::Inspect { kind, enemy, far, fatal, dir } => {
                 self.u(10);
                 self.bytes(kind.as_bytes());
                 self.u(u64::from(enemy.code()));
-                self.u(u64::from(*far));
+                self.u(u64::from(*far) | u64::from(*fatal) << 1);
                 self.u(u64::from(*dir));
             }
             EditorInput::Plan { side, plan } => {
@@ -803,12 +803,15 @@ impl<'a> Reader<'a> {
                 let plan = crate::tactics::Plan::from_code(self.u8()?).ok_or_else(|| err("plan"))?;
                 EditorInput::Plan { side, plan }
             }
-            10 => EditorInput::Inspect {
-                kind: self.str()?,
-                enemy: crate::ingame::InspectEnemy::from_code(self.u8()?).ok_or_else(|| err("inspector enemy"))?,
-                far: self.u()? != 0,
-                dir: self.u8()?,
-            },
+            10 => {
+                let kind = self.str()?;
+                let enemy = crate::ingame::InspectEnemy::from_code(self.u8()?).ok_or_else(|| err("inspector enemy"))?;
+                let bits = self.u8()?;
+                if bits > 3 {
+                    return Err(err("inspector switches"));
+                }
+                EditorInput::Inspect { kind, enemy, far: bits & 1 != 0, fatal: bits & 2 != 0, dir: self.u8()? }
+            }
             6 => EditorInput::Nature {
                 group: SpriteGroup::from_code([self.u8()?, self.u8()?]),
                 index: u16::try_from(self.u()?).map_err(|_| err("sprite index"))?,
@@ -1197,6 +1200,7 @@ mod tests {
                     kind: "EngM18(EN)".into(),
                     enemy: crate::ingame::InspectEnemy::RiderFights,
                     far: true,
+                    fatal: true,
                     dir: 224,
                 },
             ),

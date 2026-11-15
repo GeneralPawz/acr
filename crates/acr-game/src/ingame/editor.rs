@@ -1480,6 +1480,10 @@ impl super::InGame {
         }
         // A model viewer: 3D models and the free camera whatever the settings say.
         self.three_d.studio();
+        if let Some(on) = i.gore {
+            self.three_d.set_gore(on);
+        }
+        i.gore_on = self.three_d.gore_on();
         i.models = self.three_d.models_on();
         let clips = self.three_d.inspect_clips();
         if i.clips != clips {
@@ -1506,6 +1510,11 @@ impl super::InGame {
         if let Some(view) = self.three_d.free_view(self.camera, window) {
             self.camera = view.pan([(window[0] - free[0]) / 2.0, (window[1] - free[1]) / 2.0]);
         }
+    }
+
+    /// Whether the unit inspector's view is on.
+    pub(super) fn editor_inspecting(&self) -> bool {
+        self.editor.as_ref().is_some_and(|e| e.inspect.on)
     }
 
     /// The inspector's state for the driver (`state.inspector`), in an inspector view.

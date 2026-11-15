@@ -19,6 +19,8 @@ use crate::ui::settings::{Controls, Settings};
 /// The zoom range of the wheel (output pixels per original pixel).
 pub(super) const MIN_ZOOM: f32 = 0.5;
 pub(super) const MAX_ZOOM: f32 = 2.0;
+/// The wheel's and the pinch's limit in the unit inspector (docs/controls.md "Inspector").
+pub(super) const INSPECT_ZOOM: f32 = 16.0;
 /// One wheel notch: four notches double or halve the scale.
 const ZOOM_STEP: f32 = 1.189_207_1;
 /// The scale glides to the wheel's level at this rate (1/s).
@@ -98,8 +100,14 @@ pub(super) fn orbit_dragged(
 
 /// The next zoom level after `lines` wheel notches (positive: in), clamped, and exactly 1
 /// when it comes close so the sprites are drawn pixel for pixel.
+#[cfg(test)]
 pub(super) fn wheel_zoom(level: f32, lines: f32) -> f32 {
-    let next = (level * ZOOM_STEP.powf(lines)).clamp(MIN_ZOOM, MAX_ZOOM);
+    wheel_zoom_to(level, lines, MAX_ZOOM)
+}
+
+/// [`wheel_zoom`] with another upper limit (the unit inspector's close-up).
+pub(super) fn wheel_zoom_to(level: f32, lines: f32, max: f32) -> f32 {
+    let next = (level * ZOOM_STEP.powf(lines)).clamp(MIN_ZOOM, max);
     if next.log2().abs() < 0.02 { 1.0 } else { next }
 }
 
@@ -359,11 +367,14 @@ impl InGame {
     /// The mouse wheel over the map: zoom in (positive) or out about the cursor. Not in the
     /// zoomed-out view of key L, which has its own scale.
     pub fn wheel(&mut self, lines: f32) {
-        if !self.modern() || self.interface.hud.zoom || lines == 0.0 {
+        // The unit inspector zooms under either control scheme, up to its own close-up.
+        let inspecting = self.editor_inspecting();
+        if !(self.modern() || inspecting) || self.interface.hud.zoom || lines == 0.0 {
             return;
         }
+        let max = if inspecting { INSPECT_ZOOM } else { MAX_ZOOM };
         let m = &mut self.interface.modern;
-        m.zoom = wheel_zoom(m.zoom, lines);
+        m.zoom = wheel_zoom_to(m.zoom, lines, max);
         if let Some(at) = self.cursor {
             self.interface.modern.anchor = at;
         }

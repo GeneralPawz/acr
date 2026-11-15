@@ -46,7 +46,7 @@ pub const TURN: f32 = std::f32::consts::FRAC_PI_4;
 /// The free camera's first turn and tilt: from the front right, 20 degrees down.
 pub const ORBIT: [f32; 2] = [0.0, 0.35];
 /// Clip lines of the classic window per page.
-const PAGE: usize = 10;
+const PAGE: usize = 8;
 /// The enemies, by the inspected unit's nation: a line musketeer and a dragoon of England,
 /// or of France against the English.
 const FOOT: [&str; 2] = ["EngM18(EN)", "FrnM18(FR)"];
@@ -123,6 +123,10 @@ pub enum Act {
     Turn(i32),
     /// Near or far.
     Range,
+    /// The fight lasts (20000 life) or is fatal (the units' own life).
+    Fatal,
+    /// Blood, wounds and torn bodies on or off (render only).
+    Gore,
     Facing(i32),
     /// Plays clip `n` of the model's list on the unit.
     Clip(usize),
@@ -165,6 +169,12 @@ pub struct Inspector {
     pub turn: i32,
     /// How many units the nation's list has, as of the last placed scene.
     pub shown: usize,
+    /// The fight is fatal: nobody gets extra life.
+    fatal: bool,
+    /// The gore switch as the player set it (`None`: as the settings have it), and what
+    /// the 3D view draws now.
+    pub gore: Option<bool>,
+    pub gore_on: bool,
 }
 
 impl Default for Inspector {
@@ -189,6 +199,9 @@ impl Default for Inspector {
             fit: None,
             turn: 0,
             shown: 0,
+            fatal: false,
+            gore: None,
+            gore_on: true,
         }
     }
 }
@@ -255,6 +268,7 @@ impl Inspector {
             kind: world.catalog.get(kind).id.clone(),
             enemy: self.enemy,
             far: self.far,
+            fatal: self.fatal,
             dir: self.dir,
         })
     }
@@ -313,6 +327,11 @@ impl Editor {
                 return None;
             }
             Act::Range => i.far = !i.far,
+            Act::Fatal => i.fatal = !i.fatal,
+            Act::Gore => {
+                i.gore = Some(!i.gore_on);
+                return None;
+            }
             Act::Facing(d) => i.dir = i.dir.wrapping_add((d * 32) as u8),
             Act::Clip(n) => {
                 i.clip = i.clips.get(n).cloned();
@@ -334,7 +353,14 @@ impl Editor {
     /// Places the inspector's scene ([`Input::Inspect`]): what it placed before goes, the unit
     /// of type `kind` stands in the middle of the map facing `dir`, the enemy in front of it,
     /// and the unit attacks him. Returns the text for the status line.
-    pub(super) fn inspect_show(&mut self, world: &mut World, kind: &str, enemy: Enemy, far: bool, dir: u8) -> Vec<u8> {
+    pub(super) fn inspect_show(
+        &mut self,
+        world: &mut World,
+        kind: &str,
+        enemy: Enemy,
+        (far, fatal): (bool, bool),
+        dir: u8,
+    ) -> Vec<u8> {
         super::battle::undo(world, std::mem::take(&mut self.inspect.placed));
         (self.inspect.subject, self.inspect.target) = (None, None);
         let Some(kind) = find(world, kind) else { return format!("Unbekannter Typ {kind}").into_bytes() };
@@ -352,7 +378,9 @@ impl Editor {
                 dir.wrapping_add(128),
             );
             let u = &mut world.units[t.0 as usize];
-            (u.life, u.max_life) = (LIFE, LIFE);
+            if !fatal {
+                (u.life, u.max_life) = (LIFE, LIFE);
+            }
             u.no_search_victim = !enemy.fights();
             if enemy == Enemy::Down {
                 let leg = Injury {
@@ -364,7 +392,7 @@ impl Editor {
                 };
                 body::apply(&mut u.body, &leg);
             }
-            if enemy.fights() {
+            if enemy.fights() && !fatal {
                 let s = &mut world.units[subject.0 as usize];
                 (s.life, s.max_life) = (LIFE, LIFE);
             }
@@ -384,7 +412,7 @@ impl Editor {
         }
         let i = &mut self.inspect;
         (i.placed, i.subject, i.target) = (placed, Some(subject), target);
-        (i.enemy, i.far, i.dir, i.on, i.pending) = (enemy, far, dir, true, false);
+        (i.enemy, i.far, i.fatal, i.dir, i.on, i.pending) = (enemy, far, fatal, dir, true, false);
         // The view follows a replayed input too.
         if let Some(n) = (0..FIRST_EXTRA).find(|&n| kinds(world, n).contains(&kind)) {
             i.nation = n;
@@ -466,6 +494,22 @@ impl Editor {
             on: i.far,
             act: Act::Range,
         });
+        let fight = if i.fatal { "Kampf: toedlich" } else { "Kampf: endlos (20000 Leben)" };
+        out.push(Line::Button {
+            text: fight.into(),
+            id: "fatal".into(),
+            name: "Inspektor Kampf".into(),
+            on: i.fatal,
+            act: Act::Fatal,
+        });
+        let gore = if i.gore_on { "Blut und Wunden: an" } else { "Blut und Wunden: aus" };
+        out.push(Line::Button {
+            text: gore.into(),
+            id: "gore".into(),
+            name: "Inspektor Blut".into(),
+            on: i.gore_on,
+            act: Act::Gore,
+        });
         out.push(Line::Button {
             text: b"Neu aufstellen".to_vec(),
             id: "again".into(),
@@ -543,6 +587,8 @@ impl Editor {
             ["enemy", d] => Ok(Act::Enemy(sign(d)?)),
             ["facing", d] => Ok(Act::Facing(sign(d)?)),
             ["range"] => Ok(Act::Range),
+            ["fatal"] => Ok(Act::Fatal),
+            ["gore"] => Ok(Act::Gore),
             ["again"] => Ok(Act::Again),
             ["sim"] if !self.inspect.clips.is_empty() => Ok(Act::Sim),
             ["sim"] => Err(Reject::Hidden),
@@ -593,7 +639,7 @@ impl Editor {
                 }
                 Line::Text(text) => {
                     // The window's divider lies under the first four lines; the list stands below.
-                    y = y.max(OY + 80 + 2 * ROW + 4);
+                    y = y.max(OY + 80 + 2 * ROW + 4) + 2;
                     out.push(item(Rect::new(X0, y, W, ROW), text, String::new(), false, None));
                 }
             }
@@ -723,9 +769,11 @@ mod tests {
         let all = kinds(&w, 2);
         assert!(all.len() > 5, "England's units: {}", all.len());
         assert!(all.iter().all(|&k| !w.catalog.get(k).building));
-        let Some(Input::Inspect { kind, enemy, far, dir }) = e.inspect_act(&w, Act::Toggle) else { panic!("no input") };
-        assert_eq!((enemy, far, dir), (Enemy::None, false, 32));
-        e.inspect_show(&mut w, &kind, enemy, far, dir);
+        let Some(Input::Inspect { kind, enemy, far, fatal, dir }) = e.inspect_act(&w, Act::Toggle) else {
+            panic!("no input")
+        };
+        assert_eq!((enemy, far, fatal, dir), (Enemy::None, false, false, 32));
+        e.inspect_show(&mut w, &kind, enemy, (far, fatal), dir);
         assert!(e.inspect.on && e.inspect.subject.is_some() && e.inspect.target.is_none());
         assert_eq!(e.inspect.shown, all.len());
         let (high, wide) = e.inspect.fit.expect("the camera fits the first scene");
@@ -737,9 +785,9 @@ mod tests {
         // against an enemy on foot who stands still.
         let musketeer = all.iter().position(|&k| w.catalog.get(k).id == "EngM18(EN)").expect("EngM18");
         e.inspect.unit = musketeer;
-        let Some(Input::Inspect { kind, enemy, far, dir }) = e.inspect_act(&w, Act::Enemy(1)) else { panic!() };
+        let Some(Input::Inspect { kind, enemy, far, fatal, dir }) = e.inspect_act(&w, Act::Enemy(1)) else { panic!() };
         assert_eq!((kind.as_str(), enemy), ("EngM18(EN)", Enemy::Foot));
-        e.inspect_show(&mut w, &kind, enemy, far, dir);
+        e.inspect_show(&mut w, &kind, enemy, (far, fatal), dir);
         assert_eq!(w.units.iter().filter(|u| u.alive).count(), 2, "the first scene is gone");
         let (s, t) = (e.inspect.subject.unwrap().0 as usize, e.inspect.target.unwrap().0 as usize);
         assert_eq!((w.units[s].owner, w.units[t].owner), (0, 1));
@@ -751,6 +799,20 @@ mod tests {
         }
         assert!(w.units[t].alive && w.units[t].life < LIFE, "he was struck: {}", w.units[t].life);
         assert_eq!(w.units[s].life, life, "and did not hit back");
+        // A fatal fight: the enemy keeps his own life and falls.
+        let Some(Input::Inspect { kind, enemy, far, fatal, dir }) = e.inspect_act(&w, Act::Fatal) else { panic!() };
+        assert!(fatal);
+        e.inspect_show(&mut w, &kind, enemy, (far, fatal), dir);
+        let t = e.inspect.target.unwrap().0 as usize;
+        assert!(w.units[t].life < LIFE, "his own life: {}", w.units[t].life);
+        for _ in 0..3000 {
+            let cmds = e.before_step(&mut w);
+            w.step(&cmds);
+        }
+        assert!(!w.units[t].alive || w.units[t].death > 0, "he fell: life {}", w.units[t].life);
+        // The gore switch is the view's own: no input.
+        assert_eq!(e.inspect_act(&w, Act::Gore), None);
+        assert_eq!(e.inspect.gore, Some(false));
         // A clip is the view's own; the lists name it.
         e.inspect.clips = (0..25).map(|n| format!("CLIP{n}")).collect();
         assert_eq!(e.inspect_act(&w, Act::Clip(12)), None);
