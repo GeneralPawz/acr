@@ -218,6 +218,12 @@ pub enum Aim {
 /// the targets of `docs/melee.md` (`strike_view::target_point`, `clips.TARGET_DOWN`,
 /// `finish.TARGET_FINISH`). `None`: not a strike clip.
 pub fn aim_of(name: &str, mounted: bool, reach: f32, gun: bool) -> Option<Aim> {
+    aim_at(name, mounted, reach, gun, STANDING)
+}
+
+/// [`aim_of`] with the standing man `standing` m off (centre to centre): the type's own melee
+/// distance ([`distances`]).
+pub fn aim_at(name: &str, mounted: bool, reach: f32, gun: bool, standing: f32) -> Option<Aim> {
     let rest = name.strip_prefix("ATTACK")?;
     let suffix = rest.trim_start_matches(|c: char| c.is_ascii_digit());
     let tokens: Vec<&str> = suffix.split('_').filter(|t| !t.is_empty()).collect();
@@ -241,8 +247,8 @@ pub fn aim_of(name: &str, mounted: bool, reach: f32, gun: bool) -> Option<Aim> {
         }
     }
     let me = Vec3::ZERO;
-    let standing =
-        |h: StrikeHeight, what: &'static str| Aim::At(target_point(at(0.0, STANDING, 0.0), me, h, false, 0.0), h, what);
+    let to_standing =
+        |h: StrikeHeight, what: &'static str| Aim::At(target_point(at(0.0, standing, 0.0), me, h, false, 0.0), h, what);
     Some(if tokens.contains(&"FINISH") {
         Aim::At(at(FINISH[0], FINISH[1], FINISH[2]), StrikeHeight::Down, "finishing target (finish.TARGET_FINISH)")
     } else if tokens.contains(&"DOWN") {
@@ -265,11 +271,11 @@ pub fn aim_of(name: &str, mounted: bool, reach: f32, gun: bool) -> Option<Aim> {
             )
         }
     } else if tokens.contains(&"HIGH") {
-        standing(StrikeHeight::High, "standing man 1.67 m ahead, high (1.65 m)")
+        to_standing(StrikeHeight::High, "standing man, high (1.65 m)")
     } else if tokens.contains(&"LOW") {
-        standing(StrikeHeight::Low, "standing man 1.67 m ahead, low (0.7 m)")
+        to_standing(StrikeHeight::Low, "standing man, low (0.7 m)")
     } else {
-        standing(StrikeHeight::Mid, "standing man 1.67 m ahead, mid (1.15 m)")
+        to_standing(StrikeHeight::Mid, "standing man, mid (1.15 m)")
     })
 }
 
@@ -314,8 +320,24 @@ fn weapon_vertices(data: &ModelData, socket: usize, clip: &str) -> Vec<(usize, V
     out
 }
 
-/// Audits every clip of `data`. `Err`: why the model is skipped.
-pub fn audit(data: &ModelData) -> Result<Vec<Finding>, String> {
+/// The melee distances of the unit types (`assets/blender/data/melee_distance.json`, from
+/// `acr_sim::melee::strike_distance`): lower-case type id → `[distance, nearest, reach]` m.
+/// Types whose nations differ are left out.
+pub fn distances() -> BTreeMap<String, [f32; 3]> {
+    let text = include_str!("../../../../assets/blender/data/melee_distance.json");
+    let doc: serde_json::Value = serde_json::from_str(text).unwrap_or_default();
+    let mut out = BTreeMap::new();
+    for (id, v) in doc["units"].as_object().into_iter().flatten().filter(|(id, _)| !id.contains('(')) {
+        let m = |k: &str| v[k].as_f64().unwrap_or(0.0) as f32;
+        out.insert(id.to_ascii_lowercase(), [m("distance"), m("nearest"), m("reach")]);
+    }
+    out
+}
+
+/// Audits every clip of `data`; `melee`: the type's melee distances ([`distances`]: middle,
+/// nearest, reach; `None` keeps 1.67 m for the standing targets). `Err`: why the model is
+/// skipped.
+pub fn audit(data: &ModelData, melee: Option<[f32; 3]>) -> Result<Vec<Finding>, String> {
     if data.clips.is_empty() {
         return Err("no clips".into());
     }
@@ -417,7 +439,7 @@ pub fn audit(data: &ModelData) -> Result<Vec<Finding>, String> {
             w.tip.filter(|_| w.point).map(|t| (node_frame(&globals, t, Vec3::Y, &transform).0 - hand).length())
         });
         let gun = at_hit.is_some_and(|w| w.muzzle || w.tip.is_some_and(|t| data.nodes[t].name.contains("arrow")));
-        match aim_of(&clip.name, mounted, reach.unwrap_or(REACH), gun) {
+        match aim_at(&clip.name, mounted, reach.unwrap_or(REACH), gun, melee.map_or(STANDING, |m| m[0])) {
             None | Some(Aim::Not(_)) => {}
             Some(Aim::At(target, height, what)) => {
                 let finding = |value, result, note: String| Finding {
@@ -439,6 +461,26 @@ pub fn audit(data: &ModelData) -> Result<Vec<Finding>, String> {
                     None
                 };
                 let measured = reach.filter(|r| *r >= HIDDEN).and_then(|_| probe(data, ci, HIT_FRAME, target, height));
+                // A standing man: also from the nearest and the furthest the type strikes from.
+                let standing = height != StrikeHeight::Down;
+                let ends = match melee.filter(|_| standing && measured.is_some()) {
+                    Some(m) => {
+                        let off = |d: f32| {
+                            let shifted = Vec3::new(target.x, target.y - (d - m[0]), target.z);
+                            probe(data, ci, HIT_FRAME, shifted, height).map_or(0.0, |(_, l, _)| (l - shifted).length())
+                        };
+                        format!(
+                            "; man at {:.2} m (the type's melee distance; with the layer {:.2} m off at {:.2} m, {:.2} m off at {:.2} m)",
+                            m[0],
+                            off(m[1]),
+                            m[1],
+                            off(m[2]),
+                            m[2]
+                        )
+                    }
+                    None if standing => "; man at 1.67 m (no melee distance for this model)".to_string(),
+                    None => String::new(),
+                };
                 out.push(match measured {
                     Some((alone, layered, _)) => {
                         let (a, l) = ((alone - target).length(), (layered - target).length());
@@ -453,7 +495,7 @@ pub fn audit(data: &ModelData) -> Result<Vec<Finding>, String> {
                                 (true, Some(_)) => "info",
                             },
                             format!(
-                                "clip alone {a:.2} m ({} {:.2} m); {what}; point {:.2} m from the hand{}",
+                                "clip alone {a:.2} m ({} {:.2} m); {what}{ends}; point {:.2} m from the hand{}",
                                 if short >= 0.0 { "short by" } else { "past by" },
                                 short.abs(),
                                 reach.unwrap_or(0.0),
@@ -688,13 +730,48 @@ pub fn summary(rows: &[(String, Finding)], skipped: &[(String, String)], source:
     );
     let _ = writeln!(
         s,
-        "Limits: the weapons checked are the right hand's (`socket.hand_r`, `socket.blade_r`, `socket.club_r`) and pointed ones in the left (`socket.hand_l` with a `socket.tip`; no bows, no ramrods); reach is measured for the right hand only; `gear` sees only parts that are their own node (skinned gear such as scabbards and a bayonet modelled into the musket's mesh cannot come loose offline); the weapon is a line (no thickness) and the body is capsules of the ragdoll's radii (trunk {BODY_RADIUS:.2} m is the strike target's, the capsules use 0.12–0.13 m), so cloth and gear are not counted; reach targets are the doc's standard ones, straight ahead (a rider's standing target too: an assumption, the doc gives none); a plain `ATTACK<n>` of a weapon without a muzzle or an arrow is measured as melee but not judged (`info`), and so is a rider's blow at a standing man; `body` and `grip` measure the clip alone, without the aiming layer.\n"
+        "Limits: the weapons checked are the right hand's (`socket.hand_r`, `socket.blade_r`, `socket.club_r`) and pointed ones in the left (`socket.hand_l` with a `socket.tip`; no bows, no ramrods); reach is measured for the right hand only; `gear` sees only parts that are their own node (skinned gear such as scabbards and a bayonet modelled into the musket's mesh cannot come loose offline); the weapon is a line (no thickness) and the body is capsules of the ragdoll's radii (trunk {BODY_RADIUS:.2} m is the strike target's, the capsules use 0.12–0.13 m), so cloth and gear are not counted; a standing man is at the type's own melee distance (the sim's rule, `acr_sim::melee::strike_distance`), straight ahead (a rider's too: an assumption); the man on the ground and the finishing target are the clips' own (2.0 m and 0.9 m); a plain `ATTACK<n>` of a weapon without a muzzle or an arrow is measured as melee but not judged (`info`), and so is a rider's blow at a standing man; `body` and `grip` measure the clip alone, without the aiming layer.\n"
     );
     let _ = writeln!(s, "## Counts\n\n| Check | Rows | Fail | Pass | Info | n/a |\n|---|---|---|---|---|---|");
     let checks = ["reach", "body", "grip_right", "grip_left", "gear"];
     for c in checks {
         let n = |r: &str| rows.iter().filter(|(_, f)| f.check == c && (r.is_empty() || f.result == r)).count();
         let _ = writeln!(s, "| `{c}` | {} | {} | {} | {} | {} |", n(""), n("fail"), n("pass"), n("info"), n("n/a"));
+    }
+    // Reach at a standing man by the type's melee distance.
+    let mut groups: BTreeMap<String, [usize; 3]> = BTreeMap::new();
+    for (_, f) in rows.iter().filter(|(_, f)| f.check == "reach" && f.value.is_some()) {
+        let Some(at) = f.note.split("man at ").nth(1).and_then(|r| r.split(" m").next()) else { continue };
+        let g = groups.entry(at.to_string()).or_default();
+        g[0] += 1;
+        g[1] += usize::from(f.result == "fail");
+        g[2] += usize::from(f.result == "info" && f.value.is_some_and(|v| v > REACH_MAX));
+    }
+    let _ = writeln!(
+        s,
+        "\n## Reach at a standing man, by melee distance\n\nThe man stands at the type's own melee distance (`assets/blender/data/melee_distance.json`, the middle of the distances the type strikes from; the note of each row has the nearest and the furthest too).\n\n| Man at (m) | Clips | Fail | Off but not judged (riders, `ATTACK<n>`) |\n|---|---|---|---|"
+    );
+    for (at, n) in groups {
+        let _ = writeln!(s, "| {at} | {} | {} | {} |", n[0], n[1], n[2]);
+    }
+    // The clips alone at a standing man, worst first.
+    let alone = |f: &Finding| f.note.strip_prefix("clip alone ").and_then(|r| r.split(' ').next()?.parse::<f32>().ok());
+    let mut misses: Vec<(f32, &(String, Finding))> = rows
+        .iter()
+        .filter(|(_, f)| f.check == "reach" && f.note.contains("man at ") && !f.note.contains("ATTACK<n>"))
+        .filter_map(|r| Some((alone(&r.1)?, r)))
+        .collect();
+    misses.sort_by(|a, b| b.0.total_cmp(&a.0));
+    let _ = writeln!(
+        s,
+        "\n## Reach at a standing man: the clip alone, worst 40\n\n{} of {} strike clips at a standing man end more than {REACH_MAX} m from him without the aiming layer, {} more than 0.5 m. The layer column is `strike_view::probe` at full weight (step in, trunk, arm); the game may apply less.\n\n| Model | Clip | Clip alone (m) | With the layer (m) | Result | Note |\n|---|---|---|---|---|---|",
+        misses.iter().filter(|m| m.0 > REACH_MAX).count(),
+        misses.len(),
+        misses.iter().filter(|m| m.0 > 0.5).count()
+    );
+    for (a, (m, f)) in misses.iter().take(40) {
+        let _ =
+            writeln!(s, "| {m} | `{}` | {a:.2} | {:.2} | {} | {} |", f.clip, f.value.unwrap_or(0.0), f.result, f.note);
     }
     for (title, group) in
         [("reach", &checks[..1]), ("body (through)", &checks[1..2]), ("grip", &checks[2..4]), ("gear", &checks[4..])]
@@ -824,6 +901,7 @@ mod tests {
             .filter(|p| p.extension().is_some_and(|e| e == "glb"))
             .collect();
         files.sort();
+        let table = distances();
         let (mut rows, mut skipped) = (Vec::new(), Vec::new());
         for path in files {
             let name = path.file_stem().unwrap().to_string_lossy().to_string();
@@ -833,7 +911,7 @@ mod tests {
             let found = std::fs::read(&path)
                 .map_err(|e| e.to_string())
                 .and_then(|bytes| ModelData::from_glb(&bytes).map_err(|e| format!("does not load: {e}")))
-                .and_then(|data| audit(&data));
+                .and_then(|data| audit(&data, table.get(&name.to_ascii_lowercase()).copied()));
             match found {
                 Ok(list) => rows.extend(list.into_iter().map(|f| (name.clone(), f))),
                 Err(why) => skipped.push((name, why)),

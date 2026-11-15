@@ -147,6 +147,78 @@ def left_on_shaft(arm_obj, spec, along=0.30, drop=0.45):
     return _solve(arm_obj, dict(spec), {"l": (goal, goal + Vector((0.0, 0.0, -drop)))})
 
 
+def _mix(s0, s1, t):
+    """The spec a share `t` from `s0` to `s1`: angle triples and "world" entries blended."""
+    def lerp(a, b):
+        return tuple(p + (q - p) * t for p, q in zip(a, b))
+
+    out = {}
+    for k in set(s0) | set(s1):
+        a, b = s0.get(k), s1.get(k)
+        if isinstance(a, dict) or isinstance(b, dict):
+            a, b = a or {}, b or {}
+            out[k] = {n: lerp(a.get(n, b.get(n)), b.get(n, a.get(n))) for n in set(a) | set(b)}
+        elif isinstance(a if a is not None else b, (tuple, list)):
+            out[k] = lerp(a if a is not None else (0.0, 0.0, 0.0), b if b is not None else (0.0, 0.0, 0.0))
+        else:
+            out[k] = a if a is not None else b
+    return out
+
+
+ON_SHAFT = 0.12  # m: a left hand socket this near the musket's axis at a key holds the musket
+SOCKET = "socket.hand_r"
+
+
+def dense_hold(arm_obj, keys, out=0.0):
+    """Grip mode: `keys` ([(frame, solved spec)]) with every frame between two keys keyed
+    (#509): the angles blended, and where the left hand is on the musket at both keys, the
+    left arm solved again onto the shaft (its place along it blended), so it does not
+    leave the musket while the exporter's interpolation of the arm angles carries it
+    (0.3-0.45 m off in the bayonet's blows down). `out` (m): the right hand's grip is led
+    on the straight line between the keys, bulged `out` to the right at mid-way, and the
+    right arm solved for it: the recovery of the finishing blow swung the butt through the
+    chest. Other rigs come back unchanged."""
+    from . import grips
+
+    if not arm_obj.get("acr_grip") or "socket.hand_r" not in arm_obj.get("acr_grip_held", ()):
+        return keys
+    arm = arm_obj.pose.bones
+
+    def state(spec):
+        am.pose(arm_obj, spec)
+        o, z = grips.item_axis(arm_obj, "socket.hand_r")
+        v = arm["socket.hand_l"].head - o
+        along = v.dot(z)
+        return o, along, (v - z * along).length
+
+    res = [keys[0]]
+    for (f0, s0), (f1, s1) in zip(keys, keys[1:]):
+        if f1 - f0 > 1 and s0 is not s1:
+            g0, a0, d0 = state(s0)
+            g1, a1, d1 = state(s1)
+            # A musket placed in armature space at either key ("world_loc", `place`) is
+            # placed on every frame between, the right hand solved onto its grip.
+            placed = any(SOCKET in s.get("world_loc", {}) for s in (s0, s1))
+            for f in range(f0 + 1, f1):
+                t = (f - f0) / (f1 - f0)
+                t = t * t * (3.0 - 2.0 * t)
+                spec = _mix(s0, s1, t)
+                if out or placed:
+                    g = g0.lerp(g1, t) + Vector((-out * math.sin(math.pi * t), 0.0, 0.0))
+                    if placed:
+                        spec["world_loc"] = dict(spec.get("world_loc") or {}, **{SOCKET: tuple(g)})
+                    am.pose(arm_obj, spec)
+                    spec = _solve(arm_obj, spec, {"r": (g, arm["upperarm_r"].head + Vector((-0.30, 0.15, -0.30)))})
+                if d0 < ON_SHAFT and d1 < ON_SHAFT:
+                    am.pose(arm_obj, spec)
+                    o, z = grips.item_axis(arm_obj, "socket.hand_r")
+                    goal = o + z * (a0 + (a1 - a0) * t)
+                    spec = _solve(arm_obj, spec, {"l": (goal, goal + Vector((0.0, 0.0, -0.45)))})
+                res.append((f, spec))
+        res.append((f1, s1))
+    return res
+
+
 # Contacts of the shouldered musket, measured (m2-aim-hd): the butt plate against the man's
 # surface (`butt_gap`) and the right wrist's bend (`wrist_deg`), for `contacts`.
 BUTT_PLATE_M = 0.012  # m: the musket's vertices this near its rear end are the butt plate

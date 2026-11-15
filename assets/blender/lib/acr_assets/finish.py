@@ -167,9 +167,11 @@ def musket_clips(arm_obj, md, stand):
         return {}
     n = cl.md_frames(md["ATTACK"])
     reach = MUSKET_REACH
-    grip = cl.add(TARGET_FINISH, cl.axis(MUSKET_DOWN), -reach)
-    hit = aiming.place(arm_obj, _with(_bare(stand), world={"socket.hand_r": MUSKET_DOWN}, **OVER), grip, left=0.40)
-    up_r = (146, 0, 0)
+    # Beside the head (`clips.beside`, #509): in the centre plane the butt end passed through
+    # the bent head at the blow.
+    grip, down_r = cl.beside(TARGET_FINISH, MUSKET_DOWN[0], reach, MUSKET_SIDE)
+    hit = aiming.place(arm_obj, _with(_bare(stand), world={"socket.hand_r": down_r}, **OVER), grip, left=0.40)
+    up_r = (146, 0, down_r[2])
     up_grip = cl.add(grip, (0, 0.12, 0.28))
     up = aiming.place(arm_obj, _with(_bare(stand), world={"socket.hand_r": up_r}, **RAISE), up_grip, left=0.40)
     keys = rig.clip_keys(n, finish_keys(n, up, hit, stand))
@@ -179,6 +181,7 @@ def musket_clips(arm_obj, md, stand):
 # The musket's grip (`socket.hand_r`) to its bayonet's point (`socket.muzzle` + the
 # bayonet), as the strike layer reads it on EngM18 (docs/melee.md: 1.44 m).
 MUSKET_REACH = 1.44
+MUSKET_SIDE = 0.26  # m: the grip right of the target's line in the finishing blow
 
 
 def _bare(pose):

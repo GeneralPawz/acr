@@ -351,9 +351,36 @@ after `aim`; the test `probe_clips` prints it for `ACR_PROBE_MODELS` (a folder o
 and `ACR_PROBE` (`model:clip:frame:right,fwd,up;...`, metres from the attacker's ground
 point); without the variables it does nothing.
 
-- **Melee distance** (driver logs, `ACR_STRIKE_DEBUG` now logs `victim at`): riders strike a
-  man on the ground at 1.7–2.0 m (centre to centre: PueVsdA 1.9, EngD18 1.7, also when
-  they ride in from 5 m); musketeers fence at 1.67–1.73 m. The victim is straight ahead.
+- **Melee distance** (#511; this replaces the earlier "1.67–2.0 m" from driver logs). It is
+  not one number. The sim's rule (`combat::attack_link_aim`, the original's `AttackObjLink`
+  0x51bcaf, step (D); one home for it: `acr_sim::melee::strike_distance`): at the end of an
+  animation a man starts his blow when the distance to the victim (centre to centre,
+  `trig::norma`: exact along the axes, up to 12 % over between them) is below the melee
+  index's `ATTACK_RADIUS` max plus the victim's `ADDSHOTRADIUS` (0 for a man) and not below
+  `ATTACK_RADIUS` min (closer he backs off, `too_close`, 0x520689); else he walks one cycle
+  (`motion::stride`) towards the victim and decides again. So a man who walks up strikes
+  from his **reach** minus up to one walking cycle: EngM18 55–80 px (1.83–2.67 m), EngPik
+  75–100 px (2.50–3.33 m), MayPik 48–80 px, DelPik 40–80 px, mounted officers 20/33–60 px.
+  The blow lands at the active frame when the distance is at most `ATTACK_RADIUS` max +
+  `ADDRADIUS` (step (A)). A man on the ground is finished from `FINISH_REACH` (27 px, the
+  finishing clips' 0.9 m; hit-locations rule, on foot); riders keep their reach.
+  - **The table:** `assets/blender/data/melee_distance.json`: type id without the nation →
+    `distance` (the middle), `nearest`, `reach` in metres, for the Blender pipeline and the
+    clip audit. Generated and checked by the ignored test `the_melee_table_matches`
+    (`crates/acr-game/src/ingame/editor/inspect.rs`; `ACR_MELEE_TABLE=write` rewrites it,
+    `ACR_MELEE_MEASURED=<csv>` prints the rule against distances measured in the game).
+  - **Checked against the running game** (`ACR-analysis/clip-audit/reach/sim_distance.csv`:
+    the inspector's scene, the enemy 110 px off at direction 32, first blow): the rule's
+    walk-up gives EngPik 85.2 px (measured 85.6), EngM18 60.5 (60.8), MayPik 46.3 (45.3),
+    DelPik 70.4 (70.0), IncPik 78.1 (77.1); 54 of the 97 measured rows within 1.2 px;
+    AtcLut, IncLut, FrnBuk and EngTapDragon 2–5 px off.
+    Off: the native musket men (S15, Vog, Str of Del/Hur/Iro/Pue: measured 53.7, rule
+    74.2: they walk one cycle more, not explained yet), riders (6–27 px further out than
+    the rule: sampled while still moving), and types whose first attack was a throw or a
+    shot (`ATTACK1`), which is no melee blow.
+  - **The strike clips do not reach that far:** they were built for a man at 1.67 m. The
+    clip audit (docs/testing.md) now measures each model at its own distance: EngPik's
+    `ATTACK` alone ends 1.23 m short of a man at 2.90 m.
 - **The rider's rig was off.** The layer's joints are skeleton H's (`Rig::joint`); a rider's
   model is bound elsewhere (seated), so his rig hand lay ~0.3–0.5 m behind and 0.2–0.4 m
   below the real hand socket (musketeer: 0.06 m). The layer corrected that phantom error and
@@ -617,11 +644,18 @@ IroTam, MayVoi, DelPik, SpnS15, FrnBuk (old ones in `showcase/backup-finish/`).
   shoulder, `melee6/sheet_fence.png` frames 10–20).
 - **Club from the saddle:** fixed in m2-cav17 (below) for the cut down right; the cut down
   left still falls 0.39 m short with the clip alone (0.17 with the layer).
-- **Drummer's stick jab** (EngB18 `ATTACK_THRUST_*`): `line.support_clips` passes `melee="sword"`
-  to `clips.unit_clips`, which solves with `SWORD_TIP` (0.86 m) for a 0.42 m stick (0.58
-  short with the clip alone). The fix is a `tip` argument through `unit_clips` to
-  `sword_strikes` with `held.drumstick`'s tip, and an EngB18 rebuild: line.py and the
-  drummers are not cavalry, so m2-cav17 left it.
+- **Drummer's stick jab** (EngB18, FrnB18 `ATTACK_THRUST_*`, `ATTACK_CUT_*`): `line.support_clips`
+  still passes `melee="sword"` to `clips.unit_clips`, which solves the standing blows with
+  `SWORD_TIP` (0.86 m) for a stick whose point is 0.28 m from the hand (0.58 m short with the clip
+  alone; the strike layer closes it: clip audit #509, 0.02-0.09 m). The finishing blow is fixed
+  (#509): `finish.finish_clips(n, "knife", clips.STICK)`, down on one knee, the stick jabbed down
+  (0.47 -> 0.06 m with the layer). Open: a `tip` argument through `unit_clips` for the standing blows.
+- **Archers' bow strike** (AtcLut, MayLut, `meso.strikes` `bow`): the clip is solved for the bow's
+  upper tip in the LEFT hand, but `strike_view::weapons` and the clip audit read the right hand's
+  sockets only, there the arrow (point 0.72 m from the hand): reach 0.93-1.01 m off. Needs either a
+  left-hand weapon in `strike_view` or another blow (the arrow hidden and a right-hand weapon).
+- **Musketeers, stance changes** (EngM18 and the line): `PATTACK1` / `UATTACK1` cross the left
+  upper leg with the musket for one frame (0.04 m deep) between the stand and the aim's mid key.
 - **Native and plains down hacks** still use `native.club_down` (1.8 m, 0.24 short at
   frame 2); the shared `club_strikes` reaches 2.0 m with the club's point vector.
 - **Lance through the rider:** solved clear in Blender (hand 0.71 m right, 3° out) but only
