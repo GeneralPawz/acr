@@ -116,7 +116,7 @@ fn standing_threats_come_first() {
     let s = w.spawn(pik, 1, Pos::from_pixels(2140, 2010), 128).0 as usize;
     for _ in 0..400 {
         w.step(&[]);
-        if !w.hits.is_empty() {
+        if w.hits.iter().any(|h| h.victim == c as u32 || h.victim == s as u32) {
             break;
         }
     }
@@ -298,7 +298,8 @@ fn finishing_vitals_by_kind() {
     assert!(d > f64::from(FINISH_REACH) + 3.0, "the rider keeps his reach: {d} px");
 }
 
-/// Two men on their feet fence as before: no finishing blows, struck from the weapon's reach.
+/// Two men on their feet fence: no finishing blows, struck from the strike stance (not from
+/// over the man, as a finishing blow is).
 #[test]
 fn a_standing_duel_is_unchanged() {
     let (mut w, pik, _) = setup(ON);
@@ -315,5 +316,139 @@ fn a_standing_duel_is_unchanged() {
     let first = blows[0];
     assert!(!first.strike.expect("a strike").finishing, "{first:?}");
     let d = f64::from(first.dir.0).hypot(f64::from(first.dir.1));
-    assert!(d > f64::from(FINISH_REACH) + 3.0, "from the pike's reach: {d} px");
+    assert!(d > f64::from(FINISH_REACH) + 3.0, "from the stance: {d} px");
+}
+
+/// The strike stance (#511): pikemen, a lancer and a man who does not look for enemies
+/// (he stands until he is struck).
+fn stance_setup(rules: Rules) -> (World, TypeId, TypeId, TypeId) {
+    let mut c = Catalog::new();
+    let pik = c.add(ObjectType::from_def("Pik(EN)", &UnitDef::parse(PIKEMAN.as_bytes())));
+    let lancer = PIKEMAN
+        .replace("NAME Pik", "NAME SpLancer")
+        .replace("WEAPONKIND 0 PIKA", "WEAPONKIND 0 MECH\r\nUSAGE FASTHORSE");
+    let lan = c.add(ObjectType::from_def("SpLancer(SP)", &UnitDef::parse(lancer.as_bytes())));
+    let post = PIKEMAN.replace("NAME Pik", "NAME Post").replace("SEARCH_ENEMY_RADIUS 700", "SEARCH_ENEMY_RADIUS 0");
+    let post = c.add(ObjectType::from_def("Post(FR)", &UnitDef::parse(post.as_bytes())));
+    c.set_weapon_kinds(&weapon_kinds(NRES));
+    let mut w = World::new(Arc::new(MapGrid::open(1)), Arc::new(c), Arc::new(Formations::default()));
+    w.rules = rules;
+    (w, pik, lan, post)
+}
+
+/// How far the attacker stood from his victim at the blow (px, centre to centre).
+fn reach_of(h: &acr_sim::combat::HitRecord) -> f64 {
+    f64::from(h.dir.0).hypot(f64::from(h.dir.1))
+}
+
+/// `kind` walks up to a man standing `start` px off towards `dir` and strikes him: the
+/// distance between them at the first blow, and the world.
+fn first_blow(rules: Rules, rider: bool, start: f64, dir: u8, ground: bool) -> (f64, World, usize) {
+    let (mut w, pik, lan, post) = stance_setup(rules);
+    let ang = f64::from(dir) * std::f64::consts::TAU / 256.0;
+    let a = w.spawn(if rider { lan } else { pik }, 0, Pos::from_pixels(2000, 2000), dir).0 as usize;
+    let at = Pos::from_pixels(2000 + (ang.cos() * start).round() as i32, 2000 + (ang.sin() * start).round() as i32);
+    let v = w.spawn(post, 1, at, dir.wrapping_add(128)).0 as usize;
+    w.units[v].life = 5000;
+    w.units[a].stand_ground = ground;
+    for _ in 0..600 {
+        w.step(&[]);
+        if let Some(d) = w.hits.iter().find(|h| h.victim == v as u32).map(reach_of) {
+            return (d, w, a);
+        }
+    }
+    panic!("no blow from {start} px, dir {dir}");
+}
+
+/// With the rule a man on foot strikes from his stance, wherever he started; without it
+/// the distance depends on where he started (a walking cycle at a time).
+#[test]
+fn a_foot_attacker_strikes_from_his_stance() {
+    use acr_sim::melee::{STRIKE_STANCE, STRIKE_TOL, strike_stance};
+    let (w, pik, lan, _) = stance_setup(ON);
+    assert_eq!(strike_stance(w.catalog.get(pik), 0), Some(STRIKE_STANCE));
+    assert_eq!(strike_stance(w.catalog.get(lan), 0), Some(STRIKE_STANCE), "the table; riders are held by the rule");
+    let tol = f64::from(STRIKE_TOL) + 1.0;
+    let mut old = Vec::new();
+    for dir in [0u8, 32, 64, 100, 128, 181, 224] {
+        for start in [60.0, 75.0, 90.0, 110.0, 133.0, 170.0] {
+            let (d, w, a) = first_blow(ON, false, start, dir, false);
+            assert!((d - f64::from(STRIKE_STANCE)).abs() <= tol, "from {start} px, dir {dir}: {d:.1} px");
+            assert_eq!(w.units[a].body.stance_steps, 0, "the patience is back with the blow");
+            old.push(first_blow(Rules::default(), false, start, dir, false).0);
+        }
+    }
+    let (lo, hi) = old.iter().fold((f64::MAX, 0f64), |(lo, hi), &d| (lo.min(d), hi.max(d)));
+    assert!(hi - lo > 2.0 * tol && hi > f64::from(STRIKE_STANCE) + tol, "the original's band: {lo:.1} to {hi:.1} px");
+}
+
+/// A man standing ground strikes from where he is; a rider keeps the original's distance.
+#[test]
+fn standing_ground_and_riders_keep_their_distance() {
+    let (d, ..) = first_blow(ON, false, 85.0, 0, true);
+    assert!((d - 85.0).abs() < 1.0, "standing ground: {d:.1} px");
+    for (start, dir) in [(110.0, 0u8), (133.0, 32), (170.0, 200)] {
+        let (on, ..) = first_blow(ON, true, start, dir, false);
+        let (off, ..) = first_blow(Rules::default(), true, start, dir, false);
+        assert!((on - off).abs() < 0.01, "a rider from {start} px: {on:.1} px with the rule, {off:.1} without");
+    }
+}
+
+/// Two men attacking each other both end at the stance: the one with the lower index
+/// steps, the other waits, nobody is pushed.
+#[test]
+fn two_men_at_each_other_both_stand_at_the_stance() {
+    use acr_sim::melee::{STRIKE_STANCE, STRIKE_TOL};
+    for (start, dir) in [(90, 0u8), (120, 0), (150, 128), (133, 32)] {
+        let (mut w, pik, ..) = stance_setup(ON);
+        let ang = f64::from(dir) * std::f64::consts::TAU / 256.0;
+        let a = w.spawn(pik, 0, Pos::from_pixels(2000, 2000), dir).0 as usize;
+        let (x, y) = ((ang.cos() * f64::from(start)).round() as i32, (ang.sin() * f64::from(start)).round() as i32);
+        let b = w.spawn(pik, 1, Pos::from_pixels(2000 + x, 2000 + y), dir.wrapping_add(128)).0 as usize;
+        w.units[a].life = 50000;
+        w.units[b].life = 50000;
+        let mut seen = [None, None];
+        for _ in 0..800 {
+            w.step(&[]);
+            for h in &w.hits {
+                let k = usize::from(h.victim == a as u32);
+                seen[k].get_or_insert(reach_of(h));
+            }
+            if seen.iter().all(Option::is_some) {
+                break;
+            }
+        }
+        for (k, d) in seen.iter().enumerate() {
+            let d = d.unwrap_or_else(|| panic!("man {k} never struck (from {start} px)"));
+            assert!(
+                (d - f64::from(STRIKE_STANCE)).abs() <= f64::from(STRIKE_TOL) + 1.0,
+                "from {start} px, dir {dir}: man {k} struck from {d:.1} px"
+            );
+        }
+    }
+}
+
+/// The rule is deterministic, and without it no man ever spends patience (the tick-by-tick
+/// state is the original's: the pinned hashes in `tests/wounds.rs` and `tests/plough.rs`).
+#[test]
+fn the_stance_is_deterministic_and_off_without_the_rule() {
+    let run = |rules: Rules| {
+        let (mut w, pik, ..) = stance_setup(rules);
+        for n in 0..4 {
+            w.spawn(pik, 0, Pos::from_pixels(2000, 2000 + 40 * n), 0);
+            w.spawn(pik, 1, Pos::from_pixels(2130, 2010 + 40 * n), 128);
+        }
+        let mut spent = false;
+        for _ in 0..400 {
+            w.step(&[]);
+            spent |= w.units.iter().any(|u| u.body.stance_steps != 0);
+        }
+        (w.state_hash(), spent)
+    };
+    let (on, spent) = run(ON);
+    assert_eq!(run(ON).0, on);
+    assert!(spent, "men step to their stance");
+    let (off, spent) = run(Rules::default());
+    assert!(!spent);
+    assert_ne!(on, off);
 }

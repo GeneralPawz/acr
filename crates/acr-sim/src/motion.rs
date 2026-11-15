@@ -620,6 +620,12 @@ fn motion_handler(
 /// One step towards direction `d` outside the motion handler (0x50e4b2): `back` walks away
 /// from `d` while still facing it. A step into a taken or blocked cell stands instead.
 pub(crate) fn step(world: &mut World, i: usize, d: u8, back: bool) {
+    step_rate(world, i, d, back, 16);
+}
+
+/// [`step`] with the step scaled by `rate`/16 (`TryToMove`'s rate): the fine step to a strike
+/// stance (hit-locations rule, not in the original: `docs/melee.md`, The strike stance).
+pub(crate) fn step_rate(world: &mut World, i: usize, d: u8, back: bool, rate: i32) {
     let catalog = world.catalog.clone();
     let World { units, occupancy, map, random, .. } = world;
     let u = &mut units[i];
@@ -630,7 +636,8 @@ pub(crate) fn step(world: &mut World, i: usize, d: u8, back: bool) {
     let md = if back { d.wrapping_add(128) } else { d };
     let lx = u.lx;
     let nst = t.motion_frames() >> SPEED_SH;
-    let end = Pos::new(u.pos.x + nst * (t.step_dx(md) << SPEED_SH), u.pos.y + nst * (t.step_dy(md) << SPEED_SH));
+    let (odx, ody) = (((t.step_dx(md) << SPEED_SH) * rate) >> 4, ((t.step_dy(md) << SPEED_SH) * rate) >> 4);
+    let end = Pos::new(u.pos.x + nst * odx, u.pos.y + nst * ody);
     let (xf, yf) = Unit::cell_of(end, lx);
     occupancy.clr_bar(u.cell.0, u.cell.1, lx);
     if occupancy.check_bar(xf, yf, lx, lx) || map.land.check_bar(xf, yf, lx, lx) {
@@ -639,7 +646,7 @@ pub(crate) fn step(world: &mut World, i: usize, d: u8, back: bool) {
         return;
     }
     u.vel = (0, 0);
-    try_to_move(u, t, &map.land, random, md, 16);
+    try_to_move(u, t, &map.land, random, md, rate);
     if u.vel != (0, 0) {
         u.cell = (xf, yf);
     }
