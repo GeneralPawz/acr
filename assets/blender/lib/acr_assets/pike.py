@@ -7,7 +7,8 @@ stockings and shoes), with the period's kit registered here:
 - hats: `pike_broad` (broad-brimmed felt, the brim cocked up on the left), `pike_morion`
   (combed steel helmet, brim turned up front and back), `pike_pot` (the English pikeman's
   pot: a round skull with a broad sloping brim);
-- gear: `pike_corselet` (back and breast with a skirt of tassets, rigid on the trunk),
+- gear: `pike_corselet` (`armour.corslet`: back and breast rigid on `spine1`, tassets of
+  lames hinged between it and the thighs, in painted steel, key `plate`),
   `pike_apostles` (the bandolier's powder charges, the "twelve apostles", hung on the
   `belt_l` strap), `pike_match` (the coiled slow match in the left hand, the lit end glowing);
   the sword on its baldric is `belt_r` and officers' `off_scabbard`.
@@ -29,6 +30,7 @@ import bpy
 from mathutils import Matrix, Vector
 
 from . import armature as am
+from . import armour
 from . import clips as cl
 from . import crawl, drape, faces, frontier, gear, heads, held, line, line_kit, officers, outfit, poses, registry, rig  # noqa: F401
 from . import garments as gm
@@ -51,6 +53,7 @@ BLADE = "socket.blade_r"
 
 registry.material("match", "linen", fallback=(0.55, 0.45, 0.30))
 registry.material("armour", "metal", fallback=(0.50, 0.51, 0.53))
+STEEL_HATS = ("pike_morion", "pike_pot")
 
 
 # -- hats ----------------------------------------------------------------------------------
@@ -115,54 +118,6 @@ def _front_y(p, x, z, dz=0.03, dx=0.03):
     return float(sel[:, 1].min()) if len(sel) else -0.14
 
 
-def _corselet(ch, name, s):
-    """Back and breast over the coat (fitted per angle to the draped cloth between 1.00
-    and 1.42 m, the arms left out), a peascod ridge in front, and four tassets hanging
-    over the thighs (rigid: breast on `spine1`, tassets on `hips`)."""
-    p = officers._cloth_points(ch)
-    rings = []
-    zs = (1.00, 1.08, 1.18, 1.28, 1.36, 1.42)
-    n = 24
-    for z in zs:
-        cy, radii = officers._band(p, z - 0.03, z + 0.03, n=n, out=0.012)
-        rings.append((z, cy, radii))
-    bm = bmesh.new()
-    vs = []
-    for z, cy, radii in rings:
-        ring = []
-        for i in range(n):
-            t = -math.pi + 2 * math.pi * i / n
-            r = radii[i]
-            front = max(0.0, -math.sin(t))
-            r += 0.012 * front ** 4 * (1.0 if z < 1.2 else 0.5)  # the ridge
-            ring.append(bm.verts.new((math.cos(t) * r, cy + math.sin(t) * r, z)))
-        vs.append(ring)
-    for a, b in zip(vs, vs[1:]):
-        for i in range(n):
-            j = (i + 1) % n
-            bm.faces.new((a[i], a[j], b[j], b[i]))
-    breast = gear.from_bm(bm, f"{name}.corselet")
-    gear.rigid(breast, ch.arm, "spine1", Matrix.Identity(4))
-    ch.add("gear", breast, "armour")
-    # Tassets: two plates each side of the front, flaring out from the waist.
-    z0, cy, radii = rings[0]
-    bm = bmesh.new()
-    for side in (-1, 1):
-        for k, (a0, a1) in enumerate(((-100, -70), (-70, -40))):
-            t0, t1 = math.radians(a0), math.radians(a1)
-            if side < 0:
-                t0, t1 = math.radians(-180 - a1), math.radians(-180 - a0)
-            pts = []
-            for t, z, out in ((t0, z0 + 0.01, 0.0), (t1, z0 + 0.01, 0.0), (t1, z0 - 0.24, 0.05), (t0, z0 - 0.24, 0.05)):
-                i = int(round((t + math.pi) / (2 * math.pi) * n)) % n
-                r = radii[i] + 0.004 + out
-                pts.append(Vector((math.cos(t) * r, cy + math.sin(t) * r, z)))
-            officers._two_sided(bm, pts)
-    tassets = gear.from_bm(bm, f"{name}.tassets")
-    gear.rigid(tassets, ch.arm, "hips", Matrix.Identity(4))
-    return ch.add("gear", tassets, "armour")
-
-
 def _apostles(ch, name, s):
     """The bandolier's charges: wooden bottles with leather caps hung in a row down the
     `belt_l` strap's front run (left shoulder to right hip), a bullet bag at its end."""
@@ -207,7 +162,7 @@ def _match(ch, name, s):
     return ch.add("gear", obj, "match")
 
 
-registry.gear("pike_corselet", _corselet)
+registry.gear("pike_corselet", armour.corslet)
 registry.gear("pike_apostles", _apostles)
 registry.gear("pike_match", _match)
 
@@ -220,7 +175,7 @@ PALETTE = {"buff": (0.74, 0.58, 0.36), "fallband": (0.92, 0.91, 0.86), "slashes"
            "jackboots": (0.20, 0.13, 0.08), "belts": (0.62, 0.45, 0.25), "gaiters": (0.55, 0.52, 0.48), "hat": (0.10, 0.09, 0.08),
            "cartridge": (0.12, 0.09, 0.06), "match": (0.55, 0.45, 0.30), "armour": (0.50, 0.51, 0.53),
            "scabbard": (0.07, 0.06, 0.05), "brass": (0.72, 0.58, 0.30)}
-FIXED = ("belts", "match", "armour", "scabbard", "brass", "cartridge", "buff", "fallband", "slashes", "jackboots")
+FIXED = ("belts", "match", "armour", "plate", "scabbard", "brass", "cartridge", "buff", "fallband", "slashes", "jackboots")
 # The 17th century's own clothes (docs/clothing.md, "17th century"), drape order: the
 # breeches, stockings (the gaiter slot) and linen cuffs under a doublet with tabbed skirts
 # (musketeers) or a buff coat with cloth sleeves (pikemen, under the armour); the falling
@@ -336,6 +291,8 @@ def pikeman_spec(md, palette=None, hat="pike_morion", **kw):
 def make_pikeman(root, name, s):
     """The pikeman of SPEC `s`: `line.make` with the musket, disarmed, two pikes in hand."""
     ch = line.make(root, name, dict(s, weapon="musket"))
+    if s.get("hat") in STEEL_HATS:  # the helmet in the corslet's steel, not hat felt
+        ch.keys[ch.held["hat"].name] = "plate"
     gun = ch.held.pop("musket")
     ch.keys.pop(gun.name, None)
     bpy.data.objects.remove(gun, do_unlink=True)
@@ -537,6 +494,7 @@ def build_pikeman(ctx, s):
         k = list(keys)
         k[0] = (k[0][0], dict(k[0][1], show={"socket.hand_l": 0, "socket.hand_r": 0, BLADE: 0}))
         cl.apply(ch.arm, clip, k)
+    worn = armour.poke_report(ch, ("STAND", "MOTION_L", "ATTACK", "DEATH")) if getattr(ch, "armour", None) else None
     am.set_clip(ch.arm, "STAND")
     report = {}
     colours = ch.colours(ctx.ref, s["palette"], report=report, mix=s["mix"], fixed=s["fixed"])
@@ -555,6 +513,9 @@ def build_pikeman(ctx, s):
                    **faces.extras("regular"))
     ctx.stats = {"triangles": tris, "light": report, "colours": colours, "drape": getattr(ch, "drape_report", None),
                  "clips": sorted(clips)}
+    if worn is not None:
+        ctx.stats["armour"] = dict(ch.armour_report, poke=worn,
+                                   triangles=sum(tris[o.name] for o in ch.armour))
 
 
 def matchlocks(ch, name, rest=True):

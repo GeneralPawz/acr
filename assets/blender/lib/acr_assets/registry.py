@@ -57,6 +57,7 @@ FINISH = {
 }
 # Painters built into `outfit.paint` (the rest come from `painter(fn=...)`).
 BUILTIN_PAINTERS = ("skin", "wool", "linen", "kersey", "gaiters", "boots", "belts", "felt", "leather")
+METALLIC = {}  # painter name -> glTF metallic factor (absent: 0)
 PAINT_FN = {}  # painter name -> fn(p, n, rgb, L, seed)
 
 # Garments beyond garments.GARMENTS' uniform are added to that same dict; drape spacing (cm).
@@ -93,8 +94,9 @@ def material(key, layer, painter=None, fallback=None):
         _put(FALLBACK, key, tuple(fallback), "fallback colour of")
 
 
-def painter(name, fn=None, like=None, finish=(0.9, 0.0, 0.0)):
-    """Registers outfit painter `name`: its own function `fn` or painted `like` another."""
+def painter(name, fn=None, like=None, finish=(0.9, 0.0, 0.0), metallic=0.0):
+    """Registers outfit painter `name`: its own function `fn` or painted `like` another;
+    `finish` (roughness, sheen, gloss), `metallic` the glTF factor (plate armour: 1)."""
     if (fn is None) == (like is None):
         raise ValueError("painter: give exactly one of fn and like")
     if like is not None:
@@ -106,6 +108,8 @@ def painter(name, fn=None, like=None, finish=(0.9, 0.0, 0.0)):
             raise ValueError(f"painter {name!r} is built in")
         _put(PAINT_FN, name, fn, "painter")
     _put(FINISH, name, tuple(finish), "finish of")
+    if metallic:
+        _put(METALLIC, name, float(metallic), "metallic of")
 
 
 def garment(name, draft, cloth, ease=None, spacing=3.5):

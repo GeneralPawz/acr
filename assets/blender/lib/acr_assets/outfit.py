@@ -357,6 +357,8 @@ def dress(ch, colours, layer_of, size=SIZE):
                 m["acr_layer"] = float(ch.layer_rank[key])  # the unit's own order (drape.layer_order)
             painter = PAINTER[key]
             m["acr_roughness"], m["acr_sheen"], m["acr_gloss"] = FINISH.get(painter, (0.9, 0.0, 0.0))
+            if painter in registry.METALLIC:
+                m["acr_metallic"] = registry.METALLIC[painter]
             o.data.materials.clear()
             o.data.materials.append(m)
     return img
