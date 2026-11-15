@@ -874,6 +874,7 @@ impl<'a> Reader<'a> {
                     3 => Ground::White,
                     4 => Ground::Greenscreen,
                     5 => Ground::Sea,
+                    6 => Ground::Dark,
                     _ => return Err(err("ground")),
                 };
                 let mut parts = [None; 3];

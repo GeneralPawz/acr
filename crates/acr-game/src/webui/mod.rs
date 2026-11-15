@@ -612,6 +612,7 @@ impl WebUi {
             title: text(&editor.title),
             toggle: button(&editor.toggle),
             battle: editor.battle,
+            inspector: editor.inspector,
             status: text(&editor.status),
             armed: editor.armed.as_deref().map(text),
             swatches: editor

@@ -1,9 +1,11 @@
 //! The unit inspector (#499; main menu "Inspektor"): a third view of the editor's window for
 //! looking at one unit type at a time and playing its moves. Not in the original.
 //!
-//! A nation and one of its units (foot, riders, artillery) are picked with arrows; the unit
-//! stands alone in the middle of the blank field and the camera goes there. Two things can
-//! then be played:
+//! It is a model viewer: the game starts on a dark backdrop with 3D models and the free
+//! camera on, the picked unit fills the picture ([`Inspector::fit`]), a drag on the picture
+//! turns and tilts the camera round it, and the camera follows the unit every frame. A nation
+//! and one of its units (foot, riders, artillery) are picked from a list (the touch drawer
+//! shows the units' icons). Two things can then be played:
 //!
 //! - **A clip of its 3D model**, looped on the unit whatever the simulation does: the list is
 //!   the model's own clips (`ThreeD::inspect`), so every drill it carries can be looked at
@@ -21,7 +23,7 @@ use acr_sim::{EntityId, Pos, TypeId, World};
 
 use super::input::Input;
 use super::touch::TouchControl;
-use super::{Act as EditorAct, ENTRIES, Editor, FACINGS, FIRST_EXTRA, Item, Look, OY, Pick, ROW, W, X0, groups, sides};
+use super::{Act as EditorAct, ENTRIES, Editor, FIRST_EXTRA, Item, Look, OY, Pick, ROW, W, X0, groups, sides};
 use crate::ui::dialog::Reject;
 use crate::ui::draw::Rect;
 
@@ -31,12 +33,18 @@ const LIFE: i32 = 20_000;
 /// a man on the ground) and far (musket and bow range).
 const NEAR: [i32; 3] = [110, 140, 70];
 const FAR: i32 = 480;
-/// The close-up the first scene of an inspector takes: output pixels per original pixel, and
-/// how far above the ground the middle of the window looks (true pixels, a man's chest).
-const ZOOM: f32 = 4.0;
+/// How far above the ground the camera looks, true pixels: a man's chest.
 pub const LIFT: f32 = 27.0;
-/// The scene stands this share of the window's width left of its middle.
-pub const ASIDE: f32 = 0.17;
+/// The heights of a man on foot and of a rider or a gun, original pixels (30 to the metre).
+const HEIGHTS: [f32; 2] = [62.0, 92.0];
+/// The scene fills these shares of the free picture's height and width.
+const FILL: [f32; 2] = [0.62, 0.9];
+/// The zoom never leaves this range.
+const ZOOMS: (f32, f32) = (1.0, 16.0);
+/// A step of the turn buttons, radians (an eighth of a turn).
+pub const TURN: f32 = std::f32::consts::FRAC_PI_4;
+/// The free camera's first turn and tilt: from the front right, 20 degrees down.
+pub const ORBIT: [f32; 2] = [0.0, 0.35];
 /// Clip lines of the classic window per page.
 const PAGE: usize = 10;
 /// The enemies, by the inspected unit's nation: a line musketeer and a dragoon of England,
@@ -105,6 +113,14 @@ pub enum Act {
     Nation(i32),
     Unit(i32),
     Enemy(i32),
+    /// Picks nation `n` and unit `n` of the nation's list (the drawer's lists).
+    NationSet(usize),
+    Pick(usize),
+    /// The next or the previous clip of the model's list ("wie die Simulation" between the
+    /// last and the first).
+    ClipStep(i32),
+    /// Turns the camera round the unit by [`TURN`] steps.
+    Turn(i32),
     /// Near or far.
     Range,
     Facing(i32),
@@ -141,6 +157,14 @@ pub struct Inspector {
     pub target: Option<EntityId>,
     /// The scene has not been placed yet (a fresh inspector game places it by itself).
     pub pending: bool,
+    /// Where the camera looks: the middle of the scene, world pixels.
+    pub look: (i32, i32),
+    /// The scene's height and width (original pixels) the camera is to fit, once per scene.
+    pub fit: Option<(f32, f32)>,
+    /// Steps of the turn buttons the camera has not taken yet.
+    pub turn: i32,
+    /// How many units the nation's list has, as of the last placed scene.
+    pub shown: usize,
 }
 
 impl Default for Inspector {
@@ -161,6 +185,10 @@ impl Default for Inspector {
             subject: None,
             target: None,
             pending: false,
+            look: (0, 0),
+            fit: None,
+            turn: 0,
+            shown: 0,
         }
     }
 }
@@ -192,8 +220,30 @@ fn enemy_kind(world: &World, subject: TypeId, enemy: Enemy) -> TypeId {
     find(world, first).or_else(|| find(world, second)).unwrap_or(subject)
 }
 
+/// The zoom at which a scene `(height, width)` original pixels large fills [`FILL`] of a free
+/// picture `free` output pixels large.
+pub fn zoom_for(scene: (f32, f32), free: [f32; 2]) -> f32 {
+    (FILL[0] * free[1] / scene.0).min(FILL[1] * free[0] / scene.1).clamp(ZOOMS.0, ZOOMS.1)
+}
+
+/// The nation's units by the headers of the editor's list.
+pub fn grouped(world: &World, nation: usize) -> Vec<(&'static str, Vec<TypeId>)> {
+    groups(world, nation)
+        .into_iter()
+        .filter(|g| matches!(g.header, "Infanterie" | "Kavallerie" | "Artillerie"))
+        .map(|g| {
+            let kinds = g.kinds.into_iter().filter_map(|p| if let Pick::Unit(k) = p { Some(k) } else { None });
+            (g.header, kinds.collect())
+        })
+        .collect()
+}
+
 impl Inspector {
-    fn kind(&self, world: &World) -> Option<TypeId> {
+    pub fn nation(&self) -> usize {
+        self.nation
+    }
+
+    pub fn kind(&self, world: &World) -> Option<TypeId> {
         let all = kinds(world, self.nation);
         all.get(self.unit.min(all.len().saturating_sub(1))).copied()
     }
@@ -242,6 +292,26 @@ impl Editor {
                 // A fight is the simulation's: the forced clip ends.
                 i.clip = None;
             }
+            Act::NationSet(n) => {
+                i.nation = n.min(FIRST_EXTRA - 1);
+                (i.unit, i.clip, i.page) = (0, None, 0);
+            }
+            Act::Pick(n) => {
+                i.unit = n.min(kinds(world, i.nation).len().saturating_sub(1));
+                (i.clip, i.page) = (None, 0);
+            }
+            Act::ClipStep(d) => {
+                // The list with the simulation's own animation in front.
+                let at = i.clip.as_ref().and_then(|c| i.clips.iter().position(|x| x == c)).map_or(0, |n| n + 1);
+                let next = step(at, d, i.clips.len() + 1);
+                i.clip = next.checked_sub(1).and_then(|n| i.clips.get(n).cloned());
+                i.page = next.saturating_sub(1) / PAGE;
+                return None;
+            }
+            Act::Turn(d) => {
+                i.turn += d;
+                return None;
+            }
             Act::Range => i.far = !i.far,
             Act::Facing(d) => i.dir = i.dir.wrapping_add((d * 32) as u8),
             Act::Clip(n) => {
@@ -265,8 +335,6 @@ impl Editor {
     /// of type `kind` stands in the middle of the map facing `dir`, the enemy in front of it,
     /// and the unit attacks him. Returns the text for the status line.
     pub(super) fn inspect_show(&mut self, world: &mut World, kind: &str, enemy: Enemy, far: bool, dir: u8) -> Vec<u8> {
-        // The first scene zooms in; later ones keep the zoom the player chose.
-        let first = self.inspect.subject.is_none();
         super::battle::undo(world, std::mem::take(&mut self.inspect.placed));
         (self.inspect.subject, self.inspect.target) = (None, None);
         let Some(kind) = find(world, kind) else { return format!("Unbekannter Typ {kind}").into_bytes() };
@@ -322,13 +390,24 @@ impl Editor {
             i.nation = n;
             i.unit = kinds(world, n).iter().position(|&k| k == kind).unwrap_or(0);
         }
-        // Between the two when the enemy stands far off.
-        let look = target.map_or((mid, mid), |t| {
-            let (x, y) = world.units[t.0 as usize].pos.pixels();
-            ((mid + x) / 2, (mid + y) / 2)
-        });
-        self.camera_to = Some(look);
-        self.camera_zoom = first.then_some(ZOOM);
+        i.shown = kinds(world, i.nation).len();
+        // The camera looks between the two and fits both.
+        let tall = |k: TypeId| {
+            let t = world.catalog.get(k);
+            HEIGHTS[usize::from(
+                acr_sim::spacing::is_rider(t) || t.motion_style == acr_sim::catalog::MotionStyle::ComplexRotate,
+            )]
+        };
+        let (mut high, mut wide) = (tall(kind), tall(kind));
+        i.look = (mid, mid);
+        if let Some(t) = target {
+            let u = &world.units[t.0 as usize];
+            let (x, y) = u.pos.pixels();
+            i.look = ((mid + x) / 2, (mid + y) / 2);
+            high = high.max(tall(u.kind));
+            wide += ((x - mid) as f32).hypot((y - mid) as f32);
+        }
+        i.fit = Some((high, wide));
         let id = &world.catalog.get(kind).id;
         match enemy {
             Enemy::None => id.clone().into_bytes(),
@@ -337,7 +416,7 @@ impl Editor {
     }
 
     /// The lines of the view: `(text, name, lit, act)`, steppers as `(less, more)`.
-    fn inspect_lines(&self, world: &World, name_of: &dyn Fn(TypeId) -> Vec<u8>) -> Vec<Line> {
+    fn inspect_lines(&self, world: &World, name_of: &dyn Fn(TypeId) -> Vec<u8>, lists: bool) -> Vec<Line> {
         let i = &self.inspect;
         let mut out = Vec::new();
         let all = kinds(world, i.nation);
@@ -348,18 +427,30 @@ impl Editor {
             less,
             more,
         };
-        out.push(stepper(
-            format!("Nation: {}", ENTRIES[i.nation].0).into_bytes(),
-            "nation",
-            "Inspektor Nation",
-            Act::Nation(-1),
-            Act::Nation(1),
-        ));
+        // The drawer picks the nation from its own list.
+        if !lists {
+            out.push(stepper(
+                format!("Nation: {}", ENTRIES[i.nation].0).into_bytes(),
+                "nation",
+                "Inspektor Nation",
+                Act::Nation(-1),
+                Act::Nation(1),
+            ));
+        }
         let unit = match i.kind(world) {
             Some(k) => [format!("{}/{} ", i.unit.min(all.len() - 1) + 1, all.len()).into_bytes(), name_of(k)].concat(),
             None => b"keine Einheiten".to_vec(),
         };
         out.push(stepper(unit, "unit", "Inspektor Einheit", Act::Unit(-1), Act::Unit(1)));
+        let playing = i.clip.clone().unwrap_or_else(|| "wie die Simulation".to_owned());
+        out.push(stepper(
+            format!("Bewegung: {playing}").into_bytes(),
+            "clipstep",
+            "Inspektor Bewegung",
+            Act::ClipStep(-1),
+            Act::ClipStep(1),
+        ));
+        out.push(stepper(b"Ansicht drehen".to_vec(), "turn", "Inspektor Drehen", Act::Turn(-1), Act::Turn(1)));
         out.push(stepper(
             format!("Gegner: {}", i.enemy.label()).into_bytes(),
             "enemy",
@@ -375,13 +466,6 @@ impl Editor {
             on: i.far,
             act: Act::Range,
         });
-        out.push(stepper(
-            format!("Richtung: {}", FACINGS[usize::from(i.dir / 32) & 7]).into_bytes(),
-            "facing",
-            "Inspektor Richtung",
-            Act::Facing(-1),
-            Act::Facing(1),
-        ));
         out.push(Line::Button {
             text: b"Neu aufstellen".to_vec(),
             id: "again".into(),
@@ -420,7 +504,7 @@ impl Editor {
 
     /// The inspector for the touch drawer (`touch.rs`): every line, the whole clip list.
     pub(super) fn inspect_touch(&self, world: &World, name_of: &dyn Fn(TypeId) -> Vec<u8>) -> Vec<TouchControl> {
-        self.inspect_lines(world, name_of)
+        self.inspect_lines(world, name_of, true)
             .into_iter()
             .map(|l| match l {
                 Line::Stepper { text, id, .. } => TouchControl::Stepper {
@@ -444,8 +528,18 @@ impl Editor {
             _ => Err(Reject::NoWidget),
         };
         match tail {
+            ["nation", n] if n.parse::<usize>().is_ok() => {
+                let n: usize = n.parse().map_err(|_| Reject::NoWidget)?;
+                if n < FIRST_EXTRA { Ok(Act::NationSet(n)) } else { Err(Reject::Range) }
+            }
+            ["pick", n] => {
+                let n: usize = n.parse().map_err(|_| Reject::NoWidget)?;
+                if n < self.inspect.shown { Ok(Act::Pick(n)) } else { Err(Reject::Range) }
+            }
             ["nation", d] => Ok(Act::Nation(sign(d)?)),
             ["unit", d] => Ok(Act::Unit(sign(d)?)),
+            ["clipstep", d] => Ok(Act::ClipStep(sign(d)?)),
+            ["turn", d] => Ok(Act::Turn(sign(d)?)),
             ["enemy", d] => Ok(Act::Enemy(sign(d)?)),
             ["facing", d] => Ok(Act::Facing(sign(d)?)),
             ["range"] => Ok(Act::Range),
@@ -473,7 +567,7 @@ impl Editor {
             look: Look::Text,
             gp: None,
         };
-        let lines = self.inspect_lines(world, name_of);
+        let lines = self.inspect_lines(world, name_of, false);
         let clips = lines.iter().filter(|l| matches!(l, Line::Button { act: Act::Clip(_), .. })).count();
         let pages = clips.div_ceil(PAGE).max(1);
         let page = self.inspect.page.min(pages - 1);
@@ -560,10 +654,52 @@ mod tests {
     }
 
     #[test]
+    fn the_zoom_fits_the_scene_into_the_free_picture() {
+        // A man alone in a 1280 x 720 picture: his 62 px fill 62 % of the height.
+        assert!((zoom_for((62.0, 62.0), [1280.0, 720.0]) - 7.2).abs() < 0.01);
+        // With an enemy 480 px off the width decides.
+        let far = zoom_for((92.0, 62.0 + 480.0), [1280.0, 720.0]);
+        assert!((far - 0.9 * 1280.0 / 542.0).abs() < 0.01, "{far}");
+        assert_eq!(zoom_for((62.0, 62.0), [40_000.0, 40_000.0]), ZOOMS.1);
+        assert_eq!(zoom_for((62.0, 9000.0), [100.0, 100.0]), ZOOMS.0);
+    }
+
+    /// The clip stepper walks "wie die Simulation", then the model's clips, and round again;
+    /// the turn buttons only leave steps for the camera.
+    #[test]
+    fn the_clip_stepper_goes_round_the_list() {
+        let mut e = Editor::default();
+        let w = World::new(
+            std::sync::Arc::new(acr_sim::MapGrid::open(1)),
+            std::sync::Arc::new(acr_sim::catalog::Catalog::new()),
+            std::sync::Arc::new(acr_sim::formation::Formations::default()),
+        );
+        e.inspect.clips = vec!["STAND".into(), "ATTACK".into()];
+        let mut seen = Vec::new();
+        for _ in 0..4 {
+            assert_eq!(e.inspect_act(&w, Act::ClipStep(1)), None);
+            seen.push(e.inspect.clip.clone());
+        }
+        assert_eq!(seen, [Some("STAND".into()), Some("ATTACK".into()), None, Some("STAND".into())]);
+        e.inspect_act(&w, Act::ClipStep(-1));
+        assert_eq!(e.inspect.clip, None);
+        e.inspect_act(&w, Act::ClipStep(-1));
+        assert_eq!(e.inspect.clip.as_deref(), Some("ATTACK"));
+        assert_eq!(e.inspect_act(&w, Act::Turn(1)), None);
+        assert_eq!(e.inspect_act(&w, Act::Turn(1)), None);
+        assert_eq!(e.inspect.turn, 2);
+    }
+
+    #[test]
     fn the_drawer_ids_come_back_as_acts() {
         let mut e = Editor::default();
         assert_eq!(e.inspect_intent(&["nation", "+"]), Ok(Act::Nation(1)));
         assert_eq!(e.inspect_intent(&["unit", "-"]), Ok(Act::Unit(-1)));
+        assert_eq!(e.inspect_intent(&["nation", "3"]), Ok(Act::NationSet(3)));
+        assert_eq!(e.inspect_intent(&["nation", "12"]), Err(Reject::Range));
+        assert_eq!(e.inspect_intent(&["pick", "0"]), Err(Reject::Range), "nothing placed yet");
+        assert_eq!(e.inspect_intent(&["clipstep", "+"]), Ok(Act::ClipStep(1)));
+        assert_eq!(e.inspect_intent(&["turn", "-"]), Ok(Act::Turn(-1)));
         assert_eq!(e.inspect_intent(&["enemy", "+"]), Ok(Act::Enemy(1)));
         assert_eq!(e.inspect_intent(&["range"]), Ok(Act::Range));
         assert_eq!(e.inspect_intent(&["again"]), Ok(Act::Again));
@@ -591,6 +727,10 @@ mod tests {
         assert_eq!((enemy, far, dir), (Enemy::None, false, 32));
         e.inspect_show(&mut w, &kind, enemy, far, dir);
         assert!(e.inspect.on && e.inspect.subject.is_some() && e.inspect.target.is_none());
+        assert_eq!(e.inspect.shown, all.len());
+        let (high, wide) = e.inspect.fit.expect("the camera fits the first scene");
+        assert_eq!((high, wide), (HEIGHTS[0], HEIGHTS[0]), "a man on foot alone");
+        assert!(matches!(e.inspect_intent(&["pick", "5"]), Ok(Act::Pick(5))));
         assert_eq!(w.units.iter().filter(|u| u.alive).count(), 1);
         assert_eq!(e.sides, sides::Mode::Off, "no enemy, no Kampf");
         // A line musketeer (the first unit is the peasant, whom an enemy soldier captures)

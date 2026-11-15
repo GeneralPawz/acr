@@ -70,6 +70,9 @@ pub struct TouchEditor {
     pub title: Vec<u8>,
     pub toggle: TouchButton,
     pub battle: bool,
+    /// The unit inspector: the drawer opens by itself, shows the controls above the unit
+    /// list, and lies along the bottom of an upright window.
+    pub inspector: bool,
     pub status: Vec<u8>,
     pub armed: Option<Vec<u8>>,
     pub swatches: Vec<TouchSwatch>,
@@ -165,6 +168,7 @@ impl Editor {
             title: view.title.clone(),
             toggle,
             battle,
+            inspector: self.inspect.on,
             status: self.status.clone(),
             armed,
             swatches: Vec::new(),
@@ -175,8 +179,32 @@ impl Editor {
             controls: Vec::new(),
         };
         if self.inspect.on {
-            // The drawer lays controls out as the battle view's: no list, no colours.
-            out.battle = true;
+            // The nations as the drawer's nation list, the nation's units as its icon cells.
+            out.battle = false;
+            let nation = self.inspect.nation();
+            out.entries = (0..FIRST_EXTRA)
+                .map(|i| button(format!("editor/inspect/nation/{i}"), ENTRIES[i].0.as_bytes(), i == nation))
+                .collect();
+            let current = self.inspect.kind(world);
+            let cell = Rect::new(0, 0, CELL, CELL);
+            let mut n = 0;
+            for (header, kinds) in inspect::grouped(world, nation) {
+                let mut cells = Vec::new();
+                for kind in kinds {
+                    let on = Some(kind) == current;
+                    let item = Self::cell_item(world, view, Pick::Unit(kind), cell, on);
+                    let id = format!("editor/inspect/pick/{n}");
+                    cells.push(TouchCell {
+                        id,
+                        name: item.text.clone(),
+                        draws: cell_draws(&item, ctx),
+                        on,
+                        levels: false,
+                    });
+                    n += 1;
+                }
+                out.groups.push(TouchGroup { header: header.to_owned(), cells });
+            }
             out.controls = self.inspect_touch(world, view.names);
             return Some(out);
         }

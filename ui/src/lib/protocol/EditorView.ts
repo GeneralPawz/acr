@@ -16,7 +16,12 @@ toggle: EditorButton,
 /**
  * The battle view is shown (`entries`, `swatches` and `groups` are empty then).
  */
-battle: boolean, status: string, 
+battle: boolean, 
+/**
+ * The unit inspector (docs/controls.md "Inspector"): the drawer opens by itself, shows
+ * `controls` above the unit list and lies along the bottom of an upright window.
+ */
+inspector: boolean, status: string, 
 /**
  * What a tap on the map places (`Typ: ..`, `Armee ..`), if anything.
  */

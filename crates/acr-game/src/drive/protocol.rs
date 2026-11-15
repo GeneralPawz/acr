@@ -386,6 +386,7 @@ pub(super) fn blank(b: &Value) -> Result<Start, String> {
         "white" => Ground::White,
         "greenscreen" | "green" => Ground::Greenscreen,
         "sea" => Ground::Sea,
+        "dark" | "studio" => Ground::Dark,
         other => {
             return Err(format!("blank: unknown ground {other:?}: grass, dirt, snow, white, greenscreen or sea"));
         }

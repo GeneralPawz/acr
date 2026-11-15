@@ -107,6 +107,8 @@ pub enum Ground {
     Greenscreen,
     /// Open water everywhere, for ship fights (#408); see [`crate::blank_map`].
     Sea,
+    /// A dark grey backdrop, like `White`: the unit inspector's studio.
+    Dark,
 }
 
 /// Who controls a player.

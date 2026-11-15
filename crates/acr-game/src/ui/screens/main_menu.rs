@@ -244,7 +244,13 @@ fn editor_setup(inspector: bool) -> crate::ui::GameSetup {
         control: Control::Human,
     };
     GameSetup {
-        kind: GameKind::Blank(BlankSetup { editor: true, inspector, ..Default::default() }),
+        // The inspector's studio: a dark backdrop instead of the grass.
+        kind: GameKind::Blank(BlankSetup {
+            editor: true,
+            inspector,
+            ground: if inspector { crate::ui::setup::Ground::Dark } else { Default::default() },
+            ..Default::default()
+        }),
         players: vec![player(0, b"Spieler 1"), player(1, b"Spieler 2")],
         local_player: 0,
         rules: Default::default(),

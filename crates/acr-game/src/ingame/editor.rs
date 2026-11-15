@@ -22,6 +22,7 @@ use std::collections::HashMap;
 use acr_formats::m3d::SpriteGroup;
 use acr_mapgen::edit::{self, Dab, Tool};
 use acr_render::terrain::TerrainData;
+use acr_render::view3d::Orbit;
 use acr_sim::catalog::{Medium, MotionStyle};
 use acr_sim::economy::WOOD;
 use acr_sim::fixed::Pos;
@@ -338,8 +339,6 @@ pub struct Editor {
     pub inspect: inspect::Inspector,
     /// The camera is to centre on this world point (set by "Aufstellen").
     pub camera_to: Option<(i32, i32)>,
-    /// With [`Editor::camera_to`]: the zoom to take (the inspector's close-up), if any.
-    pub camera_zoom: Option<f32>,
     /// The last placement or problem, shown under the window.
     status: Vec<u8>,
     /// A press placed or hit the window: its release does nothing else.
@@ -377,7 +376,6 @@ impl Default for Editor {
             battle: battle::Battle::default(),
             inspect: inspect::Inspector::default(),
             camera_to: None,
-            camera_zoom: None,
             auto_reload: false,
             status: b"Typ waehlen, dann auf die Karte klicken".to_vec(),
             swallow_release: false,
@@ -1468,14 +1466,45 @@ impl super::InGame {
                 e.swallow_release = false;
             }
         }
+        let touch = self.interface.claim.touch;
+        let window = self.interface.window;
         let Some(e) = self.editor.as_mut() else { return };
+        // The classic window's left edge in window pixels (the whole width while it is folded).
+        let canvas = (window[0] / SCREEN[0] as f32).min(window[1] / SCREEN[1] as f32);
+        let edge = if e.frame.folded { window[0] } else { (OX + e.frame.shift().0) as f32 * canvas };
         let i = &mut e.inspect;
         let watch = i.on.then_some(i.subject).flatten().map(|id| id.0);
         self.three_d.set_inspect(watch, i.clip.as_deref());
+        if !i.on {
+            return;
+        }
+        // A model viewer: 3D models and the free camera whatever the settings say.
+        self.three_d.studio();
         i.models = self.three_d.models_on();
         let clips = self.three_d.inspect_clips();
         if i.clips != clips {
             i.clips = clips.to_vec();
+        }
+        let orbit = self.three_d.orbit().unwrap_or(Orbit { yaw: inspect::ORBIT[0], pitch: inspect::ORBIT[1] });
+        let turned = Orbit { yaw: orbit.yaw + std::mem::take(&mut i.turn) as f32 * inspect::TURN, ..orbit };
+        // The picture's free part: left of the classic window or the drawer, or above the
+        // drawer when the window stands upright.
+        let upright = window[1] > window[0];
+        let free = match (touch, upright) {
+            (true, true) => [window[0], window[1] * 0.52],
+            (true, false) => [window[0] * 0.56, window[1]],
+            (false, _) => [edge.clamp(window[0] * 0.3, window[0]), window[1]],
+        };
+        let zoom = i.fit.take().map(|scene| inspect::zoom_for(scene, free));
+        let (look, placed) = (i.look, i.subject.is_some());
+        if !placed {
+            return;
+        }
+        // The camera follows the scene every frame: its middle stays in the middle of the
+        // free part while the player turns, tilts and zooms.
+        self.set_camera(look.0, look.1, inspect::LIFT, zoom, Some(turned));
+        if let Some(view) = self.three_d.free_view(self.camera, window) {
+            self.camera = view.pan([(window[0] - free[0]) / 2.0, (window[1] - free[1]) / 2.0]);
         }
     }
 
@@ -1614,14 +1643,7 @@ impl super::InGame {
         let Some(e) = self.editor.as_mut() else { return };
         e.swallow_release = true;
         if let Some((x, y)) = e.camera_to.take() {
-            // A close-up looks at the men's middle, not at their feet.
-            let zoom = e.camera_zoom.take();
-            let inspecting = e.inspect.on;
-            // The inspector's scene stands left of the middle: the window (or the drawer)
-            // covers the right of the picture.
-            let scale = zoom.unwrap_or(self.camera.scale).max(0.1);
-            let aside = if inspecting { (self.interface.window[0] * inspect::ASIDE / scale) as i32 } else { 0 };
-            self.set_camera(x + aside, y, if inspecting { inspect::LIFT } else { 0.0 }, zoom, None);
+            self.set_camera(x, y, 0.0, None, None);
         }
     }
 
@@ -1729,6 +1751,10 @@ impl super::InGame {
             return false;
         }
         if !pressed {
+            // The inspector's turn of the camera ends with the press.
+            if self.editor.as_ref().is_some_and(|e| e.inspect.on) {
+                self.interface.modern.orbit = None;
+            }
             let e = self.editor.as_mut().expect("editor");
             let stroked = e.end_stroke();
             e.release_grab(false);
@@ -1778,6 +1804,17 @@ impl super::InGame {
                     e.begin_stroke(&input);
                 }
             }
+            return true;
+        }
+        // The inspector: a drag on the picture turns and tilts the camera round the unit.
+        // (The touch skin sends only the touches of the free picture: the engine's panel has
+        // no pixels there, so its place does not count.)
+        if self.editor.as_ref().is_some_and(|e| e.inspect.on)
+            && (!self.interface.hud_input || !self.over_hud(ctx, at))
+            && let Some(orbit) = self.three_d.orbit()
+        {
+            self.interface.modern.orbit = Some((at, orbit));
+            self.editor.as_mut().expect("editor").swallow_release = true;
             return true;
         }
         false

@@ -96,7 +96,6 @@ impl Script for EditorReplay<'_> {
         editor::input::apply(world, self.map, self.editor, input);
         // The camera is the saved one.
         self.editor.camera_to = None;
-        self.editor.camera_zoom = None;
     }
 }
 

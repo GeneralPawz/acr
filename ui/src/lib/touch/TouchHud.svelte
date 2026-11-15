@@ -39,6 +39,13 @@
   $effect(() => {
     if (!editor) editorOpen = false;
   });
+  // The unit inspector is its drawer: it opens with it, once (the player may still close it).
+  let inspecting = false;
+  $effect(() => {
+    const now = editor?.inspector === true;
+    if (now && !inspecting) editorOpen = true;
+    inspecting = now;
+  });
 
   // A finger that starts in the edge strip and travels left opens the drawer; any other touch there does nothing.
   let edge: { id: number; x: number; y: number } | null = null;

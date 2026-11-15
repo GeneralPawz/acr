@@ -2716,6 +2716,15 @@ impl ThreeD {
         &self.inspect_clips
     }
 
+    /// The unit inspector's studio: units are drawn as 3D models and the weather is off,
+    /// whatever the settings say.
+    pub fn studio(&mut self) {
+        if self.models == Models::Off {
+            self.models = Models::Units;
+        }
+        self.weather_override = Some(Weather::Off);
+    }
+
     /// Whether units are drawn as 3D models (the setting `models`).
     pub fn models_on(&self) -> bool {
         self.models != Models::Off

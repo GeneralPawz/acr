@@ -12,7 +12,7 @@ use crate::ui::setup::{self, BlankSetup, Ground};
 /// `TILES3.BMP` textures of the three grounds: 0 is the editor's green field.
 pub const fn texture(ground: Ground) -> u8 {
     match ground {
-        Ground::Grass | Ground::White | Ground::Greenscreen | Ground::Sea => 0,
+        Ground::Grass | Ground::White | Ground::Greenscreen | Ground::Sea | Ground::Dark => 0,
         Ground::Dirt => DIRT,
         Ground::Snow => SNOW,
     }
@@ -23,6 +23,7 @@ pub const fn backdrop(ground: Ground) -> Option<[f64; 3]> {
     match ground {
         Ground::White => Some([1.0, 1.0, 1.0]),
         Ground::Greenscreen => Some([0.0, 1.0, 0.0]),
+        Ground::Dark => Some([0.05, 0.05, 0.06]),
         Ground::Grass | Ground::Dirt | Ground::Snow | Ground::Sea => None,
     }
 }
