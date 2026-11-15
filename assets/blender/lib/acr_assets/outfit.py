@@ -293,6 +293,24 @@ def split_by_colour(os_, colours, owner, every, m):
     return [(sel, rgb) for rgb, sel in out.items()]
 
 
+def spread(img, covered, passes=8):
+    """Fills texels no object painted from painted neighbours, `passes` texels deep: faces
+    thinner than a texel (plate edges, lames) own no texel in the label raster, sampled the
+    atlas's black ground and showed as black squares (#522); mips bled it in at the seams."""
+    img, done = img.copy(), covered.copy()
+    for _ in range(passes):
+        acc = np.zeros_like(img)
+        cnt = np.zeros(done.shape, np.float32)
+        for dy, dx in ((0, 1), (0, -1), (1, 0), (-1, 0)):
+            d = np.roll(done, (dy, dx), (0, 1))
+            acc += np.roll(img, (dy, dx), (0, 1)) * d[..., None]
+            cnt += d
+        new = ~done & (cnt > 0)
+        img[new] = acc[new] / cnt[new][:, None]
+        done |= new
+    return img
+
+
 def dress(ch, colours, layer_of, size=SIZE):
     """Paints one atlas for the dressed parts of character `ch` (`ch.keys`: object → material
     key, `colours`: object → sRGB from `Character.colours`) and gives them decaying
@@ -328,17 +346,20 @@ def dress(ch, colours, layer_of, size=SIZE):
     # in its painter's style; one painter's objects share its cell.
     every = [o for _n, os_ in sorted(groups.items()) for o in os_]
     owner = _labels(every, size, covered) if any(len(os_) > 1 for os_ in groups.values()) else None
+    painted = np.zeros(size * size, bool)  # texels some object owns (thin faces miss `owner`)
     for i, (name, os_) in enumerate(sorted(groups.items())):
         u0, v0, u1, v1 = rects[name]
         m = cov & (u >= u0) & (u < u1) & (v >= v0) & (v < v1)
         for sel, rgb in split_by_colour(os_, colours, owner, every, m):
             if sel.any():
+                painted[sel] = True
                 out[sel] = paint(KIND.get(name, name), flat_p[sel], flat_n[sel], rgb, L, seed=11 + 7 * i)
         for e in getattr(ch, "paint_masks", ()):
             if name in {PAINTER.get(k) for k in e["keys"]} and m.any():
                 out[m] = apply_mask(e, flat_p[m], flat_n[m], out[m], L, seed=11 + 7 * i)
     occ = np.clip(ao.reshape(-1), 0.0, 1.0)
     out *= (0.55 + 0.45 * occ ** 0.8)[:, None]
+    out = spread(out.reshape(size, size, 3), painted.reshape(size, size)).reshape(-1, 3)
     px = np.ones((size * size, 4), np.float32)
     px[:, :3] = coat.to_srgb(out)
     import bpy

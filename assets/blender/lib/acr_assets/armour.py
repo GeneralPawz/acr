@@ -15,6 +15,8 @@ tassets, and the steel they are painted in.
   the Lambert renderer cannot show, the sky above and the ground below mirrored in the
   steel with the dark line of the horizon between them, plus wear and tarnish; the finish
   is glossy and metallic (`registry.METALLIC`) for the renderer's highlight.
+- `s["corslet"]` also fits other wearers: `origin` (a rider's ground point), `lames` 0 (no
+  tassets: a horseman's back and breast), `PEASCOD` (the 16th-century form).
 - `poke(ch, objs)`: clothes and body vertices standing outside the plates in the current
   pose; the pikeman's build writes it to `stats.armour` for STAND and the walk.
 
@@ -25,6 +27,11 @@ The shape functions (`breast_top`, `back_top`, `breast_bottom`, `ridge`, `lame_w
 import math
 
 from . import registry
+
+try:  # the shape functions are tested without Blender
+    from mathutils import Vector
+except ImportError:  # pragma: no cover
+    Vector = None
 
 # Heights are metres on skeleton H (hips 0.95, spine 1.05, spine1 1.20, spine2 1.33, neck 1.45).
 CORSLET = {
@@ -39,7 +46,12 @@ CORSLET = {
     "lame": (0.056, 0.012),  # a lame's height, its overlap with the next
     "tasset": (4.0, 78.0),  # degrees from the front centre: inner and outer edge
     "straps": True,
+    "ridge": 0.015,  # the medial crease's height at the waist
+    "belly": 0.012,  # the breast's fullness over the belly
+    "origin": (0.0, 0.0, 0.0),  # the figure's ground point (a rider's: his `origin`)
 }
+# A 16th-century peascod (conquistadors): a deep point, a full belly, shorter tassets.
+PEASCOD = {"point": 0.050, "ridge": 0.020, "belly": 0.024, "lames": 5, "tasset": (5.0, 72.0)}
 PLATE = (0.40, 0.42, 0.46)  # munition steel, kept bright with oil and sand
 
 
@@ -70,17 +82,17 @@ def breast_bottom(a, waist=CORSLET["waist"], point=CORSLET["point"]):
     return waist - point * max(0.0, 1.0 - abs(a) / 42.0) ** 2
 
 
-def ridge(a, z, waist=CORSLET["waist"]):
+def ridge(a, z, waist=CORSLET["waist"], crease_m=CORSLET["ridge"], belly_m=CORSLET["belly"]):
     """How far the breast stands out beyond the trunk's envelope (m): the medial ridge, a
     crease at the centre that grows towards the point at the waist, over a full belly."""
     a = abs(a)
     low = _smooth(1.40, waist + 0.03, z)
     crease = max(0.0, 1.0 - a / 34.0) ** 1.5
     belly = math.exp(-((z - (waist + 0.07)) / 0.11) ** 2) * math.cos(math.radians(min(a, 90.0))) ** 2
-    return 0.015 * crease * (0.35 + 0.65 * low) + 0.012 * belly
+    return crease_m * crease * (0.35 + 0.65 * low) + belly_m * belly
 
 
-def lame_weights(n, top=0.10, bottom=0.92):
+def lame_weights(n, top=0.06, bottom=0.92):
     """Thigh weight of each of `n` tasset lames, top to bottom (the rest is the bone the
     flange is on): rising steadily, so neighbours never part by more than their overlap."""
     if n == 1:
@@ -145,12 +157,12 @@ class Field:
     cast inward at the clothes and the body without the arms. Angle `t` as `math.atan2`
     (front, -Y, at -90 degrees)."""
 
-    def __init__(self, ch, z0=0.62, z1=1.52, dz=0.01, n=120):
+    def __init__(self, ch, z0=0.62, z1=1.52, dz=0.01, n=120, origin=(0.0, 0.0, 0.0)):
         import numpy as np
-        from mathutils import Vector
         from mathutils.bvhtree import BVHTree
 
         verts, polys = [], []
+        self.origin = Vector(origin)
         for layer in ("clothes", "flesh"):
             for o in ch.layers[layer]:
                 if o.type != "MESH":
@@ -158,11 +170,11 @@ class Field:
                 arm = _arm_vertices(o)
                 base = len(verts)
                 m = o.matrix_world
-                verts.extend(m @ v.co for v in o.data.vertices)
+                verts.extend(m @ v.co - self.origin for v in o.data.vertices)
                 for f in o.data.polygons:
                     if not any(arm[i] for i in f.vertices):
                         polys.append([base + i for i in f.vertices])
-        tree = BVHTree.FromPolygons(verts, polys)
+        tree = self.tree = BVHTree.FromPolygons(verts, polys)
         ys = [v.y for v in verts if 1.05 < v.z < 1.40 and abs(v.x) < 0.19 and abs(v.y) < 0.22]
         self.cy = float(np.median(ys)) if ys else 0.0
         self.z0, self.dz, self.n = z0, dz, n
@@ -222,16 +234,17 @@ class Field:
         return max(self._at(self.env, t, z + (z_top - z) * j / k) for j in range(k + 1))
 
     def point(self, t, r, z):
-        from mathutils import Vector
+        return Vector((math.cos(t) * r, self.cy + math.sin(t) * r, z)) + self.origin
 
-        return Vector((math.cos(t) * r, self.cy + math.sin(t) * r, z))
+    def top(self, x, y, default):
+        """Height (local) of the trunk's surface seen from above at local (x, y)."""
+        hit = self.tree.ray_cast(Vector((x, y, 1.70)), Vector((0.0, 0.0, -1.0)), 0.6)
+        return hit[0].z if hit[0] is not None else default
 
 
 def _roll(bm, edge, dirs, r, steps=5, turn=250.0):
     """A rolled edge: the plate's edge turned outward and over (`dirs`: outward unit vector
     per edge vertex). Returns the last ring."""
-    from mathutils import Vector
-
     up = Vector((0.0, 0.0, 1.0))
     prev = edge
     for k in range(1, steps + 1):
@@ -266,7 +279,6 @@ def _plate(field, centre, half, top, bottom, swell, c, cols=56, rows=34, flange=
     functions `bottom(a)` and `top(a)`, standing `c["clear"] + swell(a, z)` off the envelope;
     the top edge rolled, the lower edge turned out into a `flange` (out, down)."""
     import bmesh
-    from mathutils import Vector
 
     bm = bmesh.new()
     grid, dirs = [], []
@@ -300,26 +312,37 @@ def _plate(field, centre, half, top, bottom, swell, c, cols=56, rows=34, flange=
     return bm, lip
 
 
-def _strap(bm, field, pts_cloth, x, y0, y1, z0, z1, width=0.032, steps=22):
+def _strap(bm, field, x, y0, y1, z0, z1, width=0.026, steps=24, lift=0.004):
     """A shoulder strap from the back plate's top (y1, z1) over the shoulder to the breast's
-    (y0, z0) at `x`: a band lying on the cloth (its highest points under the band, smoothed),
-    its ends lapping 2 cm down onto the plates."""
-    import numpy as np
-    from mathutils import Vector
-
+    (y0, z0) at local `x`: a thin band lying `lift` on the trunk's surface under it, its ends
+    lapping 2 cm down onto the plates."""
     ys = [y0 + (y1 - y0) * k / steps for k in range(steps + 1)]
     zs = []
     for k, y in enumerate(ys):
         f = k / steps
-        sel = pts_cloth[(np.abs(pts_cloth[:, 0] - x) < 0.03) & (np.abs(pts_cloth[:, 1] - y) < 0.018)]
-        z = float(sel[:, 2].max()) + 0.006 if len(sel) else z0 + (z1 - z0) * f
-        zs.append(max(z, z0 + (z1 - z0) * f))
-    for _ in range(2):
-        zs = [zs[0]] + [max(b, (a + b + c) / 3.0) for a, b, c in zip(zs, zs[1:], zs[2:])] + [zs[-1]]
-    rows = [(y0 - 0.004, z0 - 0.02)] + list(zip(ys, zs)) + [(y1 + 0.004, z1 - 0.02)]
-    vs = [(bm.verts.new(Vector((x - width / 2, y, z))), bm.verts.new(Vector((x + width / 2, y, z)))) for y, z in rows]
+        line = z0 + (z1 - z0) * f
+        z = max(field.top(x + dx, y, line - lift) for dx in (-width / 2, 0.0, width / 2)) + lift
+        zs.append(max(z, line))
+    zs = [zs[0]] + [max(b, (a + b + c) / 3.0) for a, b, c in zip(zs, zs[1:], zs[2:])] + [zs[-1]]
+    rows = [(y0 - 0.003, z0 - 0.02)] + list(zip(ys, zs)) + [(y1 + 0.003, z1 - 0.02)]
+    vs = [(bm.verts.new(field.origin + Vector((x - width / 2, y, z))), bm.verts.new(field.origin + Vector((x + width / 2, y, z))))
+          for y, z in rows]
     for (a0, b0), (a1, b1) in zip(vs, vs[1:]):
         bm.faces.new((a0, b0, b1, a1))
+
+
+def _edge_at(field, centre, top, x, c):
+    """Where a plate's upper edge passes local |x| = `x`: (y, z) local, 1.2 cm below the edge."""
+    best = None
+    for a10 in range(150, 750, 5):
+        a = a10 / 10.0
+        t = math.radians(centre + a)
+        z = top(a) - 0.012
+        r = field.radius(t, z) + c["clear"] + c["thick"] + 0.003
+        d = abs(abs(math.cos(t) * r) - x)
+        if best is None or d < best[0]:
+            best = (d, field.cy + math.sin(t) * r, z)
+    return best[1], best[2]
 
 
 def _skin(obj, ch, weights):
@@ -349,7 +372,7 @@ def tassets(ch, name, field, c, key="plate"):
 
     n = c["lames"]
     height, overlap = c["lame"]
-    z_top = c["waist"] - c["flange"][1] + 0.004
+    z_top = c["waist"] - 0.003  # tucked up under the flange: no gap when the lames swing
     rows = lame_rows(n, z_top, height, overlap)
     wts = lame_weights(n)
     a0, a1 = c["tasset"]
@@ -369,7 +392,7 @@ def tassets(ch, name, field, c, key="plate"):
                     # Hung from the flange and flaring a little; each lame's lower edge
                     # stands off over the next lame's top, with a turned lip at the end.
                     r = field.hanging(t, z, z_top) + c["clear"] + 0.004 + c["thick"]
-                    r = max(r, field.radius(t, c["waist"]) + c["clear"] + c["flange"][0] * 0.55)
+                    r = max(r, field.radius(t, c["waist"]) + c["clear"] + c["thick"] + c["flange"][0] * 0.45)
                     r += 0.020 * (z_top - z) / (n * height) + 0.0075 * f + 0.003 * f ** 6
                     # Rounded corners at the outer lower edge of the lowest lame.
                     if k == n - 1 and f > 0.5:
@@ -409,14 +432,14 @@ def corslet(ch, name, s):
     import numpy as np
     from mathutils import Matrix
 
-    from . import gear, officers
+    from . import gear
 
     c = dict(CORSLET, **(s.get("corslet") or {}))
-    field = Field(ch)
+    field = Field(ch, origin=c["origin"])
     waist, point = c["waist"], c["point"]
     parts = []
     bm, _lip = _plate(field, -90.0, 93.0, breast_top, lambda a: breast_bottom(a, waist, point),
-                      lambda a, z: ridge(a, z, waist) + 0.0025, c, flange=c["flange"])
+                      lambda a, z: ridge(a, z, waist, c["ridge"], c["belly"]) + 0.0025, c, flange=c["flange"])
     breast = _finish(bm, f"{name}.breast", c["thick"])
     bm, _lip = _plate(field, 90.0, 90.0, back_top, lambda a: waist - 0.012,
                       lambda a, z: 0.004 * math.exp(-((z - 1.34) / 0.09) ** 2), c, cols=48, rows=30,
@@ -424,21 +447,18 @@ def corslet(ch, name, s):
     back = _finish(bm, f"{name}.back", c["thick"])
     parts += [breast, back]
     if c["straps"]:
-        pts = officers._cloth_points(ch)
         bm = bmesh.new()
+        x = 0.105
+        yf, zf = _edge_at(field, -90.0, breast_top, x, c)
+        yb, zb = _edge_at(field, 90.0, back_top, x, c)
         for side in (1, -1):
-            a = 50.0  # on the shoulder's slope, clear of the collar
-            tf, tb = math.radians(-90.0 + side * a), math.radians(90.0 - side * a)
-            zf, zb = breast_top(a) - 0.012, back_top(a) - 0.012
-            pf = field.point(tf, field.radius(tf, zf) + c["clear"] + c["thick"] + 0.004, zf)
-            pb = field.point(tb, field.radius(tb, zb) + c["clear"] + c["thick"] + 0.004, zb)
-            _strap(bm, field, pts, (pf.x + pb.x) / 2, pf.y, pb.y, zf, zb)
-        parts.append(_finish(bm, f"{name}.straps", c["thick"]))
+            _strap(bm, field, side * x, yf, yb, zf, zb)
+        parts.append(_finish(bm, f"{name}.straps", 0.0015))
     for o in parts:
         gear.rigid(o, ch.arm, ch.prefix + c["bone"], Matrix.Identity(4))
         ch.add("gear", o, "plate")
-    out = tassets(ch, name, field, c)
-    ch.armour = parts + [out]
+    out = tassets(ch, name, field, c) if c["lames"] else parts[0]
+    ch.armour = parts + ([out] if c["lames"] else [])
     # How well it sits, unposed: the raw surface against the plate's inside.
     gap = (field.env - field.raw)[int((waist - field.z0) / field.dz):int((1.38 - field.z0) / field.dz)]
     ch.armour_report = {"fit_gap_mean_m": round(float(np.mean(gap)) + c["clear"], 4),

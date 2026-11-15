@@ -70,7 +70,7 @@ from mathutils import Matrix, Vector
 from . import armature as am
 from . import body as bd
 from . import aim as aiming
-from . import crawl, faces, gear, heads, horse, mount, poses, registry, rig
+from . import armour, crawl, faces, gear, heads, horse, mount, poses, registry, rig
 from .humans import Character, prepare_export
 from .cavalry_kit import KITS  # noqa: F401  (the units' `kit`)
 
@@ -96,7 +96,7 @@ PALETTE = {
 # The 17th-century riders (`dress` "buff17"): buff, linen band and blacked bucket boots keep
 # these colours (`FIXED17`); the cloth sleeves (`dsleeve`) take the sprite's coat colour.
 PALETTE17 = {"buff": (0.74, 0.58, 0.36), "fallband": (0.93, 0.92, 0.88), "jackboots": (0.16, 0.11, 0.07)}
-FIXED17 = ("buff", "fallband", "jackboots")
+FIXED17 = ("buff", "fallband", "jackboots", "plate")
 # Horse coats by the sprites (`mount.COAT` tints: body, mane and tail).
 HORSE_COATS = {
     "black": {"body": (0.18, 0.15, 0.14), "hair": (0.08, 0.07, 0.06)},
@@ -547,7 +547,7 @@ def zischagge(ch, name, plume=None):
              Matrix.Rotation(math.radians(20 + 6 * k), 4, "X"))
     for v in bm.verts:
         v.co += sock
-    obj = _held(ch, f"{name}_zischagge", "metal", bm, "socket.hat", Matrix.Identity(4))
+    obj = _held(ch, f"{name}_zischagge", "plate", bm, "socket.hat", Matrix.Identity(4))
     if plume:
         for i, (key, dx) in enumerate((("sash", -0.025), ("crest", 0.025))):
             bm = bmesh.new()
@@ -1264,9 +1264,11 @@ def make(ctx, spec):
         if spec.get("shirt"):
             ch.shell("shirt", "tunic", lambda c, n, h, p: (h in TORSO and 0.97 + oz < c.z < 1.47 + oz) or h in ARMS, 0.014)
     if spec.get("armour"):
-        ch.shell("cuirass", "metal", lambda c, n, h, p: h in TORSO and 1.0 + oz < c.z < 1.46 + oz, 0.05)
+        # A horseman's back and breast (#522): plate, rigid on the chest, no tassets (the
+        # shell it replaces bent with the trunk and took the coat's colour).
+        armour.corslet(ch, name, dict(spec, corslet={"origin": tuple(origin), "lames": 0, "waist": 1.075, "point": 0.022}))
     if spec.get("arms"):
-        ch.shell("vambraces", "metal", lambda c, n, h, p: h in ARMS, 0.042)
+        ch.shell("vambraces", "plate", lambda c, n, h, p: h in ARMS, 0.042)
     ch.bone_layer()
     ch.caps()
     extra = []

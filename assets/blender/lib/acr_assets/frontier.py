@@ -33,7 +33,7 @@ A unit script is data: its `.MD` lines and `spec(md, ...)`, then `build(ctx)` ca
 
 import math
 
-from . import civil, registry
+from . import armour, civil, registry  # noqa: F401
 
 # Own cloth keys, each with its own painter (`outfit.dress` paints one colour per painter).
 for _key, _layer, _like, _fin, _rgb in (
@@ -67,7 +67,7 @@ PALETTE = {
 }
 BUILD = {"width": 0.98, "shoulders": 1.06, "limbs": 1.15}
 KIT = ("belt_l", "horn", "pouch", "tomahawk_belt", "knife")
-FIXED = ("horn", "pouch", "metal", "wood", "belts", "scabbard", "brass", "plume", "pelt")
+FIXED = ("horn", "pouch", "metal", "plate", "wood", "belts", "scabbard", "brass", "plume", "pelt")
 DEFAULTS = {"body": "hunting", "sleeves": "hunting", "skirts": True, "legs": "leggings", "layers": ("cape", "sash"),
             "kit": KIT, "hat": "fur_cap", "hat_at": (0.0, 0.005, -0.07, -8), "gun": 1.62, "mix": 0.4, "fixed": (),
             "build": BUILD, "melee": "musket", "drape": False, "carry": None, "reload": None,
@@ -383,7 +383,7 @@ def make(root, name, s):
     am.attach(hat, ch.arm, "socket.hat", Matrix.Translation(am.world(ch.arm, "socket.hat").translation + Vector((dx, dy, dz)))
               @ Matrix.Rotation(math.radians(tilt), 4, "X"))
     ch.held["hat"] = hat
-    ch.keys[hat.name] = "fur" if s["hat"] == "fur_cap" else ("metal" if s["hat"] in ("morion", "cabasset") else "hat")
+    ch.keys[hat.name] = "fur" if s["hat"] == "fur_cap" else ("plate" if s["hat"] in ("morion", "cabasset") else "hat")
     if s["gun"]:
         gun = gear.musket(f"{name}.musket", length=s["gun"], bayonet=0.0)
         gun["acr_material_keys"] = ["wood", "metal"]
