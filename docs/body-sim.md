@@ -374,6 +374,36 @@ nearest the window centre that no ragdoll holds; `ACR_NO_GAIT` turns it off).
   `palette_of` rebuilt them from the rest pose and showed every tool (EngKri, EngMus,
   EngTap). A ragdoll has no clip: the slots its clip had collapsed when the physics took
   over stay collapsed (`hidden_slots`, `hide`).
+- **What a ragdoll carries (#512):** `palette_of` builds every slot from its body bone and
+  the rest pose, which drops the clip's keys on sockets: the ramrod, keyed into its pipes on
+  `socket.hand_l` in every clip, stood out of the left hand for the length of every hit
+  reaction. `ragdoll_view::carried` takes from the clip pose each slot that is not a body
+  bone's own (sockets, held gear, fingers) as a matrix relative to its bone's slot, and
+  `carry` puts it back on the physics' bone: a survivor's follows his clip every frame, a
+  dying man's is frozen when the physics takes over (and in his frozen corpse). A held part
+  (an unskinned mesh on a node, `held_parts`: its long axis) that lies along a longer one
+  held by another bone in the clip pose, both ends within `ALONG` = 0.06 m of its axis, is
+  carried by that part's bone: the stowed ramrod goes with the musket's hand; drawn or past
+  the muzzle it is the left hand's.
+- **A survivor keeps his grip (#512):** the physics' arm cannot hold a clip's arm (the elbow
+  is a hinge, the wrist a cone of 60°, the grips turn the hand and roll the forearm
+  further), so it left it with the first step: a musket at the shoulder dropped level, a
+  pike sloped, and between the blows of a bayonet fight both men carried the musket level
+  on the shoulder. `ragdoll_view::held_arms` takes the arms that hold a weapon in the clip
+  pose (clavicle, upper arm, forearm, hand) relative to the chest (`spine2`), and `carry`
+  puts them on the physics' chest before the carried slots: the man rocks, bends and
+  stumbles with trunk, head and legs, and musket, pike or spontoon stay where the drill has
+  them and move with the body. An arm holds when its hand carries a shown held part, or its
+  wrist lies within `GRIP` = 0.16 m of the axis of one (the left hand on the stock or
+  shaft); an empty arm stays the physics'. Survivors on their feet only: a man knocked
+  down and a dying man's fall are the physics' (the dying keep the carried slots frozen at
+  takeover). No blend is needed: the physics starts on the clip's chest and the muscles
+  pull it back to it before the hand-over, so the arms start and end where the clip has
+  them. A blow on the holding arm does not free it: tried, and the arm did not give but
+  snapped to its limits (three of four wounds of the Frenchman in the inspector fight
+  EngM18 against FrnM18 were in his right arm, each laying the musket on his shoulder).
+  Open: a real give of a struck weapon arm (a sag on the clip pose); the physics' arm is
+  still simulated under the clip's and can pull on the trunk.
 - **Limp** (`Body::leg` < 100 on both legs): the loop's samples on the bad leg take
   `1 − 0.6 · severity` of their time (a short, quick step); in its swing the bad leg is held
   straighter and the hip hikes; the trunk leans over the good leg. The hand on the side of a
