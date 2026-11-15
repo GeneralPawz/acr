@@ -25,6 +25,8 @@ use crate::ui::{GameKind, GameSetup};
 mod body_arrows;
 mod build_view;
 mod building_hits;
+#[cfg(test)]
+mod clip_audit;
 mod cloth_view;
 mod controls;
 mod crew_view;

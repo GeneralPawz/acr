@@ -487,17 +487,17 @@ pub fn target_point(ground: Vec3, me: Vec3, height: StrikeHeight, mounted: bool,
 /// (the muzzle, a weapon's point or the held weapon), whether that is a muzzle (two-handed)
 /// and whether it is a point (muzzle or `socket.tip`: its distance is the reach).
 #[derive(Clone, Copy, Debug)]
-struct Weapon {
-    socket: usize,
-    tip: Option<usize>,
-    muzzle: bool,
-    point: bool,
+pub(super) struct Weapon {
+    pub(super) socket: usize,
+    pub(super) tip: Option<usize>,
+    pub(super) muzzle: bool,
+    pub(super) point: bool,
 }
 
 /// A point closer to the hand than this (m) is a hidden weapon (its socket scaled to 0 in
 /// this clip: a dragoon's sabre while he holds the carbine); the layer then takes the
 /// socket's axis and [`REACH`].
-const HIDDEN: f32 = 0.2;
+pub(super) const HIDDEN: f32 = 0.2;
 
 /// The right-hand weapon sockets, best first: the main weapon (`socket.hand_r`), a second
 /// one drawn for melee (`socket.blade_r`: a dragoon's sabre, a musketeer's sidearm) and an
@@ -512,7 +512,7 @@ const SHOWN: f32 = 0.5;
 /// by node names: `*socket.muzzle` under the socket, `*socket.tip` under the socket (for
 /// `socket.hand_r` also elsewhere under the hand: a lance on the hand bone), else the held
 /// item's first node.
-fn weapons(nodes: &[Node]) -> Vec<Weapon> {
+pub(super) fn weapons(nodes: &[Node]) -> Vec<Weapon> {
     let under = |i: usize, of: Option<usize>| {
         let mut n = nodes[i].parent;
         while let Some(p) = n {
@@ -547,17 +547,20 @@ fn weapons(nodes: &[Node]) -> Vec<Weapon> {
 /// The weapon in use in a pose (`globals`: the nodes' model matrices): the first of
 /// `weapons` whose socket is shown (its scale against its parent's at least [`SHOWN`]),
 /// else the first.
-fn pick(weapons: &[Weapon], nodes: &[Node], globals: &[Mat4]) -> Option<Weapon> {
+pub(super) fn pick(weapons: &[Weapon], nodes: &[Node], globals: &[Mat4]) -> Option<Weapon> {
+    weapons.iter().find(|w| shown(w, nodes, globals)).or(weapons.first()).copied()
+}
+
+/// Whether the weapon's socket is shown in a pose: its scale against its parent's is at
+/// least [`SHOWN`].
+pub(super) fn shown(w: &Weapon, nodes: &[Node], globals: &[Mat4]) -> bool {
     let scale = |i: usize| {
         let m = &globals[i];
         Vec3::new(m[0][0], m[0][1], m[0][2]).length()
     };
-    let shown = |w: &&Weapon| {
-        let s = scale(w.socket);
-        let p = nodes[w.socket].parent.map_or(1.0, scale);
-        p > 1e-6 && s / p >= SHOWN
-    };
-    weapons.iter().find(shown).or(weapons.first()).copied()
+    let s = scale(w.socket);
+    let p = nodes[w.socket].parent.map_or(1.0, scale);
+    p > 1e-6 && s / p >= SHOWN
 }
 
 /// The strike layer of the 3D view.
