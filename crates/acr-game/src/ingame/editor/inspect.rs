@@ -394,7 +394,13 @@ impl Editor {
         let mut placed = vec![subject];
         let mut target = None;
         if enemy != Enemy::None {
-            let d = if far && enemy != Enemy::Down { FAR } else { NEAR[enemy.distance()] };
+            // A weapon with a longer stance than the scene (a pike, a lance) gets its room.
+            let room = acr_sim::melee::strike_stance(world.catalog.get(kind), 0).map_or(0, |s| s + 30);
+            let d = match enemy {
+                Enemy::Down => NEAR[enemy.distance()],
+                _ if far => FAR,
+                _ => NEAR[enemy.distance()].max(room),
+            };
             let (dx, dy) = ((acr_sim::trig::cos(dir) * d) >> 8, (acr_sim::trig::sin(dir) * d) >> 8);
             let t = world.spawn(
                 enemy_kind(world, kind, enemy),
@@ -1046,8 +1052,6 @@ mod tests {
                 "STANCE {id}: first blow from {off:.1} px without the rule, {on:.1} px with it (stance {want}, min {}, reach {})",
                 d.min, d.reach
             );
-            // A pikeman's man 110 px off is well inside his stance: he strikes from there.
-            let want = if want > 130 { 110 } else { want };
             assert!((on - want as f32).abs() <= STRIKE_TOL as f32 + 2.5, "{id}: {on} px, stance {want}");
         }
         // A pikeman and a line musketeer at each other, 110 px apart: who struck from where.
