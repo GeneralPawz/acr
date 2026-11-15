@@ -565,7 +565,14 @@ sideways touch window, the top 52 % of an upright one. Every frame the camera is
 the middle of the scene, 27 px above the ground, stands in the middle of the free picture
 (`InGame::editor_inspect`, `View3d::pan`), so the unit stays put while the camera turns. **A
 drag on the picture turns and tilts the camera round the unit** (the modern controls' orbit,
-started by the left button or one finger); "Ansicht drehen" turns it by eighths. The wheel and the pinch zoom up to 16 here
+started by the left button or one finger, also by the right button: a finger that rested
+before it moved; also while the game is paused, so the ▶ gesture is off here); "Ansicht drehen"
+turns it by eighths. **Two fingers (or the middle button) move the picture**: the scene's
+middle follows them on the screen, at most 42 % of the free picture off its middle
+(`Inspector::offset`, `inspect::PAN`), and the camera still turns round the scene from there; a
+new scene stands in the middle again. With an enemy the middle of the scene is the point half
+way between the two where they stand now (`Inspector::middle`), so both stay in the picture
+when they close in. The wheel and the pinch zoom up to 16 here
 (`controls::INSPECT_ZOOM`; 2 elsewhere), under either control scheme. The touch skin leaves
 out the stock, its fold and the minimap while the inspector is on.
 
@@ -577,7 +584,7 @@ out the stock, its fold and the minimap while the inspector is on.
 | Ansicht drehen `<` `>` | the camera an eighth of a turn round the unit |
 | Gegner `<` `>` | who stands in front of the unit: keiner; zu Fuss, steht; zu Fuss, kaempft; Reiter, steht; Reiter, kaempft; am Boden (a man who lost a leg at the knee: he crawls). The enemy is England's line musketeer `EngM18` or dragoon `EngD18` (France's `FrnM18`, `FrnD18` against an English unit), player 2's, with 20000 life so the fight lasts; one who "steht" does not look for victims (`Unit::no_search_victim`), against one who "kaempft" the unit gets 20000 life too |
 | Abstand | nah (110 px to a man on foot, 140 to a rider, 70 to a man on the ground) or fern (480 px: musket and bow range) |
-| Kampf | endlos (the 20000 life above) or toedlich: both keep their own life, so the fight ends with a death and its animation |
+| Kampf | endlos (the 20000 life above) or toedlich: both keep their own life, so the fight ends with a death and its animation. Nobody is captured in the inspector (`World::capture_rule` 3), and a fight that came to a rest goes on: every 16 ticks a unit standing without orders attacks its enemy again (`Editor::inspect_keep_fighting`) |
 | Blut und Wunden | an or aus: the 3D view's gore over the setting (`ThreeD::set_gore`, render only), from the next frame |
 | Neu aufstellen | the same scene again: the fight starts over |
 | Bewegungen des Modells | the clips of the unit's 3D model, as the model file names them. A click loops that clip on the unit whatever the simulation does; "wie die Simulation" ends it. The classic window pages the list by eight, the touch drawer shows it whole |
@@ -590,7 +597,7 @@ Every change of the scene is one editor input (`Inspect { kind, enemy, far, fata
 10): what the inspector placed before is removed, the unit stands in the middle of the map
 facing south-east and, with an enemy, Kampf goes on and the unit is ordered to attack him
 (`combat::attack_obj`), so blow, reach and contact are the simulation's. The camera then looks
-between the two and fits both. A peasant facing an enemy soldier is captured, as in any game.
+between the two and fits both. 
 
 The clip list is render only (`ThreeD::set_inspect`, `inspect_clips`): it needs the unit's
 model file; without one the view says so and only the fights work. A looped clip plays on the

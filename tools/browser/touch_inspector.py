@@ -6,8 +6,8 @@ Playwright with a phone held sideways (844x390) and upright (390x844), against
 blank field on the inspector, and checks that the drawer opened by itself, that it shows the
 nation's units as icon cells and the controls above them, that it leaves the model its part of
 the picture (the left of a sideways window, the top of an upright one), that a tap on a unit
-cell places that unit, that the clip stepper names a clip of the model and that a drag on the
-picture turns the camera. Screenshots go to `--shots` as `inspector-<viewport>-<step>.png`.
+cell places that unit, that the clip stepper names a clip of the model, that a drag on the
+picture turns the camera and that two fingers move the picture with the unit kept inside it. Screenshots go to `--shots` as `inspector-<viewport>-<step>.png`.
 
 Run it with
 `~/browser/venv/bin/python tools/browser/touch_inspector.py --url 'http://127.0.0.1:8090/?game=/game/'`.
@@ -36,6 +36,20 @@ LAYOUT = """() => {
     inspector: d.classList.contains('inspector'),
   };
 }"""
+
+
+def drag(run, x0, x1, y, steps=24, pause=0.05):
+    """A slow one-finger drag along a row. On the narrow upright phone it starts so slowly that the finger counts
+    as resting first (the long press, the right button): the camera turns all the same."""
+    send = lambda kind, x: run.cdp.send(
+        "Input.dispatchTouchEvent", {"type": kind, "touchPoints": [{"x": x, "y": y, "id": 9}] if kind != "touchEnd" else []}
+    )
+    send("touchStart", x0)
+    for i in range(1, steps + 1):
+        send("touchMove", x0 + (x1 - x0) * i / steps)
+        time.sleep(pause)
+    send("touchEnd", x1)
+    time.sleep(0.4)
 
 
 def state(run):
@@ -91,23 +105,46 @@ def play(browser, url, name, size, shots, timeout_s):
     i = state(run)["inspector"]
     r["clip"] = i["clip"]
     r["clip_ok"] = i["clip"] in i["clips"]
-    # A drag on the free picture turns the camera.
+    # A drag on the free picture turns the camera, also while the game is paused.
+    run.drive({"cmd": "key", "key": "pause"})
+    time.sleep(0.3)
+    r["paused"] = state(run).get("paused")
     before = state(run).get("orbit")
     x, y = (w * 0.25, h * 0.6) if not upright else (w * 0.3, h * 0.36)
     r["under"] = page.evaluate(
         "([x, y]) => { const e = document.elementFromPoint(x, y); return e ? e.tagName + '.' + e.className + ' ' + (e.closest('[data-acr-viewport]') !== null) : null; }",
         [x, y],
     )
-    run.hswipe(x, x + 0.3 * w, y)
+    drag(run, x, x + 0.3 * w, y)
     time.sleep(0.6)
     after = state(run).get("orbit")
     r["orbit"] = [before, after]
     r["turned"] = before is not None and after is not None and before != after
     run.shot("3-clip-turned")
+    # Two fingers move the picture: the unit goes with them, stays inside the free part, and the
+    # camera still turns round it afterwards.
+    def two(kind, dx):
+        pts = [] if kind == "touchEnd" else [{"x": x + dx, "y": y, "id": 1}, {"x": x + dx, "y": y + 60, "id": 2}]
+        run.cdp.send("Input.dispatchTouchEvent", {"type": kind, "touchPoints": pts})
+
+    two("touchStart", 0)
+    for n in range(1, 13):
+        two("touchMove", -0.6 * w * n / 12)
+        time.sleep(0.03)
+    two("touchEnd", 0)
+    time.sleep(0.6)
+    off = state(run)["inspector"]["offset"]
+    r["offset"] = off
+    drag(run, x, x + 0.2 * w, y)
+    time.sleep(0.5)
+    r["offset_after_turn"] = state(run)["inspector"]["offset"]
+    # The fingers went left along a row: so did the unit, although the camera is turned.
+    r["panned"] = off[0] < -20 and abs(off[1]) < 12 and r["offset_after_turn"] == off
+    run.shot("4-panned")
     r["errors"] = run.errors
     r["passed"] = bool(
         r["opened"] and r["placed"] and r["controls_first"] and r["cells"] > 5 and r["picked"] == "EngM18(EN)"
-        and r["clip_ok"] and r["turned"] and not run.errors
+        and r["clip_ok"] and r["turned"] and r["panned"] and not run.errors
     )
     return r
 
@@ -130,7 +167,7 @@ def main():
         browser = p.chromium.launch(headless=True, args=CHROMIUM_ARGS[a.gpu])
         for name in a.viewports:
             r = reports[name] = play(browser, a.url, name, VIEWPORTS[name], shots, a.timeout_s)
-            keys = ("opened", "placed", "controls_first", "cells", "picked", "clip", "turned", "under")
+            keys = ("opened", "placed", "controls_first", "cells", "picked", "clip", "paused", "turned", "panned", "offset")
             print("%-9s %s  %s errors=%d" % (name, "PASS" if r["passed"] else "FAIL", {k: r.get(k) for k in keys}, len(r.get("errors", []))))
         browser.close()
     (out / "report.json").write_text(json.dumps(reports, indent=2))

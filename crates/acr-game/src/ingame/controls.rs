@@ -220,11 +220,11 @@ pub(super) enum PanButton {
 /// A grab-and-drag pan in progress.
 #[derive(Debug, Clone, Copy)]
 pub(super) struct Pan {
-    from: [f32; 2],
+    pub(super) from: [f32; 2],
     start: Camera,
     pub button: PanButton,
     /// The cursor has left the click slop: the drag pans.
-    moved: bool,
+    pub(super) moved: bool,
 }
 
 /// State of the modern controls.
@@ -409,7 +409,8 @@ impl InGame {
 
     /// The middle button pans the map while held (modern controls).
     pub fn middle_button(&mut self, pressed: bool) {
-        if !self.modern() {
+        // (Also in the unit inspector under the original controls: its picture is moved so.)
+        if !self.modern() && !self.editor_inspecting() {
             return;
         }
         if pressed {

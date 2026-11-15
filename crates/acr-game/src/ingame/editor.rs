@@ -393,6 +393,7 @@ impl Editor {
     /// the player's and the mission's.
     pub fn before_step(&mut self, world: &mut World) -> Vec<acr_sim::Command> {
         let orders = self.battle.tactics.as_mut().map(|t| t.orders(world)).unwrap_or_default();
+        self.inspect_keep_fighting(world);
         if self.auto_reload {
             reload_guns(world);
         }
@@ -1468,6 +1469,8 @@ impl super::InGame {
         }
         let touch = self.interface.claim.touch;
         let window = self.interface.window;
+        // The camera looks at the unit, or between the unit and its enemy where they stand now.
+        let middle = self.editor.as_ref().zip(self.world.as_ref()).and_then(|(e, world)| e.inspect.middle(world));
         let Some(e) = self.editor.as_mut() else { return };
         // The classic window's left edge in window pixels (the whole width while it is folded).
         let canvas = (window[0] / SCREEN[0] as f32).min(window[1] / SCREEN[1] as f32);
@@ -1500,19 +1503,42 @@ impl super::InGame {
             (false, _) => [edge.clamp(window[0] * 0.3, window[0]), window[1]],
         };
         let zoom = i.fit.take().map(|scene| inspect::zoom_for(scene, free));
+        if let Some(m) = middle {
+            i.look = m;
+        }
         let (look, placed) = (i.look, i.subject.is_some());
         if !placed {
             return;
         }
-        // The camera follows the scene every frame: its middle stays in the middle of the
-        // free part while the player turns, tilts and zooms.
+        // A pan (two fingers, the middle button) moves the scene's middle with the fingers on
+        // the screen (the game's own pan runs along the world's axes, askew under a turned
+        // camera), kept inside the free picture.
+        match (self.interface.modern.pan.filter(|p| p.moved), self.cursor) {
+            (Some(pan), Some(at)) => {
+                let base = *i.pan_base.get_or_insert(i.offset);
+                let reach = [free[0] * inspect::PAN, free[1] * inspect::PAN];
+                i.offset = [
+                    (base[0] + at[0] - pan.from[0]).clamp(-reach[0], reach[0]),
+                    (base[1] + at[1] - pan.from[1]).clamp(-reach[1], reach[1]),
+                ];
+            }
+            _ => i.pan_base = None,
+        }
+        let offset = i.offset;
+        // The camera follows the scene every frame: its middle stays where the player put it
+        // in the free part (the middle at first) while he turns, tilts and zooms, so the
+        // camera always turns round the unit.
         self.set_camera(look.0, look.1, inspect::LIFT, zoom, Some(turned));
         if let Some(view) = self.three_d.free_view(self.camera, window) {
-            self.camera = view.pan([(window[0] - free[0]) / 2.0, (window[1] - free[1]) / 2.0]);
+            self.camera = view.pan([(window[0] - free[0]) / 2.0 - offset[0], (window[1] - free[1]) / 2.0 - offset[1]]);
         }
     }
 
     /// Whether the unit inspector's view is on.
+    pub fn inspecting(&self) -> bool {
+        self.editor_inspecting()
+    }
+
     pub(super) fn editor_inspecting(&self) -> bool {
         self.editor.as_ref().is_some_and(|e| e.inspect.on)
     }
@@ -1534,6 +1560,7 @@ impl super::InGame {
             "unit": unit(i.subject),
             "enemy": unit(i.target),
             "clip": i.clip,
+            "offset": i.offset,
             "clips": i.clips,
             "models": i.models,
         }))
@@ -1832,6 +1859,21 @@ impl super::InGame {
     /// The right button in the editor: on an icon, opens its level drop-down; on the nation
     /// combo box it opens the army menu; elsewhere closes the drop-down or menu, or stops placing.
     pub(super) fn editor_right(&mut self, ctx: &Ctx, pressed: bool) -> bool {
+        // The inspector: the right button (a finger that rested before it moved) turns the
+        // camera like the left one; there is nothing to order.
+        if self.editor_inspecting() && self.interface.modern.orbit.is_some() && !pressed {
+            self.interface.modern.orbit = None;
+            return true;
+        }
+        if pressed
+            && self.editor_inspecting()
+            && let (Some(at), Some(orbit)) = (self.cursor, self.three_d.orbit())
+            && (!self.interface.hud_input || !self.over_hud(ctx, at))
+            && (!self.interface.hud_input || !Editor::bounds(&self.editor_items(ctx)).contains(self.canvas_point(at)))
+        {
+            self.interface.modern.orbit = Some((at, orbit));
+            return true;
+        }
         let Some(e) = &mut self.editor else { return false };
         if !pressed {
             return e.release_grab(true);

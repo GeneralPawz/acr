@@ -41,10 +41,15 @@ const HEIGHTS: [f32; 2] = [62.0, 92.0];
 const FILL: [f32; 2] = [0.62, 0.9];
 /// The zoom never leaves this range.
 const ZOOMS: (f32, f32) = (1.0, 16.0);
+/// A pan moves the scene's middle at most this share of the free picture off its middle, so
+/// the unit never leaves the picture.
+pub const PAN: f32 = 0.42;
 /// A step of the turn buttons, radians (an eighth of a turn).
 pub const TURN: f32 = std::f32::consts::FRAC_PI_4;
 /// The free camera's first turn and tilt: from the front right, 20 degrees down.
 pub const ORBIT: [f32; 2] = [0.0, 0.35];
+/// Ticks between two looks at a fight that came to a rest.
+const REJOIN: u64 = 16;
 /// Clip lines of the classic window per page.
 const PAGE: usize = 8;
 /// The enemies, by the inspected unit's nation: a line musketeer and a dragoon of England,
@@ -167,6 +172,11 @@ pub struct Inspector {
     pub fit: Option<(f32, f32)>,
     /// Steps of the turn buttons the camera has not taken yet.
     pub turn: i32,
+    /// Where the scene's middle stands off the middle of the free picture, output pixels:
+    /// the player's pan. A new scene stands in the middle again.
+    pub offset: [f32; 2],
+    /// The offset when the pan in progress began.
+    pub pan_base: Option<[f32; 2]>,
     /// How many units the nation's list has, as of the last placed scene.
     pub shown: usize,
     /// The fight is fatal: nobody gets extra life.
@@ -198,6 +208,8 @@ impl Default for Inspector {
             look: (0, 0),
             fit: None,
             turn: 0,
+            offset: [0.0; 2],
+            pan_base: None,
             shown: 0,
             fatal: false,
             gore: None,
@@ -270,6 +282,17 @@ impl Inspector {
             far: self.far,
             fatal: self.fatal,
             dir: self.dir,
+        })
+    }
+
+    /// The middle of the scene as the units stand now: the unit, or the point half way to its
+    /// enemy (a fallen one too, while he lies there), world pixels.
+    pub fn middle(&self, world: &World) -> Option<(i32, i32)> {
+        let at = |id: EntityId| world.units.get(id.0 as usize).map(|u| u.pos.pixels());
+        let s = at(self.subject?)?;
+        Some(match self.target.and_then(at) {
+            Some(t) => ((s.0 + t.0) / 2, (s.1 + t.1) / 2),
+            None => s,
         })
     }
 
@@ -365,6 +388,8 @@ impl Editor {
         (self.inspect.subject, self.inspect.target) = (None, None);
         let Some(kind) = find(world, kind) else { return format!("Unbekannter Typ {kind}").into_bytes() };
         let mid = MapSize { shift: world.map.shift }.playable_size() / 2;
+        // Nobody is captured here (the rule's widest exemption): a peasant fights his fight.
+        world.capture_rule = 3;
         let subject = world.spawn(kind, 0, Pos::from_pixels(mid, mid), dir);
         let mut placed = vec![subject];
         let mut target = None;
@@ -436,6 +461,7 @@ impl Editor {
             wide += ((x - mid) as f32).hypot((y - mid) as f32);
         }
         i.fit = Some((high, wide));
+        i.offset = [0.0; 2];
         let id = &world.catalog.get(kind).id;
         match enemy {
             Enemy::None => id.clone().into_bytes(),
@@ -597,6 +623,26 @@ impl Editor {
                 if n < self.inspect.clips.len() { Ok(Act::Clip(n)) } else { Err(Reject::Range) }
             }
             _ => Err(Reject::NoWidget),
+        }
+    }
+
+    /// The inspector's part of a tick: a fight that came to a rest goes on. The unit attacks
+    /// its enemy again when it stands without orders (a blow that made it flinch or step back
+    /// ended the attack), and so does an enemy who fights back. Every [`REJOIN`] ticks;
+    /// `attack_obj` itself refuses the dead, the allied and men out of the fight.
+    pub(super) fn inspect_keep_fighting(&self, world: &mut World) {
+        let i = &self.inspect;
+        let (Some(s), Some(t)) = (i.subject, i.target) else { return };
+        if !world.tick.0.is_multiple_of(REJOIN) {
+            return;
+        }
+        let (s, t) = (s.0 as usize, t.0 as usize);
+        let idle = |w: &World, n: usize| w.units.get(n).is_some_and(|u| u.alive && u.death == 0 && u.orders.is_empty());
+        if idle(world, s) {
+            acr_sim::combat::attack_obj(world, s, t, 0xFE);
+        }
+        if i.enemy.fights() && idle(world, t) {
+            acr_sim::combat::attack_obj(world, t, s, 0xFE);
         }
     }
 
@@ -810,6 +856,24 @@ mod tests {
             w.step(&cmds);
         }
         assert!(!w.units[t].alive || w.units[t].death > 0, "he fell: life {}", w.units[t].life);
+        // The peasant against a dragoon who fights back, fatal: nobody is captured, the fight
+        // goes on after the first blows and ends with a death.
+        e.inspect.unit = 0;
+        let Some(Input::Inspect { kind, far, fatal, dir, .. }) = e.inspect_act(&w, Act::Again) else { panic!() };
+        assert_eq!(kind, "EngKri(EN)");
+        e.inspect_show(&mut w, &kind, Enemy::RiderFights, (far, fatal), dir);
+        let (s, t) = (e.inspect.subject.unwrap().0 as usize, e.inspect.target.unwrap().0 as usize);
+        for _ in 0..6000 {
+            let cmds = e.before_step(&mut w);
+            w.step(&cmds);
+        }
+        assert_eq!((w.units[s].owner, w.units[t].owner), (0, 1), "not captured");
+        let fell = |n: usize| !w.units[n].alive || w.units[n].death > 0;
+        assert!(fell(s) || fell(t), "one fell: lives {} and {}", w.units[s].life, w.units[t].life);
+        assert_eq!(e.inspect.middle(&w), {
+            let (a, b) = (w.units[s].pos.pixels(), w.units[t].pos.pixels());
+            Some(((a.0 + b.0) / 2, (a.1 + b.1) / 2))
+        });
         // The gore switch is the view's own: no input.
         assert_eq!(e.inspect_act(&w, Act::Gore), None);
         assert_eq!(e.inspect.gore, Some(false));
