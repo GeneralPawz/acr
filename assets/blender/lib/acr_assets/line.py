@@ -619,6 +619,10 @@ def support_clips(md, active=None):
         # `0 PIKA`: a thrust on ATTACK's frames (the stick jabs: the drummer's hanger stays
         # sheathed) and the strike clips of docs/melee.md with it.
         out.update(wclips.unit_clips(md, {0: "PIKA"}, melee="sword", active=active))
+        if "ATTACK" in md:
+            # The finishing blow with the stick's own length (0.28 m, not the sword's 0.86 m:
+            # it ended 0.47 m short): down on one knee, the stick jabbed down, as the knife.
+            out.update(finish.finish_clips(wclips.md_frames(md["ATTACK"]), "knife", wclips.STICK))
         for k in ("PSTAND", "PATTACK", "UATTACK"):
             if k in md:
                 out[k] = wclips.frames(wclips.md_frames(md[k]), [(0, stand)])
@@ -678,6 +682,13 @@ def _musket_clips(ctx, ch, md, carry=None, walks=(), gun=None, style=None):
             if id(p) not in solved:
                 solved[id(p)] = aiming.left_on_shaft(ch.arm, p)
         clips[clip] = [(f, solved[id(p)]) for f, p in keys]
+    # The bayonet's blows: every frame keyed, the left hand kept
+    # on the musket between the keys (`aim.dense_hold`, clip audit #509); the finishing
+    # blow's recovery leads the musket out past the right side of the chest.
+    for clip in list(clips):
+        if clip in rods or not clip.startswith("ATTACK"):
+            continue
+        clips[clip] = aiming.dense_hold(ch.arm, clips[clip], out=0.16 if clip.endswith("_FINISH") else 0.0)
     kind = getattr(ch, "sidearm", None)
     drawn = sidearm_strikes(md, kind) if kind else {}
     if drawn:

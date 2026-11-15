@@ -105,3 +105,30 @@ per clip).
   0.58 m short in the clip alone and 0.05 m off with the layer; ATTACK_CUT_MID 0.69 / 0.13;
   ATTACK_THRUST_DOWN 0.94 / 0.32 (the stick is short, 0.28 m from the hand).
 - Triangles: drummers 11 792, standard bearers 11 550, SpnM18/UsaM18 11 688.
+
+**Bayonet blows keyed on every frame (#509).** `aim.dense_hold` (from `line._musket_clips`, the
+`ATTACK*` clips that are not reload clips): every frame between two keys is keyed, the left arm
+solved again onto the musket where it holds it at both keys, and a musket placed in armature
+space (`aim.place`, the finishing blow) placed on every frame with the right hand on its grip;
+the finishing blow's recovery leads the musket 0.16 m out to the right, past the chest. Before,
+the exporter's interpolation of the arm angles took the left hand 0.31 m (`ATTACK_DOWN`) and
+0.45 m (`ATTACK_FINISH`) off the musket, and in the finish's recovery the musket was pulled up
+butt first in the right hand alone, grazing the right breast (0.09 m inside the trunk capsule;
+own render: beside the right shoulder, not through the middle of the chest). Drummers: the
+finishing blow uses the stick's length (docs/melee.md "Not yet").
+The finishing blow itself is posed beside the head (`finish.musket_clips`, `clips.beside`,
+`MUSKET_SIDE` 0.26 m): in the centre plane the butt end passed through the bent head at the blow.
+Clip audit (#509, `ACR-analysis/clip-audit/musk1` against `2026-11-15`), the four line
+musketeers alike: through the body 6 -> 4 clips (left: `CRAWL1`, `CRAWL2`, see below, and
+`PATTACK1`, `UATTACK1`), `grip_left` 0.308 -> 0.063 m (`ATTACK_DOWN`) and 0.453 -> 0.127 m
+(`ATTACK_FINISH`: still 7 mm over the limit, in the wind-up at frame 1, where `aim.place` leaves the
+left hand 0.063 m short), `PSTAND3` `grip_right` 0.121 m unchanged; reach 6 of 6 pass.
+
+Left as it is: the crawl clips keep the musket in the hand offline (the audit's `CRAWL1`,
+`CRAWL2` rows): the game never draws it there, a crawler is drawn from the model variant without
+the `musket` node and the musket lies where he fell (docs/rendering-3d.md "Crawlers"), so hiding
+it in the clip would hide it twice. Against the 1764 manual exercise: STAND and MOTION_* carry
+the firelock on the RIGHT shoulder, the right hand under the butt (the manual shoulders on the
+left, the butt in the left hand); the musket lives in `socket.hand_r`, so a left-shoulder carry
+needs the stand, the walks and every change of stance redone. PSTAND (charge bayonet: both
+hands, the butt at the right hip, level) and PSTAND1 (present) agree with it.

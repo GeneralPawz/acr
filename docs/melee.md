@@ -617,11 +617,18 @@ IroTam, MayVoi, DelPik, SpnS15, FrnBuk (old ones in `showcase/backup-finish/`).
   shoulder, `melee6/sheet_fence.png` frames 10–20).
 - **Club from the saddle:** fixed in m2-cav17 (below) for the cut down right; the cut down
   left still falls 0.39 m short with the clip alone (0.17 with the layer).
-- **Drummer's stick jab** (EngB18 `ATTACK_THRUST_*`): `line.support_clips` passes `melee="sword"`
-  to `clips.unit_clips`, which solves with `SWORD_TIP` (0.86 m) for a 0.42 m stick (0.58
-  short with the clip alone). The fix is a `tip` argument through `unit_clips` to
-  `sword_strikes` with `held.drumstick`'s tip, and an EngB18 rebuild: line.py and the
-  drummers are not cavalry, so m2-cav17 left it.
+- **Drummer's stick jab** (EngB18, FrnB18 `ATTACK_THRUST_*`, `ATTACK_CUT_*`): `line.support_clips`
+  still passes `melee="sword"` to `clips.unit_clips`, which solves the standing blows with
+  `SWORD_TIP` (0.86 m) for a stick whose point is 0.28 m from the hand (0.58 m short with the clip
+  alone; the strike layer closes it: clip audit #509, 0.02-0.09 m). The finishing blow is fixed
+  (#509): `finish.finish_clips(n, "knife", clips.STICK)`, down on one knee, the stick jabbed down
+  (0.47 -> 0.06 m with the layer). Open: a `tip` argument through `unit_clips` for the standing blows.
+- **Archers' bow strike** (AtcLut, MayLut, `meso.strikes` `bow`): the clip is solved for the bow's
+  upper tip in the LEFT hand, but `strike_view::weapons` and the clip audit read the right hand's
+  sockets only, there the arrow (point 0.72 m from the hand): reach 0.93-1.01 m off. Needs either a
+  left-hand weapon in `strike_view` or another blow (the arrow hidden and a right-hand weapon).
+- **Musketeers, stance changes** (EngM18 and the line): `PATTACK1` / `UATTACK1` cross the left
+  upper leg with the musket for one frame (0.04 m deep) between the stand and the aim's mid key.
 - **Native and plains down hacks** still use `native.club_down` (1.8 m, 0.24 short at
   frame 2); the shared `club_strikes` reaches 2.0 m with the club's point vector.
 - **Lance through the rider:** solved clear in Blender (hand 0.71 m right, 3° out) but only
