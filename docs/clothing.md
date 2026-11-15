@@ -1125,6 +1125,38 @@ UVs keep the bands' weave continuous. Weights transfer from skin/sleeve surfaces
 are limited to four. `outfit.collar_cuffs` records profiles, button counts, measured
 thickness ranges, boundary/nonmanifold edge counts, and weight errors per piece.
 
+## Clothing audit (#523)
+
+`assets/blender/tools/clothing_audit.py` (`acr_assets.clothaudit`, tests
+`tests/test_clothaudit.py`) reads built glbs with plain Python and numpy (no Blender, no
+rebuild; the 310 showcase models take 9 s), skins them in `STAND` and in the middle of the
+walk clip, and writes one row per unit and garment:
+
+    python3 assets/blender/tools/clothing_audit.py <glb or folder>... --out <abs dir> \
+        [--jobs 8] [--stats target/assets/units]
+
+Output: `audit.csv`, `ranking.md` (worst units, worst garments across units, flag counts)
+and `skipped.txt` (models without garments). A garment is a skinned mesh whose name or
+material key has a rank in `garments.LAYER_RANK` (1..6); armour, belts and boxes only cover;
+hair, caps (not drawn by the game) and fringes are ignored.
+
+| column | meaning | flag when (`clothaudit.LIMITS`) |
+|---|---|---|
+| `poke_stand`, `poke_walk`, `poke_mm`, `poke_over`, `poke_at` | vertices 2-25 mm outside a same-facing triangle of a layer above; the deepest, the layer, the bone | > 12 (skin: > 4) |
+| `rag_mm`, `teeth_per_m`, `rag_loop_cm`, `rag_at` | the worst open outline: mean distance of its reversal vertices from their neighbours' chord, and reversals of the turning direction per metre (outlines under an upper layer, and seams shared with another object, are skipped) | > 8 mm and > 2 per m |
+| `holes_stand`, `holes_walk` | skin vertices no layer covers although 85 % of the skin within 4 cm is covered, counted for the garment round them | > 4 |
+| `seam_cm`, `seam_gap_mm` | boundary facing other boundary of the same garment within 2.5 cm (a seam left open, a slit) | > 15 cm |
+| `stretch`, `collapse` | share of faces whose area in the walk is outside 0.6..1.6 of `STAND`, below 0.4 | > 8 % |
+| `sliver_stand`, `sliver_walk` | share of faces with an angle under 10 degrees | > 25 % |
+| `soup` | share of faces more than 25 degrees off the mean normal of their neighbours | > 45 % |
+| `kind`, `tri_angle` | `draped` when the median smallest angle is at least 45.5 degrees (a Delaunay lattice), else `shell`: a guess, wrong for draped garments with inlays; `--stats` makes the `drape` keys of `stats.json` win. The build does not export how a garment was made | |
+| `score` | sum of number / limit over the flags (each capped at 10) | |
+
+Known false rows: thin fins and strips (legging flaps, turnbacks: seam, sliver, soup) and
+pokes against rigid armour at its openings. It does not judge shape (a smooth tube scores
+clean), textures or other poses. First run and the rows checked on renders:
+`ACR-analysis/clothing-audit/2026-11-15/` (`summary.md`, `verified.md`).
+
 ## Known problems
 
 - Not every sewn pair meets within 5 mm: in the coat 166 of 251 do, 242 within 4.5 cm
