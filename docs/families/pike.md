@@ -156,3 +156,12 @@ distances the strike layer cannot close the gap (1.20 m off at 3.33 m, 2.02 m at
 is no finishing clip: on a man 0.9 m ahead even the shortened pike's grip would be 1.85 m up.
 The native and Meso-American spears (2.0-2.1 m, the point 1.4-1.6 m from the hand) keep their
 grips: a butt grip would gain about 0.5 m and needs their carry redone.
+
+**The close blow (#511).** `ATTACK_THRUST_CLOSE` / `ATTACK_CLOSE` (`pike.pike_close`): the
+shortened pike (`socket.blade_r`, the point 1.81 m before the right hand) level beside the right
+ribs at a standing man 1.67 m off (`clips.TARGET_MID`), both hands on the shaft; the 3.35 m
+behind the right hand run back level at rib height, the butt about 0.9 m right of his line and
+3.6 m behind him (through the ranks behind, as the long pike's does in the charge). The view
+plays it (`strike_view::close_blow`) for a type whose `melee::STANCES` entry is beyond its `.MD`
+reach when the standing victim is nearer than half the stance (75 px for the pikemen). Audit
+(`ACR-analysis/clip-audit/pike-close`): reach 0.000 m at 1.67 m, through 0, hands 0.050 / 0.051 m.

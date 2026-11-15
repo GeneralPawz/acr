@@ -150,7 +150,7 @@ A man on the ground is helpless: one blow ends him.
     | Riders | Clip | Point ahead / right / up (m) | Stance | Turn |
     |---|---|---|---|---|
     | sabres: `Eng/Frn/Spn D17, D18, KOf17, KOf18`, `UsaD18`, `UsaKOf18`, `SpnRei` | `ATTACK_CUT_MID` | 1.18–1.20 / 0.64–0.65 / 1.41 | 41 px (1.37 m) | 20/256 (28°) |
-    | lances: `PueVsd`, `PueVsdA`, `SiuKPik` | `ATTACK_THRUST_MID` | 2.98 / 0.24 / 1.68 | 90 px (3.0 m) | 3/256 (4°) |
+    | lances: `PueVsd`, `PueVsdA`, `SiuKPik` | `ATTACK_THRUST_MID` | 2.99 / 0.21 / 1.15 | 90 px (3.0 m) | 3/256 (4°) |
     | Sioux club and tomahawk: `SiuKLut`, `SiuKVog` | `ATTACK_CUT_MID` | 0.66 / 0.62 / 1.47 | 27 px (0.9 m) | 31/256 (44°) |
 
     A sabre comes down 0.65 m to the rider's right, beside the horse. So the stance is the
@@ -168,8 +168,9 @@ A man on the ground is helpless: one blow ends him.
     clips are solved for a man on foot and their error at a mounted target is not measured.
     With the turn in `melee_distance.json` the audit judges these riders at their stance:
     the sabre riders' `ATTACK_CUT_MID`/`_HIGH` pass (0.01–0.08 m off with the layer, 0.2–0.3
-    m clip alone); the lancers' `ATTACK_THRUST_MID`/`_HIGH` fail narrowly (0.16–0.18 m with
-    the layer; the clip's point is 1.68 m up, 0.5 m above the chest).
+    m clip alone); the lancers' `ATTACK_THRUST_MID`/`_HIGH` pass since the clip aims at the
+    chest (`cavalry` `lance_mid`: 0.07 / 0.04 m with the layer, 0.09 m clip alone at mid; it
+    was 1.68 m up, 0.5 m above the chest).
   - **Standing ground:** he does not step; he strikes from where he is (the original's
     band), as in the finishing rule.
   - **Formations and body spacing:** a brigade member within one walking cycle of his slot
