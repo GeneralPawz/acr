@@ -7,6 +7,8 @@ Plain Python with numpy, no Blender: reads each glb, skins it in `STAND` and in 
 the walk clip, and writes
 
 - `audit.csv`: one row per unit and garment (`acr_assets.clothaudit.COLUMNS`);
+- `shape.csv`: the cut of the legwear per unit (`clothaudit.leg_shape`: girths along the
+  left leg, fullness above the knee band, closure at it, the bare gap);
 - `ranking.md`: the worst units, the worst garments counted across units, and the flag
   counts.
 
@@ -31,9 +33,10 @@ def one(job):
     path, stats = job
     unit = os.path.splitext(os.path.basename(path))[0]
     try:
-        rows, note = clothaudit.audit(path, unit)
+        shape = {}
+        rows, note = clothaudit.audit(path, unit, shape)
     except Exception as e:  # a broken file must not stop the run
-        return unit, [], f"error: {type(e).__name__}: {e}"
+        return unit, [], f"error: {type(e).__name__}: {e}", {}
     sj = os.path.join(stats, unit + ".stats.json") if stats else None
     if sj and os.path.exists(sj):
         with open(sj, encoding="utf-8") as f:
@@ -41,7 +44,7 @@ def one(job):
         for r in rows:
             if r["garment"] in draped:
                 r["kind"] = "draped"
-    return unit, rows, note
+    return unit, rows, note, shape
 
 
 def table(head, rows):
@@ -101,11 +104,17 @@ def main(argv):
         else:
             files.append(p)
     os.makedirs(a.out, exist_ok=True)
-    rows, notes = [], {}
+    rows, notes, shapes = [], {}, []
     with ProcessPoolExecutor(a.jobs) as ex:
-        for unit, r, note in ex.map(one, [(f, a.stats) for f in files]):
+        for unit, r, note, shape in ex.map(one, [(f, a.stats) for f in files]):
             rows += r
             notes[unit] = note
+            if shape:
+                shapes.append(shape)
+    with open(os.path.join(a.out, "shape.csv"), "w", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, clothaudit.SHAPE_COLUMNS)
+        w.writeheader()
+        w.writerows(sorted(shapes, key=lambda s: s["unit"]))
     rows.sort(key=lambda r: (r["unit"], r["garment"]))
     with open(os.path.join(a.out, "audit.csv"), "w", newline="", encoding="utf-8") as f:
         w = csv.DictWriter(f, clothaudit.COLUMNS)

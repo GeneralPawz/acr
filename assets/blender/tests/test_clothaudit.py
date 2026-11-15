@@ -80,6 +80,31 @@ class Geometry(unittest.TestCase):
         self.assertGreater(rag, ca.LIMITS["rag_mm"])
         self.assertAlmostEqual(teeth * length, 12.0, delta=1.0)
 
+    def test_hem_smoothing_removes_the_teeth(self):
+        from acr_assets import garments
+
+        saw = ring(24, wobble=0.008)
+        self.assertGreater(ca.loop_raggedness(saw, True)[1], ca.LIMITS["teeth_per_m"])
+        out = np.array(garments.smooth_outline([tuple(p) for p in saw], True))
+        rag, teeth, length = ca.loop_raggedness(out, True)
+        self.assertEqual((rag, teeth), (0.0, 0.0))
+        self.assertAlmostEqual(np.linalg.norm(out, axis=1).mean(), 0.08, delta=0.004)  # the girth stays
+        # Pinned vertices (seams shared with another object) and open ends do not move.
+        pinned = garments.smooth_outline([tuple(p) for p in saw], False, pinned=[5])
+        for i in (0, 5, 23):
+            self.assertEqual(pinned[i], tuple(saw[i]))
+
+    def test_hem_smoothing_keeps_corners(self):
+        from acr_assets import garments
+
+        # An L: a skirt's front edge meeting its hem, with small teeth along both runs.
+        pts = [(0.0, 0.02 * i, 0.004 * (i % 2)) for i in range(10, 0, -1)] + [(0.0, 0.0, 0.0)] \
+            + [(0.02 * i, 0.0, 0.004 * (i % 2)) for i in range(1, 11)]
+        out = garments.smooth_outline(pts, False)
+        self.assertEqual(out[10], (0.0, 0.0, 0.0))
+        z = [p[2] for p in out[3:8]]  # the teeth (0 / 4 mm) settle on their mean line
+        self.assertLess(max(z) - min(z), 0.001)
+
     def test_one_corner_is_not_ragged(self):
         square = np.array([[x, 0, 0] for x in np.linspace(0, 0.2, 6)] + [[0.2, y, 0] for y in np.linspace(0.04, 0.2, 5)]
                           + [[x, 0.2, 0] for x in np.linspace(0.16, 0, 5)] + [[0, y, 0] for y in np.linspace(0.16, 0.04, 4)])
@@ -153,6 +178,15 @@ class Geometry(unittest.TestCase):
         self.assertTrue(0.009 < gap < 0.025, gap)
         # One narrow strip alone: its two sides are joined by edges, no seam.
         self.assertEqual(ca.open_seams(a[:22], ca.boundary_loops(ta[:20]), ta[:20])[0], 0.0)
+
+    def test_girths(self):
+        self.assertAlmostEqual(ca.hull_girth([(0, 0), (1, 0), (1, 1), (0, 1), (0.5, 0.5)]), 4.0)
+        # A tube that narrows from r = 0.10 to r = 0.05 along z.
+        pts = np.array([[r * math.cos(a), r * math.sin(a), z] for z, r in ((k * 0.01, 0.10 - 0.005 * k) for k in range(11))
+                        for a in np.linspace(0, 2 * math.pi, 24, endpoint=False)])
+        prof = dict(ca.girth_profile(pts, (0, 0, 0), (0, 0, 0.1), step=0.05, slab=0.004))
+        self.assertAlmostEqual(prof[0.0], 2 * math.pi * 0.10, delta=0.01)
+        self.assertAlmostEqual(prof[0.1], 2 * math.pi * 0.05, delta=0.01)
 
     def test_sample(self):
         self.assertEqual(ca.sample([0, 1], [[0, 0, 0], [2, 0, 0]], 0.25).tolist(), [0.5, 0, 0])

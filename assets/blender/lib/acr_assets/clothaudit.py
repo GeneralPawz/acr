@@ -24,6 +24,7 @@ English pikeman of 2026-11-15 (`ACR-analysis/clothing-audit/2026-11-15/verified.
 """
 
 import json
+import math
 import struct
 
 import numpy as np
@@ -583,9 +584,111 @@ def open_seams(pos, loops, tri=None):
     return total / 2.0, widest  # both sides of a gap are counted
 
 
+def hull_girth(pts):
+    """Perimeter of the convex hull of 2D points (m)."""
+    p = sorted(set(map(tuple, np.round(np.asarray(pts, float), 6).tolist())))
+    if len(p) < 3:
+        return 0.0
+
+    def half(seq):
+        out = []
+        for q in seq:
+            while len(out) >= 2 and ((out[-1][0] - out[-2][0]) * (q[1] - out[-2][1])
+                                     - (out[-1][1] - out[-2][1]) * (q[0] - out[-2][0])) <= 0:
+                out.pop()
+            out.append(q)
+        return out
+
+    h = half(p)[:-1] + half(p[::-1])[:-1]
+    return float(sum(math.dist(h[i], h[(i + 1) % len(h)]) for i in range(len(h))))
+
+
+def girth_profile(points, a, b, step=0.02, slab=0.015):
+    """Convex girths (m) of `points` in slabs across the axis a -> b, every `step`:
+    [(distance from a, girth)]; slabs with fewer than 5 points are left out."""
+    a, b = np.asarray(a, float), np.asarray(b, float)
+    ax = (b - a) / np.linalg.norm(b - a)
+    u = np.cross(ax, [1.0, 0.0, 0.0] if abs(ax[0]) < 0.9 else [0.0, 1.0, 0.0])
+    u /= np.linalg.norm(u)
+    v = np.cross(ax, u)
+    rel = np.asarray(points, float) - a
+    t = rel @ ax
+    out = []
+    for s in np.arange(0.0, float(np.linalg.norm(b - a)) + 1e-9, step):
+        sel = np.abs(t - s) < slab
+        if sel.sum() >= 5:
+            out.append((round(float(s), 3), hull_girth(np.stack([rel[sel] @ u, rel[sel] @ v], axis=1))))
+    return out
+
+
+SHAPE_COLUMNS = ["unit", "legwear", "thigh_cm", "above_knee_cm", "band_cm", "calf_cm", "fullness", "closure",
+                 "band_gap_cm"]
+LEGWEAR_RANKS = (1, 2)
+
+
+def leg_shape(m, parts, world, pose="stand", side="l"):
+    """The cut of the legwear as numbers (STAND, left leg), or None without leg bones:
+
+    - `thigh_cm`: girth of the legwear at mid thigh; `above_knee_cm`: its widest girth 4-16 cm
+      above the knee; `band_cm`: its narrowest 1-7 cm below the knee (where a knee band
+      closes); `calf_cm`: widest between there and the ankle;
+    - `fullness` = above_knee / band: about 1.0 is a tube, 1.3 and more reads as breeches
+      gathered into a band;
+    - `closure` = band / the skin's girth at the same place: 1.0-1.15 lies on the leg, more
+      stands off as an open pipe;
+    - `band_gap_cm`: the longest stretch from 10 cm above the knee to the ankle where no
+      legwear vertex lies (bare skin between breeches and stocking)."""
+    idx = {n.get("name", ""): i for i, n in enumerate(m.nodes)}
+    names = [f"thigh_{side}", f"shin_{side}", f"foot_{side}"]
+    if any(n not in idx for n in names):
+        return None
+    hip, knee, ankle = (world[idx[n]][:3, 3] for n in names)
+    leg_bones = set(names[:2])
+    cloth, skin, worn = [], [], []
+    for p in parts:
+        if not p["bones"]:
+            continue
+        on = np.array([b in leg_bones for b in p["bones"]])
+        if p["role"] == "skin":
+            skin.append(p[pose][on])
+        elif p["role"] == "garment" and p["rank"] in LEGWEAR_RANKS and p["key"] != "footwear" and on.any():
+            cloth.append(p[pose][on])
+            worn.append(p["key"])
+    if not cloth or not skin:
+        return None
+    cloth, skin = np.concatenate(cloth), np.concatenate(skin)
+    up = dict((round(float(np.linalg.norm(knee - hip)) - s, 3), g) for s, g in girth_profile(cloth, hip, knee))
+    down = dict(girth_profile(cloth, knee, ankle))
+    sdown = dict(girth_profile(skin, knee, ankle))
+    above = [g for s, g in up.items() if 0.04 <= s <= 0.16]
+    mid = [g for s, g in up.items() if abs(s - 0.5 * float(np.linalg.norm(knee - hip))) < 0.03]
+    band = [(g, s) for s, g in down.items() if 0.01 <= s <= 0.07]
+    if not above or not band:
+        return {"legwear": "+".join(sorted(set(worn))), "thigh_cm": 0, "above_knee_cm": 0, "band_cm": 0, "calf_cm": 0,
+                "fullness": 0, "closure": 0, "band_gap_cm": 99.0}
+    bg, bs = min(band)
+    sk = sdown.get(bs) or min(sdown.values(), default=bg)
+    sk = sk if sk > 0.05 else bg  # a degenerate skin slab: no closure number
+    calf = [g for s, g in down.items() if s > bs]
+    # Bare stretch along the leg: sorted distances of the legwear vertices along hip -> ankle.
+    def along(a, b, pts):
+        ax = (b - a) / np.linalg.norm(b - a)
+        return (pts - a) @ ax
+
+    lk, la = float(np.linalg.norm(knee - hip)), float(np.linalg.norm(ankle - knee))
+    t = np.sort(np.concatenate([along(hip, knee, cloth)[along(hip, knee, cloth) <= lk] - lk,
+                                along(knee, ankle, cloth)[along(knee, ankle, cloth) > 0]]))
+    t = np.concatenate([[-0.10], t[(t > -0.10) & (t < la - 0.03)], [la - 0.03]])
+    gap = float(np.diff(t).max()) if len(t) > 1 else la
+    return {"legwear": "+".join(sorted(set(worn))), "thigh_cm": round(100 * max(mid, default=0.0), 1),
+            "above_knee_cm": round(100 * max(above), 1), "band_cm": round(100 * bg, 1),
+            "calf_cm": round(100 * max(calf, default=0.0), 1), "fullness": round(max(above) / bg, 2),
+            "closure": round(bg / max(sk, 1e-6), 2), "band_gap_cm": round(100 * gap, 1)}
+
+
 # -- the audit ---------------------------------------------------------------------------------
 
-COLUMNS = ["unit", "garment", "rank", "layer", "kind", "tri_angle", "tris", "poke_stand", "poke_walk",
+COLUMNS = ["unit", "garment", "rank", "layer", "kind", "made_by", "tri_angle", "tris", "poke_stand", "poke_walk",
            "poke_share", "poke_mm", "poke_over", "poke_at", "rag_mm", "teeth_per_m", "rag_loop_cm", "rag_at", "holes_stand",
            "holes_walk", "seam_cm", "seam_gap_mm", "stretch", "collapse", "sliver_stand", "sliver_walk", "soup",
            "flags", "score"]
@@ -624,7 +727,7 @@ def walk_clip(model):
     return None
 
 
-def audit(path, unit=None):
+def audit(path, unit=None, shape=None):
     """One row (dict, `COLUMNS`) per garment of the glb at `path`, plus `flesh` (holes and
     skin poking out) and `caps` (stump caps showing). Returns (rows, note); rows is empty
     with a note when the model has no separable garments."""
@@ -652,6 +755,7 @@ def audit(path, unit=None):
         inv, _nv = weld(geo[0])
         tri = geo[1]
         parts.append({"key": key, "role": role, "rank": rank, "layer": ex.get("acr_layer", ""), "tri": tri,
+                      "made": str(ex.get("acr_garment") or ""),
                       "wtri": welded_triangles(tri, inv), "inv": inv, "bones": m.dominant_bones(ni, geo),
                       "stand": m.skinned(ni, geo, stand_w), "walk": m.skinned(ni, geo, walk_w)})
     garm = [p for p in parts if p["role"] == "garment"]
@@ -678,12 +782,16 @@ def audit(path, unit=None):
         note = "no skin mesh: holes not checked"
     else:
         note = ""
+    if shape is not None:
+        sh = leg_shape(m, parts, stand_w)
+        if sh:
+            shape.update(sh, unit=unit)
     rows = {}
     for p in parts:
         if p["role"] == "cover":
             continue
         row = dict.fromkeys(COLUMNS, 0)
-        row.update(unit=unit, garment=p["key"], rank=p["rank"], layer=p["layer"], kind="", poke_over="", poke_at="", rag_at="",
+        row.update(unit=unit, garment=p["key"], rank=p["rank"], layer=p["layer"], kind="", poke_over="", poke_at="", rag_at="", made_by="",
                    tris=len(p["tri"]))
         rows[p["key"]] = row
         if p["role"] != "garment":
@@ -699,6 +807,8 @@ def audit(path, unit=None):
             wp[pose] = acc / np.maximum(cnt, 1)[:, None]
         row["kind"], row["tri_angle"] = kind(wp["stand"], p["wtri"])
         row["tri_angle"] = round(row["tri_angle"], 1)
+        if p["made"]:  # the build's own word (node extra `acr_garment` = "<made>:<builder>")
+            row["kind"], _sep, row["made_by"] = p["made"].partition(":")
         st = stretch(wp["stand"], wp["walk"], p["wtri"])
         row["stretch"], row["collapse"], row["sliver_stand"], row["sliver_walk"] = (round(x, 4) for x in st)
         row["soup"] = round(max(soup(wp["stand"], p["wtri"]), soup(wp["walk"], p["wtri"])), 4)

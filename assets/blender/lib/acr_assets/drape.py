@@ -1287,6 +1287,7 @@ def dress(ch, garments=gm.ORDER, report=None, patterns=None, over=(), post_weld=
             else:
                 finish(part, ch, skirt, under=under)
             ch.add("clothes", part, key, symmetric=True)
+            part["acr_garment"] = f"draped:{g}"
             made[part.name] = key
             if not skirt:
                 new_under.append(part)
@@ -1820,6 +1821,168 @@ def relax_edges(ch, objs=None):
 
 
 
+HEMS = True  # `hems` before the morphs: every open garment edge straightened and turned under (#523)
+HEM_TURN = 0.004  # m: the turned hem's depth (in under the cloth) and width (back along it)
+HEM_SKIP = ("brass", "garter", "garters", "fringe", "flaps")  # keys left alone: strips, fins and fringes
+
+
+def _outlines(pairs):
+    """Chains of the free edges `pairs` (two sortable keys each) as (list of keys, closed);
+    broken where more than two free edges meet."""
+    nb = {}
+    for a, b in pairs:
+        nb.setdefault(a, []).append(b)
+        nb.setdefault(b, []).append(a)
+    used, out = set(), []
+
+    def walk(start, nxt):
+        chain = [start, nxt]
+        used.add(frozenset((start, nxt)))
+        while len(nb[chain[-1]]) == 2:
+            a, b = nb[chain[-1]]
+            n = a if b == chain[-2] else b
+            k = frozenset((chain[-1], n))
+            if k in used:
+                return chain, n == chain[0]
+            used.add(k)
+            if n == chain[0]:
+                return chain, True
+            chain.append(n)
+        return chain, False
+
+    order = sorted(nb)
+    for v in [v for v in order if len(nb[v]) != 2] + order:
+        for n in sorted(nb[v]):
+            if frozenset((v, n)) not in used:
+                out.append(walk(v, n))
+    return out
+
+
+def hems(ch, objs=None, turn=HEM_TURN):
+    """Every open edge of the clothes straightened and hemmed (docs/clothing.md "Hems"):
+    a shell cut from the body hull ends along the hull's triangles and a draped panel along
+    its 3.5 cm lattice, which reads as torn teeth. Per garment object: the spikes go (a
+    triangle with two free edges and an angle under `RELAX_EAR`), each free outline is
+    smoothed along its own run (`garments.smooth_outline`; the inner neighbours follow half
+    way), then the edge is turned under: one ring of faces `turn` in under the cloth and
+    `turn` back from the edge, with the edge's weights, so it shows a thickness.
+
+    An edge is free when no other face of the object lies on the same two positions (the
+    objects are split at the part borders: those cuts are not edges of the cloth). Vertices
+    shared with another garment object (the seams between the objects of one sewn garment)
+    and objects that have a rim already (`HEM`) stay. Shape keys move along.
+    Returns {key: (spikes removed, edge vertices smoothed, hem faces added)}."""
+    clothes = [o for o in ch.layers["clothes"] if o.type == "MESH" and len(o.data.polygons)]
+    if objs is None:
+        objs = [o for o in clothes if gm.LAYER_RANK.get(ch.keys.get(o.name), 0) in range(1, 7)
+                and ch.keys.get(o.name) not in HEM_SKIP and ch.keys.get(o.name) not in HEM
+                and not any(s in o.name.rsplit(".", 1)[-1] for s in HEM_SKIP)
+                and len(o.get("acr_material_keys") or ()) <= 1]
+
+    def pos(co):
+        return tuple(round(c, 4) for c in co)
+
+    owners = {}
+    for o in clothes:
+        mw = o.matrix_world
+        for v in o.data.vertices:
+            owners.setdefault(pos(mw @ v.co), set()).add(o.name)
+    out = {}
+    for o in objs:
+        mw = o.matrix_world
+        bm = bmesh.new()
+        bm.from_mesh(o.data)
+        spikes = 0
+        for _ in range(2):
+            ears = [f for f in bm.faces if len(f.verts) == 3 and sum(1 for e in f.edges if e.is_boundary) >= 2
+                    and min(math.degrees(l.calc_angle()) for l in f.loops) < RELAX_EAR]
+            if not ears:
+                break
+            bmesh.ops.delete(bm, geom=ears, context="FACES")
+            spikes += len(ears)
+        loose = [v for v in bm.verts if not v.link_faces]
+        if loose:
+            bmesh.ops.delete(bm, geom=loose, context="VERTS")
+        bm.verts.index_update()
+        key = {v: pos(v.co) for v in bm.verts}
+        group = {}
+        for v, k in key.items():
+            group.setdefault(k, []).append(v)
+        uses = {}
+        for f in bm.faces:
+            for e in f.edges:
+                k = frozenset((key[e.verts[0]], key[e.verts[1]]))
+                uses[k] = uses.get(k, 0) + 1
+        free = [e for e in bm.edges if e.is_boundary and key[e.verts[0]] != key[e.verts[1]]
+                and uses[frozenset((key[e.verts[0]], key[e.verts[1]]))] == 1]
+        shared = {k for k, vs in group.items() if len(owners.get(pos(mw @ vs[0].co), ())) > 1}
+        free = [e for e in free if not (key[e.verts[0]] in shared and key[e.verts[1]] in shared)]
+        on = {key[v] for e in free for v in e.verts}
+        shapes = list(bm.verts.layers.shape.values())
+
+        def move(v, d):
+            v.co += d
+            for lay in shapes:
+                v[lay] += d
+
+        moved = 0
+        for chain, closed in _outlines([(key[e.verts[0]], key[e.verts[1]]) for e in free]):
+            if len(chain) < 5:
+                continue
+            new = gm.smooth_outline(chain, closed, [i for i, k in enumerate(chain) if k in shared])
+            inner = {}
+            for k, p in zip(chain, new):
+                d = Vector(p) - Vector(k)
+                if d.length < 1e-7:
+                    continue
+                for v in group[k]:
+                    for e in v.link_edges:
+                        w = e.other_vert(v)
+                        if key[w] not in on:
+                            inner.setdefault(key[w], []).append(d)
+                    move(v, d)
+            for k, ds in inner.items():
+                for w in group[k]:
+                    move(w, sum(ds, Vector()) * (0.5 / len(ds)))
+            moved += len(chain)
+        # The turned hem: the free edges extruded, the new ring in under the cloth and back.
+        bm.normal_update()
+        added = 0
+        if free and turn > 0.0:
+            back = {}
+            for e in free:
+                f = e.link_faces[0]
+                d = f.calc_center_median() - (e.verts[0].co + e.verts[1].co) * 0.5
+                d -= d.project(e.verts[1].co - e.verts[0].co)
+                for v in e.verts:
+                    back.setdefault(key[v], []).append((d.normalized() if d.length > 1e-9 else Vector(), f.normal.copy()))
+            offset = {}
+            for k, ds in back.items():
+                d = sum((x[0] for x in ds), Vector())
+                n = sum((x[1] for x in ds), Vector())
+                offset[k] = (d.normalized() if d.length > 1e-9 else d) * turn - (n.normalized() if n.length > 1e-9 else n) * turn
+            old = {v: key[v] for e in free for v in e.verts}
+            res = bmesh.ops.extrude_edge_only(bm, edges=free)
+            rim = {}
+            for f in [g for g in res["geom"] if isinstance(g, bmesh.types.BMFace)]:
+                added += 1
+                for e in f.edges:
+                    a, b = e.verts
+                    if a in old and b not in old:
+                        rim[b] = old[a]
+                    elif b in old and a not in old:
+                        rim[a] = old[b]
+            for v, k in rim.items():
+                move(v, offset[k])
+        bm.to_mesh(o.data)
+        bm.free()
+        o.data.update()
+        k = ch.keys.get(o.name)
+        a, b, c = out.get(k, (0, 0, 0))
+        out[k] = (a + spikes, b + moved, c + added)
+    return out
+
+
 def inherit_weights(obj, ch, under):
     """Replaces the weights of gear laid over the garments (the crossbelts) by those of the
     garment surface under each vertex (`transfer_weights` with `under`)."""
@@ -2049,6 +2212,7 @@ def falling_band(ch, name, width=(0.115, 0.085), key="fallband", n=48, rings=7, 
     obj = bd.link(bpy.data.objects.new(f"{name}.{key}", me))
     under = [o for o in cloth if not o.name.endswith("_skirts")]
     finish(obj, ch, False, under=under)
+    obj["acr_garment"] = "modelled:drape.falling_band"
     return ch.add("clothes", obj, key, symmetric=True)
 
 

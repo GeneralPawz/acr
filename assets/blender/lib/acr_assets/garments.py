@@ -852,6 +852,55 @@ LAYER_RANK = {
 
 
 
+# -- hems -------------------------------------------------------------------------------------
+
+HEM_ROUNDS = 24  # Taubin pass pairs along an open outline (`smooth_outline`)
+HEM_LAMBDA, HEM_MU = 0.5, -0.53
+HEM_CORNER = 50.0  # degrees of turn left after `HEM_CORNER_ROUNDS` light passes: a corner, kept
+HEM_CORNER_ROUNDS = 3
+
+
+def smooth_outline(pts, closed=True, pinned=(), rounds=HEM_ROUNDS, corners=True):
+    """An outline (list of 3-tuples) with its teeth smoothed away along its own run
+    (Taubin: a shrinking pass and a growing pass, so a cuff keeps its girth). `pinned`
+    indices and the ends of an open outline stay. Pure: `drape.hems` moves the free edges
+    of every garment with it, `tests/test_clothaudit.py` holds it to the audit's ragged
+    number."""
+    n = len(pts)
+    p = [tuple(float(c) for c in q) for q in pts]
+    fixed = set(pinned)
+    if not closed:
+        fixed |= {0, n - 1}
+    if n < 3:
+        return p
+    if corners and rounds > HEM_CORNER_ROUNDS:
+        # A real corner (a skirt's front edge meeting its hem, a vent) is still a corner
+        # after a light pass, a tooth is not: corners stay where they are.
+        q = smooth_outline(p, closed, fixed, HEM_CORNER_ROUNDS, corners=False)
+        ang = [0.0] * n
+        for i in range(n):
+            if not closed and i in (0, n - 1):
+                continue
+            a, b, c = q[(i - 1) % n], q[i], q[(i + 1) % n]
+            u, v = [b[k] - a[k] for k in range(3)], [c[k] - b[k] for k in range(3)]
+            lu, lv = math.sqrt(sum(x * x for x in u)), math.sqrt(sum(x * x for x in v))
+            if lu > 1e-9 and lv > 1e-9:
+                ang[i] = math.degrees(math.acos(max(-1.0, min(1.0, sum(x * y for x, y in zip(u, v)) / (lu * lv)))))
+        # ... and its neighbours run straight (a tooth's neighbours turn back).
+        fixed |= {i for i in range(n) if ang[i] > HEM_CORNER and ang[(i - 1) % n] < HEM_CORNER / 2
+                  and ang[(i + 1) % n] < HEM_CORNER / 2}
+    for r in range(2 * rounds):
+        f = HEM_LAMBDA if r % 2 == 0 else HEM_MU
+        nxt = list(p)
+        for i in range(n):
+            if i in fixed:
+                continue
+            a, b = p[(i - 1) % n], p[(i + 1) % n]
+            nxt[i] = tuple(p[i][k] + ((a[k] + b[k]) * 0.5 - p[i][k]) * f for k in range(3))
+        p = nxt
+    return p
+
+
 # -- traced patterns -------------------------------------------------------------------------
 # (docs/clothing.md "Traced patterns"): historical cutting diagrams digitised into
 # `acr-pattern/1` JSON under `ACR_SOURCES/patterns/<source>/<garment>.json` (copyrighted:

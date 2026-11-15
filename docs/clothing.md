@@ -1125,6 +1125,30 @@ UVs keep the bands' weave continuous. Weights transfer from skin/sleeve surfaces
 are limited to four. `outfit.collar_cuffs` records profiles, button counts, measured
 thickness ranges, boundary/nonmanifold edge counts, and weight errors per piece.
 
+## Hems (#523)
+
+`drape.hems(ch)` runs in `Character.morphs` (every family; `drape.HEMS = True`) over each
+garment object of rank 1..6: it removes edge spikes, smooths every free outline along its
+own run (`garments.smooth_outline`: 24 Taubin pass pairs, so a cuff keeps its girth; a real
+corner, i.e. a turn of more than 50 degrees left after 3 light passes with straight
+neighbours, stays), moves the inner neighbours half way, and turns the edge under: one ring
+of faces 4 mm in under the cloth and 4 mm back (`HEM_TURN`), carrying the edge's weights
+and shape keys. A free edge is one no other face of the object shares by position (objects
+are split at the part borders); vertices shared with another garment object are pinned.
+Left alone: objects that already have a solidify rim (`drape.HEM`: coat skirts, turnbacks,
+facings, lapels), garters, flaps, fringes, brass (`HEM_SKIP`). The build prints
+`hems (spikes, edge vertices, hem faces)` per key.
+
+EngPik, before -> after (audit, `ACR-analysis/clothing-audit/pikeman/`): ragged flags 4 -> 0
+(`gaiters` 16.6 mm / 2.2 teeth per m -> 0 / 0, `dsleeve` 18.8 / 5.8 -> 0 / 0, `fallband`
+18.7 / 3.5 -> 4.7 / 3.5, `buff` 19.6 / 2.1 -> 19.5 / 2.0); FrnPik 4 -> 2. Open: the shirt
+cuff counts 22-36 vertices outside the sleeve since (0-9 before); garter inlays keep their
+zigzag; rimmed objects are not straightened.
+
+Every garment object carries how it was made as the custom property `acr_garment` =
+`"<made>:<builder>"` (node extra in the glb): `shell:Character.shell`, `draped:<garment>`
+(`drape.dress`), `modelled:drape.falling_band`.
+
 ## Clothing audit (#523)
 
 `assets/blender/tools/clothing_audit.py` (`acr_assets.clothaudit`, tests
@@ -1149,8 +1173,16 @@ hair, caps (not drawn by the game) and fringes are ignored.
 | `stretch`, `collapse` | share of faces whose area in the walk is outside 0.6..1.6 of `STAND`, below 0.4 | > 8 % |
 | `sliver_stand`, `sliver_walk` | share of faces with an angle under 10 degrees | > 25 % |
 | `soup` | share of faces more than 25 degrees off the mean normal of their neighbours | > 45 % |
-| `kind`, `tri_angle` | `draped` when the median smallest angle is at least 45.5 degrees (a Delaunay lattice), else `shell`: a guess, wrong for draped garments with inlays; `--stats` makes the `drape` keys of `stats.json` win. The build does not export how a garment was made | |
+| `kind`, `made_by`, `tri_angle` | the node extra `acr_garment` (`draped`, `shell`, `modelled` and the builder; models built since "Hems"). Without it a guess: `draped` when the median smallest angle is at least 45.5 degrees (a Delaunay lattice), else `shell`, which is wrong for draped garments with inlays; `--stats` makes the `drape` keys of `stats.json` win | |
 | `score` | sum of number / limit over the flags (each capped at 10) | |
+
+`shape.csv` (`clothaudit.leg_shape`, left leg in `STAND`) gives the cut of the legwear a
+number: convex girths of the leg garments at mid thigh, widest 4-16 cm above the knee,
+narrowest 1-7 cm below it (the knee band) and at the calf; `fullness` = above knee / band
+(about 1.0 is a tube, the conquistador's slops 1.82, EngPik's breeches 1.16); `closure` =
+band / the skin's girth there (the skin under clothes is pushed in 12 mm, so read it as a
+comparison between units, not as 1.0 = tight); `band_gap_cm`: the longest stretch from
+10 cm above the knee to the ankle without a legwear vertex.
 
 Known false rows: thin fins and strips (legging flaps, turnbacks: seam, sliver, soup) and
 pokes against rigid armour at its openings. It does not judge shape (a smooth tube scores
