@@ -162,7 +162,9 @@ def make(root, name, s):
                                     # The 17th century's shirt under the doublet and its sleeves.
                                     ("shirt", ("doublet", "dsleeve"), 0.004),
                                     # and the breeches' gathered waist under the doublet's skirts.
-                                    ("breeches", ("doublet",), 0.004)):
+                                    ("breeches", ("doublet",), 0.004),
+                                    # Stockings that end under the knee band (`stockings17`).
+                                    ("hose", ("breeches",), 0.004)):
             for o in fixed:
                 if made[o.name] == inner:
                     drape.hide_under(ch, o, [x for x in fixed if made[x.name] in outer], depth)

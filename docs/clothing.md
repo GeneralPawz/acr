@@ -947,12 +947,20 @@ so `line.make` and `frontier.make` drape them unchanged (`pike.MUSKETEER_DRAPE`,
 | `hose` | long hose from the instep to mid-thigh, seamed up the back, the top pinned | `hose` | knit |
 | `slops` | trunk hose: the breeches cut short, 26 cm of extra girth over the thigh **gathered** into a thigh band (seam ease 1.3), paned (lining strips) | `slops`, `slashes` | wool |
 | `shirt17` | deep linen cuffs only (not simulated) | `shirt` | linen |
+| `breeches17` | full breeches of about 1640 (#523): the breeches' draft 20 cm wider round thigh and leg, the legs 3 cm below the knee plus 3 cm that hang over, **gathered** into a 3 cm knee band sewn by its top edge. The band goes once round the leg where it is placed (`place["wrap"]`) and is pinned whole (`place["pin"] = "all"`), so it ends closed on the stocking. Spacing 1.6 cm (about 8 600 triangles), 3 Taubin passes after the sim (`CLOTH[...]["smooth"]`) | `breeches` | wool, bending 0.6, no shrink |
+| `stockings17` | `hose` to 4.5 cm above the knee with a level bottom (`tongue=0`); draped first, without the shoes (`CLOTH[...]["in_shoes"]`), then cut level 2.5 cm below the shoes' top edge, 8 Taubin passes | `hose` | knit |
 
 Modelled, not draped (`drape.py`, registered gear):
-- **`falling_band`**: the wide linen collar. A grid round the neck (48 angles x 7 rings,
-  11.5 cm deep in front, 8.5 cm behind, split at the centre front), each vertex cast
-  straight down onto the draped clothes (not the skin: the chin caught the rays) and
-  lifted 8 mm, a turned-down lip; skinned like the cloth under it (`finish(..., under=)`).
+- **`falling_band`**: a plain linen collar cut flat (`garments.band_width`: 7.5 cm deep
+  behind, 12 cm at the two front points, split at the centre front, a 1.6 cm stand up the
+  neck). Per angle round the neck (64) the surface under it (the draped clothes and
+  `ch.armour` when the corslet is built first; not the skin: the chin caught the rays) is
+  sampled every 5 mm along the radius; the panel lies on that profile's **upper hull** at
+  its own width (`garments.upper_hull`, `lay_over`, 10 rings, 7 mm off), so stiff linen
+  bridges the hollows between the coat's collar and the corslet's neck edge and cannot fold
+  over itself (the old grid cast every vertex straight down and followed every lump). Then
+  3 smoothing passes round the neck, a turned-down lip; skinned like the cloth under it
+  (`finish(..., under=)`).
 - **`bucket_boots`**: per leg, rings up the shin fitted per angle to the skin and the hose
   plus 1 cm, then the bucket: the top flaring 6 cm out over the knee and its edge turned
   down; skinned from the skin; key `jackboots` (painted like leather, no gaiter buttons).

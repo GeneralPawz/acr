@@ -580,6 +580,9 @@ def place(body, panel, uv):
         # slants 20 cm across the panel: measured from u0 it wraps round the thigh).
         ue = panel.u_on(pl["u0_edge"], v) if pl.get("u0_edge") else u0
         t = th0 + sgn * (u - ue) / 100.0 / r
+        if pl.get("wrap"):
+            # A band cut to close on the limb: its `wrap` cm go once round at any height.
+            t = th0 + sgn * 2.0 * math.pi * (u - ue) / pl["wrap"]
         out.append((p[0] + math.sin(t) * r, p[1] - math.cos(t) * r, z))
         axis.append((p[0], p[1], z))
     return out, axis
@@ -1185,12 +1188,16 @@ def dress(ch, garments=gm.ORDER, report=None, patterns=None, over=(), post_weld=
         # Only the middle half of the edge: its ends must be free to close their seams.
         pins = []
         for key, pc in pieces.items():
-            if isinstance(key, tuple) and pc.panel.place.get("pin"):
+            if isinstance(key, tuple) and pc.panel.place.get("pin") not in (None, "all"):
                 e = pc.edge(pc.panel.place["pin"])
                 pins += [i for i in e[len(e) // 4:len(e) - len(e) // 4] if i not in seam_v]
             if isinstance(key, tuple) and pc.panel.place.get("pin_v"):
                 # A cloak's yoke: everything within `pin_v` cm of the neck ring.
                 pins += [pc.base + i for i, (_u, v) in enumerate(pc.uv) if v <= pc.panel.place["pin_v"]]
+            if isinstance(key, tuple) and pc.panel.place.get("pin") == "all":
+                # A band that stays where it is tied (the breeches' knee band).
+                pins += list(range(pc.base, pc.base + pc.n))
+                continue
             if isinstance(key, tuple) and pc.panel.place.get("pin_vr"):
                 # Bands of v (cm): the breechcloth's folds over the belt.
                 pins += [pc.base + i for i, (_u, v) in enumerate(pc.uv)
@@ -1204,7 +1211,14 @@ def dress(ch, garments=gm.ORDER, report=None, patterns=None, over=(), post_weld=
             fa.data[i].value = names.index(n)
         dt, gaps_sewn = 0.0, []
         if not g.startswith("shirt"):
+            # `in_shoes`: stockings are draped without the shoes and run down into them.
+            bare_cut = gm.CLOTH.get(g, {}).get("in_shoes")
+            bare = bare_cut and getattr(ch, "shoes", None)
+            if bare:
+                _collision(ch.shoes, False)
             dt, gaps_sewn = simulate(obj, gm.CLOTH.get(g, gm.CLOTH["waistcoat"]), sew)
+            if bare:
+                _collision(ch.shoes)
         ev = obj.data
         longest = max(((ev.vertices[e.vertices[0]].co - ev.vertices[e.vertices[1]].co).length
                        for e in ev.edges if not e.is_loose), default=0.0)
@@ -1221,6 +1235,21 @@ def dress(ch, garments=gm.ORDER, report=None, patterns=None, over=(), post_weld=
         limits = [getattr(seams[k], "close", None) or base for k in pieces["_sew_id"]]
         welded = sum(1 for (a, b), lim in zip(sew, limits) if (ev.vertices[a].co - ev.vertices[b].co).length < lim)
         weld(obj, sew, limit=base, limits=limits)
+        if not g.startswith("shirt") and bare:
+            # Cut level inside the shoes: no ragged edge over them.
+            zc = max((ch.shoes.matrix_world @ v.co).z for v in ch.shoes.data.vertices) - float(bare_cut)
+            bm = bmesh.new()
+            bm.from_mesh(obj.data)
+            geom = list(bm.verts) + list(bm.edges) + list(bm.faces)
+            bmesh.ops.bisect_plane(bm, geom=geom, plane_co=(0, 0, zc), plane_no=(0, 0, -1), clear_inner=False,
+                                   clear_outer=True)
+            bm.to_mesh(obj.data)
+            bm.free()
+        if gm.CLOTH.get(g, {}).get("smooth"):
+            # The sim's crumple (triangle-sized dents) smoothed away; the folds stay.
+            pin = obj.vertex_groups.get("acr_pin")
+            taubin(obj, gm.CLOTH[g]["smooth"],
+                   keep=[v.index for v in obj.data.vertices if pin and any(e.group == pin.index for e in v.groups)])
         if post_weld is not None:
             post_weld(obj, g)
         unposed = 0.0
@@ -2144,67 +2173,72 @@ def _cloth_tree(objs):
     return BVHTree.FromPolygons(vs, fs) if fs else None
 
 
-BAND_CLEAN = True  # the falling band's rings limited in drop and smoothed round the neck (#287 trisoup4)
-BAND_SLOPE = 0.8  # tan of the steepest drop from one ring to the next
-BAND_SMOOTH = 4  # smoothing passes round the neck
+BAND_STEP = 0.005  # m between the rays of a radial profile
+BAND_SMOOTH = 3  # smoothing passes round the neck
+BAND_STAND = 0.016  # m: the short stand up the neck inside the band
 
 
-def falling_band(ch, name, width=(0.115, 0.085), key="fallband", n=48, rings=7, lift=0.008):
-    """The falling band: a wide linen collar lying flat on the doublet's shoulders, deeper in
-    front (`width` m front, back), split at the centre front. Each vertex is cast straight
-    down onto the clothes (`lift` above them) from a ring round the neck; skinned like the
-    cloth under it. Added to `ch`'s clothes with key `key`."""
+def falling_band(ch, name, width=(0.12, 0.075), key="fallband", n=64, rings=10, lift=0.007):
+    """The falling band: a plain linen collar cut flat (`garments.band_width`: level round the
+    back, two square points in front, split at the centre front, a short stand up the neck)
+    and laid over what the man wears at the neck: the coat, and the corslet's neck edge when
+    it is built first (`ch.armour`). Per angle round the neck the surface under it is
+    sampled along the radius; the panel lies on that profile's upper hull at its own width
+    (`garments.lay_over`), so stiff linen bridges the hollows and never folds over itself.
+    Skinned like the cloth under it. Added to `ch`'s clothes with key `key`."""
+    bpy.context.view_layer.update()
     cloth = [o for o in ch.layers["clothes"] if o.type == "MESH" and ch.keys.get(o.name) not in ("shoes",)]
-    tree = _cloth_tree(cloth)  # not the skin: rays near the neck found the chin and the face
+    tree = _cloth_tree(cloth + list(getattr(ch, "armour", None) or ()))  # not the skin: rays near the neck found the chin
     seg = am.segments(ch.arm)
     head, tail = seg[ch.prefix + "neck"]
     cx, cy = head.x, head.y + 0.008
     r0 = 0.062
-    bm = bmesh.new()
-    # Per row (angle) and ring: the cloth surface under it (`floor`, z + lift) or None.
-    rows_xy, floor = [], []
+    down = Vector((0, 0, -1))
+
+    def floor_at(x, y):
+        hit = tree.ray_cast(Vector((x, y, head.z + 0.05)), down, 0.40)
+        return None if hit[0] is None else hit[0].z
+
+    rows = []
     for i in range(n + 1):
         t = -math.pi / 2 + 2 * math.pi * (i + 0.5 * (i == 0) - 0.5 * (i == n)) / n  # split at the front (-Y)
-        front = max(0.0, -math.sin(t)) ** 2
-        w = width[1] + (width[0] - width[1]) * front
-        xy, fl = [], []
+        w = gm.band_width(t, width[0] * 100.0, width[1] * 100.0) / 100.0
+        prof = []
+        for k in range(int((w + 0.03) / BAND_STEP) + 1):
+            r = r0 + k * BAND_STEP
+            z = floor_at(cx + r * math.cos(t), cy + r * math.sin(t))
+            if z is not None:
+                prof.append((r, z))
+        if not prof or prof[0][0] > r0 + 0.02:
+            prof.insert(0, (r0, (prof[0][1] + 0.01) if prof else head.z - 0.03))
+        rows.append((t, gm.lay_over(prof, [w * k / rings for k in range(rings + 1)], lift)))
+    # Smoothed round the neck (both the reach and the height of each ring), then lifted off
+    # any cloth or plate it sank into.
+    R = [[p[0] for p in row] for _t, row in rows]
+    Z = [[p[1] for p in row] for _t, row in rows]
+    for _ in range(BAND_SMOOTH):
+        R, Z = ([[(A[max(i - 1, 0)][k] + 2 * A[i][k] + A[min(i + 1, n)][k]) / 4 for k in range(rings + 1)]
+                 for i in range(n + 1)] for A in (R, Z))
+    bm = bmesh.new()
+    grid = []
+    for i, (t, _row) in enumerate(rows):
+        line = []
         for k in range(rings + 1):
-            r = r0 + w * k / rings
-            o = Vector((cx + r * math.cos(t), cy + r * math.sin(t), head.z + 0.03))
-            hit = tree.ray_cast(o, Vector((0, 0, -1)), 0.35)
-            xy.append((o.x, o.y, r))
-            fl.append(None if hit[0] is None else hit[0].z + lift)
-        rows_xy.append(xy)
-        floor.append(fl)
-    # Stiff linen: a ring drops at most `BAND_SLOPE` x its radial step below the ring inside
-    # it (a ray past the shoulder's or the back's edge found the cloth far below: the long
-    # spikes of #287's trisoup), then each ring is smoothed round the neck, never under the
-    # cloth.
-    z = []
-    for xy, fl in zip(rows_xy, floor):
-        zr = []
-        for k in range(rings + 1):
-            f = fl[k]
-            if k == 0:
-                zr.append(f if f is not None else head.z - 0.03)
-            elif not BAND_CLEAN:
-                zr.append(f if f is not None else head.z - 0.03)
-            else:
-                lim = zr[-1] - BAND_SLOPE * (xy[k][2] - xy[k - 1][2])
-                zr.append(max(f, lim) if f is not None else lim)
-        z.append(zr)
-    if BAND_CLEAN:
-        for _ in range(BAND_SMOOTH):
-            z = [[max((z[max(i - 1, 0)][k] + 2 * z[i][k] + z[min(i + 1, n)][k]) / 4,
-                      floor[i][k] if floor[i][k] is not None else -1e9) for k in range(rings + 1)]
-                 for i in range(n + 1)]
-    grid = [[bm.verts.new((x, y, zz)) for (x, y, _r), zz in zip(xy, zr)] for xy, zr in zip(rows_xy, z)]
+            x, y = cx + R[i][k] * math.cos(t), cy + R[i][k] * math.sin(t)
+            f = floor_at(x, y)
+            z = Z[i][k] if f is None or k == 0 else max(Z[i][k], min(f + lift * 0.6, Z[i][k] + 0.02))
+            line.append(bm.verts.new((x, y, z)))
+        grid.append(line)
     for a, b in zip(grid, grid[1:]):
         for k in range(rings):
             bm.faces.new((a[k], b[k], b[k + 1], a[k + 1]))
-    # The edge turned down 6 mm, so the band reads as a flat collar with a thickness.
-    lip = [bm.verts.new(row[-1].co - Vector((0, 0, 0.006))) for row in grid]
+    # The stand: the band's inner edge runs a little up the neck.
+    stand = [bm.verts.new((cx + (r0 - 0.005) * math.cos(t), cy + (r0 - 0.005) * math.sin(t), line[0].co.z + BAND_STAND))
+             for (t, _row), line in zip(rows, grid)]
+    # The outer edge turned down 5 mm, so the band reads as a flat collar with a thickness.
+    lip = [bm.verts.new(row[-1].co - Vector((0, 0, 0.005))) for row in grid]
     for i in range(n):
+        bm.faces.new((stand[i], stand[i + 1], grid[i + 1][0], grid[i][0]))
         bm.faces.new((grid[i][-1], grid[i + 1][-1], lip[i + 1], lip[i]))
     me = bpy.data.meshes.new(f"{name}.{key}")
     bm.to_mesh(me)
