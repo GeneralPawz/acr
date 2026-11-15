@@ -89,6 +89,9 @@ pub struct BlankSetup {
     /// The test editor's field (main menu "Editor"): the placing panel is shown and
     /// fighting starts switched off ([`crate::ingame`], `editor`).
     pub editor: bool,
+    /// The editor's field opens on the unit inspector (main menu "Inspektor") and places its
+    /// first unit by itself. Not saved: a savegame's inspector inputs bring the view back.
+    pub inspector: bool,
 }
 
 /// The one ground texture of a blank field.

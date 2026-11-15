@@ -12,7 +12,7 @@ pub use super::CELL;
 
 use super::{
     Act, ENTRIES, Editor, FACINGS, FIRST_EXTRA, GELAENDE, Item, NEUTRAL, Pick, View, battle, formations, group_name,
-    groups, levels, presets, sides,
+    groups, inspect, levels, presets, sides,
 };
 use crate::hud;
 use crate::ui::Ctx;
@@ -137,7 +137,11 @@ impl Editor {
     pub fn touch_view(&self, ctx: &Ctx, world: &World, view: &View, local: u8) -> Option<TouchEditor> {
         let palette = ctx.lib.palette(GAME_PALETTE)?;
         let battle = self.battle.on;
-        let toggle = button("editor/battle", if battle { "Einheiten" } else { "Schlacht" }, battle);
+        let toggle = if self.inspect.on {
+            button("editor/inspect", "Einheiten", true)
+        } else {
+            button("editor/battle", if battle { "Einheiten" } else { "Schlacht" }, battle)
+        };
         let levels = self.menu.map_or_else(Vec::new, |menu| {
             let names = levels::names(world, menu.kind, view.upgrade_name);
             names
@@ -170,6 +174,12 @@ impl Editor {
             levels,
             controls: Vec::new(),
         };
+        if self.inspect.on {
+            // The drawer lays controls out as the battle view's: no list, no colours.
+            out.battle = true;
+            out.controls = self.inspect_touch(world, view.names);
+            return Some(out);
+        }
         if battle {
             out.controls = self.battle_touch(ctx, local);
             return Some(out);
@@ -291,8 +301,14 @@ impl Editor {
                     left(Act::Stop)
                 };
             }
-            ["battle"] => return left(Act::Battle(battle::Act::Toggle)),
+            ["battle"] if !self.inspect.on => return left(Act::Battle(battle::Act::Toggle)),
+            ["inspect"] if self.inspect.on => return left(Act::Inspect(inspect::Act::Toggle)),
+            ["inspect", tail @ ..] if self.inspect.on => return left(Act::Inspect(self.inspect_intent(tail)?)),
             _ => {}
+        }
+        // The inspector hides everything else.
+        if self.inspect.on || parts[0] == "inspect" {
+            return Err(Reject::Hidden);
         }
         // The battle view hides the list and its controls, and the list hides the battle's.
         if (parts[0] == "battle") != self.battle.on {

@@ -65,6 +65,7 @@ mod trample;
 mod water_view;
 use crate::animal_sounds::Cry;
 use crate::unit_sounds::{self, SoundEvent};
+pub use editor::InspectEnemy;
 pub use editor::touch::{CELL, TouchButton, TouchControl, TouchEditor};
 pub use interface::{GameKey, GameMouse, HudIntent};
 
@@ -243,6 +244,9 @@ impl InGame {
                 self.editor = b
                     .editor
                     .then(|| editor::Editor::with_frame(editor::frame::Frame::from_setting(self.editor_window)));
+                if let Some(e) = self.editor.as_mut().filter(|_| b.inspector) {
+                    (e.inspect.on, e.inspect.pending) = (true, true);
+                }
             }
             GameKind::Acr(m) => {
                 self.map = Some(m.map());
@@ -759,6 +763,7 @@ impl InGame {
             e.apply_sides(world);
             self.editor_started = true;
         }
+        self.editor_inspect();
         // The scripts copy their alliance masks to the world every tick: give them the editor's.
         if let Some(e) = &self.editor {
             self.mission.set_alliances(e.masks());

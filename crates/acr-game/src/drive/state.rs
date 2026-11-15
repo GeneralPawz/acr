@@ -135,6 +135,9 @@ pub fn state(
         let sides: Vec<Value> = reports.iter().map(battle_side).collect();
         m.insert("battle".into(), json!({"sides": sides}));
     }
+    if let Some(inspector) = g.inspector_state() {
+        m.insert("inspector".into(), inspector);
+    }
     // The map's trees, stones and other static objects by group (the editor's Natur list adds to them).
     let mut objects: BTreeMap<&str, u32> = BTreeMap::new();
     for o in &world.objects {

@@ -210,7 +210,7 @@ fn fresh(world: &World, before: &[bool]) -> Vec<acr_sim::EntityId> {
         .collect()
 }
 
-fn undo(world: &mut World, ids: Vec<acr_sim::EntityId>) {
+pub(super) fn undo(world: &mut World, ids: Vec<acr_sim::EntityId>) {
     for id in ids {
         if let Some(b) = world.units.get(id.0 as usize).and_then(|u| u.brigade) {
             formation::dissolve(world, usize::from(b));

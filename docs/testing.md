@@ -275,6 +275,7 @@ every texture 0, no sprites, no units, an empty `SEA2`; `acr-game/src/blank_map.
 | `dart_fire` | the optional dart-fire rule: under `hit_locations` a blowpipe dart (`VAFLIA`, flag `F`) sets a man on fire and a dart burst leaves a ground fire (simulation.md "Shell fires"); default `false` |
 | `ball_terrain` | the optional ball-terrain rule: under `hit_locations` balls fell trees and knock stones (simulation.md "Balls against trees and stones"); put them there with `{"cmd": "map_object", "group": "tree"\|"stone", "index": 0, "at": [[x, y]], "rock": false}` (`"struck": "felled"|"splintered"|"chipped", "dir": d` puts them there already struck, for close-ups and the frame-time bench; `"source": k` also makes each a gathering source of `ResType` k (2 stone, 3 field food), and group `"source"` places the source alone, so peasants work stone and fields on the blank field); default `false` |
 | `editor` | `true`: the test editor's field (the placing window shown, fighting off at the start; docs/controls.md) |
+| `inspector` | `true`: the editor's field on the unit inspector, its first unit placed (docs/controls.md "Inspector"); `state.inspector` reports it |
 | `hud` | `false` hides the interface from the start, like `{"cmd": "hud", "on": false}` |
 | `corpse_decay` | `full` or `half`: overrides the setting ([rendering-3d.md](rendering-3d.md)) |
 | `decay_stain` | `on` or `off`: overrides the setting (the ground stains under decaying corpses, [rendering-3d.md](rendering-3d.md#decay-stains)) |

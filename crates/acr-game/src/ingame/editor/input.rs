@@ -42,6 +42,9 @@ pub enum Input {
     /// A ready command of the battle view: the controller commands `side` (0 or 1) under
     /// `plan`, and the fight starts if it does not run yet.
     Plan { side: u8, plan: crate::tactics::Plan },
+    /// The unit inspector's scene: what it placed before goes, a unit of type `kind` stands in
+    /// the middle of the map facing `dir`, with `enemy` in front of it (near or `far`), attacked.
+    Inspect { kind: String, enemy: super::inspect::Enemy, far: bool, dir: u8 },
     /// A tree or stone of the Natur list: type `index` of the group's sprite list at `at`.
     Nature { group: SpriteGroup, index: u16, at: (i32, i32) },
     /// One stamp of the terrain brush ([`acr_mapgen::edit`]); a stroke is a run of them.
@@ -91,6 +94,7 @@ pub fn apply(world: &mut World, map: &mut M3dMap, editor: &mut Editor, input: &I
         Input::Battle { nation, era, size, fight } => editor.go_to_battle(world, *nation, *era, *size, *fight),
         Input::Fight { ai } => editor.start_fight(world, *ai),
         Input::Plan { side, plan } => editor.order(world, usize::from(*side & 1), *plan),
+        Input::Inspect { kind, enemy, far, dir } => editor.inspect_show(world, kind, *enemy, *far, *dir),
         Input::Nature { group, index, at } => {
             let (status, added) = nature(world, map, *group, *index, *at);
             objects = added;

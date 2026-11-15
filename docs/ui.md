@@ -99,7 +99,9 @@ lacks. Decoding to Unicode (`acr_formats::text`) is for tools and logs.
   (255·i, 210).
 - Entries: `addTextButton` centred at x = 510, y = 475 + 35·i, fonts `fonG60w` (hover) /
   `fonG60y5`, hover sound. Main: Einzelspieler 0xf1, Mehrspieler 0xf2, Laden 0xf7,
-  Optionen 0xfc, Editor 0xf3, Beenden 0xff.
+  Optionen 0xfc, Editor 0xf3, Beenden 0xff. ACR adds "Inspektor" (0xf4, docs/controls.md
+  "Inspector") between Editor and Beenden; with seven entries the main list stands at
+  y = 473 + 33·i so the last one stays inside the clipper.
 - Multiplayer entries at (180, 263 + 35·i): Internetspiel 3, Deathmatch 1, Historische
   Schlacht 2, Zurück 5. Single player entries at (830, 263 + 35·i): Kampagne 1,
   Einzelmission 2, Zufallskarte 3, Zurück 5.

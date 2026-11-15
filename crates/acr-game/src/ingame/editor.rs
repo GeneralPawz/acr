@@ -36,6 +36,8 @@ use crate::ui::fonts::FontId;
 use crate::ui::screens::font as menu_font;
 
 mod battle;
+mod inspect;
+pub use inspect::Enemy as InspectEnemy;
 pub mod frame;
 mod presets;
 
@@ -173,6 +175,8 @@ pub enum Act {
     Army(presets::Act),
     /// A click of the battle view ("Schlacht").
     Battle(battle::Act),
+    /// A click of the unit inspector ([`inspect`]).
+    Inspect(inspect::Act),
     Pick(Pick),
     /// Picks the owner (one of the eight colours).
     Owner(u8),
@@ -330,8 +334,12 @@ pub struct Editor {
     pub army: presets::Menu,
     /// The battle view (a button in the title row switches to it).
     pub battle: battle::Battle,
+    /// The unit inspector (the main menu's "Inspektor").
+    pub inspect: inspect::Inspector,
     /// The camera is to centre on this world point (set by "Aufstellen").
     pub camera_to: Option<(i32, i32)>,
+    /// With [`Editor::camera_to`]: the zoom to take (the inspector's close-up), if any.
+    pub camera_zoom: Option<f32>,
     /// The last placement or problem, shown under the window.
     status: Vec<u8>,
     /// A press placed or hit the window: its release does nothing else.
@@ -367,7 +375,9 @@ impl Default for Editor {
             sides: sides::Mode::Off,
             team: sides::default_teams(),
             battle: battle::Battle::default(),
+            inspect: inspect::Inspector::default(),
             camera_to: None,
+            camera_zoom: None,
             auto_reload: false,
             status: b"Typ waehlen, dann auf die Karte klicken".to_vec(),
             swallow_release: false,
@@ -704,6 +714,14 @@ impl Editor {
         let (label, name) = if self.battle.on { ("Einheiten", "Einheiten") } else { ("Schlacht", "Schlacht") };
         buttons(&mut out);
         let switch = Rect::new(f.x1() - 70, OY - 30, 66, ROW);
+        if self.inspect.on {
+            // The inspector's view: the switch leads back to the unit list.
+            let back = Some(Act::Inspect(inspect::Act::Toggle));
+            out.push(item(switch, b"Einheiten".to_vec(), "Einheiten", true, back, Look::Text));
+            out.extend(self.inspect_items(world, view.names));
+            out.push(corner);
+            return out;
+        }
         out.push(item(
             switch,
             label.as_bytes().to_vec(),
@@ -1143,6 +1161,7 @@ impl Editor {
             }
             Act::Army(a) => self.army_act(a),
             Act::Battle(a) => out.input = self.battle_act(a, local),
+            Act::Inspect(a) => out.input = self.inspect_act(world, a),
             Act::Pick(p) => {
                 self.pick = if self.pick == Some(p) { None } else { Some(p) };
                 self.level = 0;
@@ -1437,6 +1456,51 @@ impl super::InGame {
         }
     }
 
+    /// The inspector's part of a frame: a fresh inspector game places its first unit, the 3D
+    /// view is told which unit plays which clip, and the view learns the model's clips.
+    pub(super) fn editor_inspect(&mut self) {
+        let (Some(e), Some(world)) = (&mut self.editor, &self.world) else { return };
+        let first = if e.inspect.pending { e.inspect.first(world) } else { None };
+        if let Some(input) = first {
+            self.editor_input(input);
+            self.after_editor_act(None);
+            if let Some(e) = self.editor.as_mut() {
+                e.swallow_release = false;
+            }
+        }
+        let Some(e) = self.editor.as_mut() else { return };
+        let i = &mut e.inspect;
+        let watch = i.on.then_some(i.subject).flatten().map(|id| id.0);
+        self.three_d.set_inspect(watch, i.clip.as_deref());
+        i.models = self.three_d.models_on();
+        let clips = self.three_d.inspect_clips();
+        if i.clips != clips {
+            i.clips = clips.to_vec();
+        }
+    }
+
+    /// The inspector's state for the driver (`state.inspector`), in an inspector view.
+    pub fn inspector_state(&self) -> Option<serde_json::Value> {
+        let (e, world) = (self.editor.as_ref()?, self.world.as_ref()?);
+        let i = &e.inspect;
+        if !i.on {
+            return None;
+        }
+        let unit = |id: Option<EntityId>| {
+            id.and_then(|id| world.units.get(id.0 as usize)).map(|u| {
+                serde_json::json!({"id": u.id.0, "type": world.catalog.get(u.kind).id, "life": u.life, "alive": u.alive,
+                    "anim": u.anim.name()})
+            })
+        };
+        Some(serde_json::json!({
+            "unit": unit(i.subject),
+            "enemy": unit(i.target),
+            "clip": i.clip,
+            "clips": i.clips,
+            "models": i.models,
+        }))
+    }
+
     /// What the battle controller did for each side, while a fight runs in the editor.
     pub fn battle_reports(&self) -> Option<[crate::tactics::Report; 2]> {
         let t = self.editor.as_ref()?.battle.tactics.as_ref()?;
@@ -1550,7 +1614,14 @@ impl super::InGame {
         let Some(e) = self.editor.as_mut() else { return };
         e.swallow_release = true;
         if let Some((x, y)) = e.camera_to.take() {
-            self.set_camera(x, y, 0.0, None, None);
+            // A close-up looks at the men's middle, not at their feet.
+            let zoom = e.camera_zoom.take();
+            let inspecting = e.inspect.on;
+            // The inspector's scene stands left of the middle: the window (or the drawer)
+            // covers the right of the picture.
+            let scale = zoom.unwrap_or(self.camera.scale).max(0.1);
+            let aside = if inspecting { (self.interface.window[0] * inspect::ASIDE / scale) as i32 } else { 0 };
+            self.set_camera(x + aside, y, if inspecting { inspect::LIFT } else { 0.0 }, zoom, None);
         }
     }
 

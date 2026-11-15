@@ -168,6 +168,7 @@ mod tests {
             patches: vec![(5000, 5000, 100, 71)],
             rough: 0,
             editor: false,
+            inspector: false,
         };
         let map = build(&b);
         let heights = map.heights.as_ref().unwrap();

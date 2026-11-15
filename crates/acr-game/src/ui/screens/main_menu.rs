@@ -19,11 +19,16 @@ const MAP: &str = "INTERF2\\MAINMENU.GP";
 
 /// `BuildVersion`, shown in the bottom right corner.
 const VERSION: &[u8] = b"V 1.46+";
+/// The text of ACR's inspector entry.
+const INSPECTOR: &[u8] = b"Inspektor";
 
 /// Main entries: centre x, top y and spacing.
 const X: i32 = 510;
 const Y: i32 = 475;
 const STEP: i32 = 35;
+/// The main entries stand closer since the inspector's entry (ACR's) joined them: seven
+/// lines in the room of the original's six.
+const MAIN_STEP: i32 = 33;
 /// Offsets of the single player and multiplayer parts of the map.
 const SINGLE: (i32, i32) = (340, -250);
 const MULTI: (i32, i32) = (-340, -250);
@@ -37,6 +42,8 @@ mod item {
     pub const LOAD: i32 = 0xf7;
     pub const OPTIONS: i32 = 0xfc;
     pub const EDITOR: i32 = 0xf3;
+    /// ACR's unit inspector (docs/controls.md, "Inspector"); not in the original.
+    pub const INSPECTOR: i32 = 0xf4;
     pub const EXIT: i32 = 0xff;
     /// Submenu entries.
     pub const SUB_1: i32 = 1;
@@ -102,9 +109,11 @@ impl Screen for MainMenu {
             self.moving.push(m.d.add_gp_picture(ctx.lib, i * 255, 210, MAP, i as usize + 1));
         }
         let fonts = [font::G60W, font::G60Y5, font::G60Y5];
-        let mut entries = |m: &mut Menu, x: i32, y: i32, list: &[(&str, i32, &str)]| {
+        let mut entries = |m: &mut Menu, x: i32, y: i32, step: i32, list: &[(&str, i32, &str)]| {
             for (i, (id, param, key)) in list.iter().enumerate() {
-                let w = m.entry(ctx, x, y + STEP * i as i32, ctx.texts.get(id), fonts, Align::Center, *param);
+                // The inspector has no text in the game's files.
+                let text = if *param == item::INSPECTOR && *key == "inspector" { INSPECTOR } else { ctx.texts.get(id) };
+                let w = m.entry(ctx, x, y + step * i as i32, text, fonts, Align::Center, *param);
                 m.d.set_key(w, *key);
                 m.d.widgets[w].hover_sound = true;
                 self.moving.push(w);
@@ -116,23 +125,24 @@ impl Screen for MainMenu {
             ("INTF_MAIN_2", item::LOAD, "load"),
             ("INTF_MAIN_3", item::OPTIONS, "options"),
             ("INTF_MAIN_4", item::EDITOR, "editor"),
+            ("", item::INSPECTOR, "inspector"),
             ("INTF_MAIN_5", item::EXIT, "exit"),
         ];
-        entries(m, X, Y, &main);
+        entries(m, X, Y - 2, MAIN_STEP, &main);
         let multi = [
             ("INTF_PROT_B3", item::SUB_3, "multi_3"),
             ("INTF_MAIN_M0", item::SUB_1, "multi_1"),
             ("INTF_MAIN_M1", item::SUB_2, "multi_2"),
             ("INTF_MAIN_B", item::BACK, "multi_back"),
         ];
-        entries(m, X + MULTI.0 + 10, Y + MULTI.1 + 38, &multi);
+        entries(m, X + MULTI.0 + 10, Y + MULTI.1 + 38, STEP, &multi);
         let single = [
             ("INTF_MAIN_S0", item::SUB_1, "campaigns"),
             ("INTF_MAIN_S1", item::SUB_2, "single_mission"),
             ("INTF_MAIN_S2", item::SUB_3, "random_map"),
             ("INTF_MAIN_B", item::BACK, "single_back"),
         ];
-        entries(m, X + SINGLE.0 - 20, Y + SINGLE.1 + 38, &single);
+        entries(m, X + SINGLE.0 - 20, Y + SINGLE.1 + 38, STEP, &single);
         m.d.set_clip(None);
         m.d.add_gp_picture(ctx.lib, 339, 458, MAP, 0);
         let width = ctx.fonts.width(ctx.lib, font::SMALL_YELLOW1, VERSION);
@@ -183,7 +193,8 @@ impl Screen for MainMenu {
             (Page::Main, item::OPTIONS) => return Nav::Push(Box::new(super::options::Options::default())),
             (Page::Main, item::LOAD) => return Nav::Push(Box::new(LoadGame::main_menu())),
             (Page::Main, item::EXIT) => return Nav::Quit,
-            (Page::Main, item::EDITOR) => return Nav::Start(Box::new(editor_setup())),
+            (Page::Main, item::EDITOR) => return Nav::Start(Box::new(editor_setup(false))),
+            (Page::Main, item::INSPECTOR) => return Nav::Start(Box::new(editor_setup(true))),
             (Page::Single, item::SUB_1 | item::SUB_2 | item::SUB_3) => {
                 let next: Box<dyn Screen> = match param {
                     item::SUB_1 => Box::new(super::campaign::Campaigns::default()),
@@ -220,7 +231,9 @@ impl Screen for MainMenu {
 
 /// The test editor (docs/controls.md, "Editor"): a blank grass field for two human
 /// players, with the placing panel; the setting rules (hit locations, body spacing) apply.
-fn editor_setup() -> crate::ui::GameSetup {
+///
+/// `inspector`: the field opens on the unit inspector instead (docs/controls.md, "Inspector").
+fn editor_setup(inspector: bool) -> crate::ui::GameSetup {
     use crate::ui::setup::{BlankSetup, Control, PlayerSetup};
     use crate::ui::{GameKind, GameSetup};
     let player = |i: usize, name: &[u8]| PlayerSetup {
@@ -231,7 +244,7 @@ fn editor_setup() -> crate::ui::GameSetup {
         control: Control::Human,
     };
     GameSetup {
-        kind: GameKind::Blank(BlankSetup { editor: true, ..Default::default() }),
+        kind: GameKind::Blank(BlankSetup { editor: true, inspector, ..Default::default() }),
         players: vec![player(0, b"Spieler 1"), player(1, b"Spieler 2")],
         local_player: 0,
         rules: Default::default(),

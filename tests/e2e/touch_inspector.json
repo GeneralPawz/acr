@@ -1,0 +1,25 @@
+{
+  "name": "touch_inspector",
+  "description": "The unit inspector in the touch skin (#499): a blank start on the inspector shows its controls in the editor drawer (steppers for nation, unit, enemy and facing, the range switch, Neu aufstellen), the intents step the unit and the enemy, and the ids of the unit list are hidden while the inspector is on.",
+  "args": ["--ui", "touch"],
+  "steps": [
+    {"cmd": "start", "blank": {"inspector": true}},
+    {"cmd": "wait", "ticks": 5},
+    {"cmd": "view", "expect": [
+      {"path": "view.editor.toggle.id", "eq": "editor/inspect"},
+      {"path": "view.editor.controls.0.less", "eq": "editor/inspect/nation/-"},
+      {"path": "view.editor.controls.1.more", "eq": "editor/inspect/unit/+"}]},
+    {"cmd": "state", "expect": {"path": "state.inspector.unit.type", "contains": "(EN)"}},
+    {"cmd": "ui_send", "msg": {"t": "intent", "seq": 1, "id": "editor/inspect/nation/+", "action": {"t": "click", "button": "left"}}},
+    {"cmd": "wait", "ticks": 2},
+    {"cmd": "state", "expect": {"path": "state.inspector.unit.type", "contains": "(FR)"}},
+    {"cmd": "ui_send", "msg": {"t": "intent", "seq": 2, "id": "editor/inspect/enemy/+", "action": {"t": "click", "button": "left"}}},
+    {"cmd": "wait", "ticks": 2},
+    {"cmd": "state", "expect": {"path": "state.inspector.enemy.type", "eq": "EngM18(EN)"}},
+    {"cmd": "ui_send", "msg": {"t": "intent", "seq": 3, "id": "editor/inspect/range", "action": {"t": "click", "button": "left"}}},
+    {"cmd": "ui_send", "msg": {"t": "intent", "seq": 4, "id": "editor/nation/3", "action": {"t": "click", "button": "left"}}, "expect": {"ok": false}, "note": "the unit list is hidden"},
+    {"cmd": "ui_send", "msg": {"t": "intent", "seq": 5, "id": "editor/inspect/clip/0", "action": {"t": "click", "button": "left"}}, "expect": {"ok": false}, "note": "no model drawn without a GPU: no clip list"},
+    {"cmd": "ui_send", "msg": {"t": "intent", "seq": 6, "id": "editor/inspect", "action": {"t": "click", "button": "left"}}},
+    {"cmd": "view", "expect": {"path": "view.editor.toggle.id", "eq": "editor/battle"}}
+  ]
+}
