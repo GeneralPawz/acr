@@ -33,9 +33,9 @@ with the `#STAND` sprites (`line`'s `mix`); belts, armour, match and scabbard fi
   (`held.musket_rest`) in the left hand with the coiled match. `line.build` has no hook
   for its `make`: `pike.build` swaps `line.make` for the build's duration.
 - Registered here: hats `pike_broad` (broad felt, brim cocked up on the left), `pike_morion`,
-  `pike_pot` (both in steel, key `plate`); gear `pike_corselet` = `armour.corslet` (#522, shared:
+  `pike_pot` (both `armour.helmet` shells in steel, key `plate`); gear `pike_corselet` = `armour.corslet` (#522, shared:
   breast and back formed over the dressed trunk, medial ridge, rolled neck and arm edges, a
-  waist flange, shoulder straps, all rigid on `spine1`; two tassets of 7 lames, each lame one
+  waist flange (shoulder straps optional, off), all rigid on `spine1`; two tassets of 7 lames, each lame one
   weight between `spine1` and its thigh, so they hinge and slide without bending; painted
   steel, painter `plate`, metallic 1, roughness 0.4; `stats.armour`: fit gap, triangles and
   `poke` per clip), `pike_apostles` (nine charges down

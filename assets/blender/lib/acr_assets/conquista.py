@@ -25,49 +25,15 @@ from . import poses, rig
 
 
 def morion(name, plume=True):
-    """A combed morion: a steel dome, the brim turned up front and back into points, a comb,
-    and a red plume at the back (`plume`)."""
-    import bmesh
-    from mathutils import Matrix
-
-    from . import gear
-
-    bm = bmesh.new()
-    bmesh.ops.create_uvsphere(bm, u_segments=14, v_segments=8, radius=0.118)
-    for v in bm.verts:
-        v.co.z = max(v.co.z, -0.01) * 1.30
-    rim = bmesh.ops.create_cone(bm, cap_ends=False, segments=16, radius1=0.16, radius2=0.115, depth=0.02,
-                                matrix=Matrix.Translation((0, 0, -0.01)))
-    for v in rim["verts"]:
-        if v.co.xy.length > 0.13:
-            v.co.x *= 0.85
-            v.co.y *= 1.28
-            v.co.z += 0.13 * (abs(v.co.y) / 0.20) ** 3
-    bmesh.ops.create_cube(bm, size=1.0, matrix=Matrix.Translation((0, 0, 0.15)) @ Matrix.Diagonal((0.012, 0.20, 0.07, 1)))
-    obj = gear.from_bm(bm, name)
-    return obj
+    """A combed morion (`armour.helmet`): a steel skull, the brim swept up front and back
+    into points, a high comb; the red plume is gear (`plume`)."""
+    return armour.helmet_object("morion", name)
 
 
 def cabasset(name):
-    """A cabasset: a tall pear-shaped steel crown with a small stalk, a narrow flat brim."""
-    import bmesh
-    from mathutils import Matrix
-
-    from . import gear
-
-    bm = bmesh.new()
-    bmesh.ops.create_uvsphere(bm, u_segments=14, v_segments=10, radius=0.115)
-    for v in bm.verts:
-        z = max(v.co.z, -0.01)
-        t = max(z, 0.0) / 0.115
-        v.co.x *= 1.0 - 0.35 * t * t
-        v.co.y *= 1.08 * (1.0 - 0.35 * t * t)
-        v.co.z = z * 1.55
-    bmesh.ops.create_cone(bm, cap_ends=True, segments=16, radius1=0.15, radius2=0.15, depth=0.006,
-                          matrix=Matrix.Translation((0, 0, -0.01)) @ Matrix.Diagonal((1.0, 1.12, 1.0, 1)))
-    bmesh.ops.create_cone(bm, cap_ends=True, segments=6, radius1=0.012, radius2=0.004, depth=0.04,
-                          matrix=Matrix.Translation((0, 0.01, 0.19)))
-    return gear.from_bm(bm, name)
+    """A cabasset (`armour.helmet`): a tall pear-shaped steel skull with a small stalk, a
+    narrow flat brim."""
+    return armour.helmet_object("cabasset", name)
 
 
 def flat_cap(name, n=16):

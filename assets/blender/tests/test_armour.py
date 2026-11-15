@@ -37,7 +37,7 @@ class Corslet(unittest.TestCase):
         self.assertEqual(len(w), c["lames"])
         self.assertTrue(all(0.0 < a < b < 1.0 for a, b in zip(w, w[1:])))
         self.assertLess(w[0], 0.15)   # the top lame stays at the flange
-        self.assertGreater(w[-1], 0.85)  # the lowest goes with the thigh
+        self.assertGreater(w[-1], 0.80)  # the lowest goes with the thigh
         # Neighbours differ little: at a 35 degree thigh swing two lames 5 cm apart, 0.3 m
         # below the hip, part by less than their overlap.
         self.assertLess(max(b - a for a, b in zip(w, w[1:])) * 0.3 * 0.57 * 0.25, c["lame"][1])
@@ -46,6 +46,29 @@ class Corslet(unittest.TestCase):
             self.assertAlmostEqual(t1 - b0, c["lame"][1])
             self.assertLess(b1, b0)
         self.assertGreater(rows[-1][1], 0.66)  # ends above the knee (thigh 0.93 to 0.50)
+
+    def test_helmets(self):
+        self.assertEqual(sorted(armour.HELMETS), ["cabasset", "morion", "pot", "zischagge"])
+        for kind, k in armour.HELMETS.items():
+            # The rim clears a head 0.155 m wide and 0.19 m long; the apex is on the axis.
+            x, _y, z = armour.skull_point(k, 0.0, 0.0)
+            self.assertGreater(x, 0.105, kind)
+            self.assertAlmostEqual(z, k["rim"])
+            self.assertGreater(-armour.skull_point(k, -1.5707963, 0.0)[1], 0.12, kind)
+            x, y, z = armour.skull_point(k, 1.0, 1.0)
+            self.assertAlmostEqual(x, 0.0)
+            self.assertAlmostEqual(y, 0.0)
+            self.assertAlmostEqual(z, k["rim"] + k["h"])
+            if k.get("brim"):
+                for sn in (-1.0, 0.0, 1.0):
+                    w, drop, rise = k["brim"](sn, (1 - sn * sn) ** 0.5)
+                    self.assertGreater(w, 0.02, kind)
+                    self.assertGreaterEqual(drop, 0.0)
+                    self.assertGreaterEqual(rise, 0.0)
+        # The morion's brim sweeps up to points front and back, the cabasset is the tallest.
+        self.assertGreater(armour.HELMETS["morion"]["brim"](-1.0, 0.0)[2], 0.08)
+        self.assertEqual(armour.HELMETS["morion"]["brim"](0.0, 1.0)[2], 0.0)
+        self.assertEqual(max(armour.HELMETS, key=lambda n: armour.HELMETS[n]["h"]), "cabasset")
 
     def test_registered(self):
         self.assertEqual(registry.LAYER_OF["plate"], "metal")

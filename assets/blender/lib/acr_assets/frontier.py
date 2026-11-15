@@ -2,7 +2,7 @@
 docs/families/frontier.md): EngTap (trapper), EngTapDragon (jäger), UsaMil (militia),
 FrnBuk (buccaneer). The base of family 12 (`conquista.py`) as well: a man in draped work
 clothes (`civil.peasant_coat` as hunting shirt, waistcoat or doublet; breeches; leggings or
-hose), shell layers over them (shoulder cape, sash, cloak, cuirass), strapped kit (powder
+hose), shell layers over them (shoulder cape, sash, cloak), strapped kit (powder
 horn, shot pouch, tomahawk and knife in the belt, scabbard) and a hat, with the long gun in
 the right hand and the musketeer clips of `line.py` (present, fire and reload, the butt and
 bayonet blows of `poses.musketeer_strikes`).
@@ -19,7 +19,7 @@ A unit script is data: its `.MD` lines and `spec(md, ...)`, then `build(ctx)` ca
 - `legs`: the cloth key of the leggings or hose (the gaiter pattern without the garter);
 - `layers`: shells over the cloth, in order: `cape` (the hunting shirt's shoulder cape),
   `blouse` (the shirt or doublet over the waistband), `sash`, `cloak` (over the back and
-  shoulders), `cuirass` (breast and back plate), `tassets`, `slops` (puffed breeches);
+  shoulders), `slops` (puffed breeches); plate armour is `armour.corslet` (conquista.py);
 - `kit`: registered gear: `horn`, `pouch`, `tomahawk_belt`, `knife`, `belt_l` (the strap of
   horn and pouch over the left shoulder), `c_scabbard` and `plume` (conquista.py);
 - `hat`: a registered hat (`fur_cap`, `round_hat`, `buccaneer_hat`, `tricorn`, ... and
@@ -187,10 +187,6 @@ def _layer(ch, s, layer):
                 or (h in TORSO and c.z > 1.36)
 
         ch.shell("cloak", "fcloak", cloak, 0.065)
-    elif layer == "cuirass":
-        ch.shell("cuirass", "metal", lambda c, n, h, p: h in TORSO - {"clavicle_l", "clavicle_r"} and 0.98 < c.z < 1.42, 0.068)
-    elif layer == "tassets":
-        ch.shell("tassets", "metal", lambda c, n, h, p: (h in LEGS | {"hips"} and 0.78 < c.z < 1.0 and c.y < 0.02), 0.080)
     elif layer == "slops":
         ch.shell("slops", "slops", lambda c, n, h, p: h in LEGS | {"hips"} and 0.66 < c.z < 1.0, 0.055)
     else:

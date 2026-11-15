@@ -308,7 +308,7 @@ def spread(img, covered, passes=8):
         new = ~done & (cnt > 0)
         img[new] = acc[new] / cnt[new][:, None]
         done |= new
-    return img
+    return img, done
 
 
 def dress(ch, colours, layer_of, size=SIZE):
@@ -359,7 +359,15 @@ def dress(ch, colours, layer_of, size=SIZE):
                 out[m] = apply_mask(e, flat_p[m], flat_n[m], out[m], L, seed=11 + 7 * i)
     occ = np.clip(ao.reshape(-1), 0.0, 1.0)
     out *= (0.55 + 0.45 * occ ** 0.8)[:, None]
-    out = spread(out.reshape(size, size, 3), painted.reshape(size, size)).reshape(-1, 3)
+    out, done = spread(out.reshape(size, size, 3), painted.reshape(size, size))
+    out, done = out.reshape(-1, 3), done.reshape(-1)
+    # What is still unpainted in a painter's cell takes the cell's mean colour: a face that
+    # maps there (an island the bake missed) shows its material, not the black ground.
+    for name in groups:
+        u0, v0, u1, v1 = rects[name]
+        cell = (u >= u0) & (u < u1) & (v >= v0) & (v < v1)
+        if (cell & done).any():
+            out[cell & ~done] = out[cell & done].mean(axis=0)
     px = np.ones((size * size, 4), np.float32)
     px[:, :3] = coat.to_srgb(out)
     import bpy

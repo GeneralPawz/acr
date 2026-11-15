@@ -17,6 +17,12 @@ tassets, and the steel they are painted in.
   is glossy and metallic (`registry.METALLIC`) for the renderer's highlight.
 - `s["corslet"]` also fits other wearers: `origin` (a rider's ground point), `lames` 0 (no
   tassets: a horseman's back and breast), `PEASCOD` (the 16th-century form).
+- `helmet(kind)` / `helmet_object(kind, name)`: the steel helmets in the hat frame (origin
+  at the crown socket, facing -Y), smooth formed shells with rolled brims, key `plate`:
+  `pot` (the English pikeman's), `morion` (combed, the brim swept up to points), `cabasset`
+  (pear-shaped, a stalk at the apex), `zischagge` (lobster pot: peak, three bars, cheek
+  pieces, a tail of four lames). One mesh on the hat socket: rigid with the head, and it
+  still comes off as one hat; cheek pieces and lames are separate shells inside it.
 - `poke(ch, objs)`: clothes and body vertices standing outside the plates in the current
   pose; the pikeman's build writes it to `stats.armour` for STAND and the walk.
 
@@ -43,15 +49,16 @@ CORSLET = {
     "roll": 0.0045,  # radius of the rolled edges
     "flange": (0.022, 0.014),  # out, down
     "lames": 7,
-    "lame": (0.056, 0.012),  # a lame's height, its overlap with the next
+    "lame": (0.062, 0.018),  # a lame's height, its overlap with the next
     "tasset": (4.0, 78.0),  # degrees from the front centre: inner and outer edge
-    "straps": True,
+    "straps": False,  # thin bands over the shoulders; off: they rose as posts beside the neck
+    "belly_z": 0.07,  # the belly's fullest point above the waist
     "ridge": 0.015,  # the medial crease's height at the waist
     "belly": 0.012,  # the breast's fullness over the belly
     "origin": (0.0, 0.0, 0.0),  # the figure's ground point (a rider's: his `origin`)
 }
 # A 16th-century peascod (conquistadors): a deep point, a full belly, shorter tassets.
-PEASCOD = {"point": 0.050, "ridge": 0.020, "belly": 0.024, "lames": 5, "tasset": (5.0, 72.0)}
+PEASCOD = {"point": 0.065, "ridge": 0.026, "belly": 0.042, "belly_z": 0.045, "lames": 5, "tasset": (5.0, 72.0)}
 PLATE = (0.40, 0.42, 0.46)  # munition steel, kept bright with oil and sand
 
 
@@ -82,22 +89,22 @@ def breast_bottom(a, waist=CORSLET["waist"], point=CORSLET["point"]):
     return waist - point * max(0.0, 1.0 - abs(a) / 42.0) ** 2
 
 
-def ridge(a, z, waist=CORSLET["waist"], crease_m=CORSLET["ridge"], belly_m=CORSLET["belly"]):
+def ridge(a, z, waist=CORSLET["waist"], crease_m=CORSLET["ridge"], belly_m=CORSLET["belly"], belly_z=0.07):
     """How far the breast stands out beyond the trunk's envelope (m): the medial ridge, a
     crease at the centre that grows towards the point at the waist, over a full belly."""
     a = abs(a)
     low = _smooth(1.40, waist + 0.03, z)
     crease = max(0.0, 1.0 - a / 34.0) ** 1.5
-    belly = math.exp(-((z - (waist + 0.07)) / 0.11) ** 2) * math.cos(math.radians(min(a, 90.0))) ** 2
+    belly = math.exp(-((z - (waist + belly_z)) / 0.11) ** 2) * math.cos(math.radians(min(a, 90.0))) ** 2
     return crease_m * crease * (0.35 + 0.65 * low) + belly_m * belly
 
 
-def lame_weights(n, top=0.06, bottom=0.92):
+def lame_weights(n, top=0.06, bottom=0.84):
     """Thigh weight of each of `n` tasset lames, top to bottom (the rest is the bone the
     flange is on): rising steadily, so neighbours never part by more than their overlap."""
     if n == 1:
         return [bottom]
-    return [top + (bottom - top) * (k / (n - 1)) ** 0.85 for k in range(n)]
+    return [top + (bottom - top) * k / (n - 1) for k in range(n)]
 
 
 def lame_rows(n, z_top, height, overlap):
@@ -393,7 +400,7 @@ def tassets(ch, name, field, c, key="plate"):
                     # stands off over the next lame's top, with a turned lip at the end.
                     r = field.hanging(t, z, z_top) + c["clear"] + 0.004 + c["thick"]
                     r = max(r, field.radius(t, c["waist"]) + c["clear"] + c["thick"] + c["flange"][0] * 0.45)
-                    r += 0.020 * (z_top - z) / (n * height) + 0.0075 * f + 0.003 * f ** 6
+                    r += 0.030 * (z_top - z) / (n * height) + 0.0075 * f + 0.003 * f ** 6
                     # Rounded corners at the outer lower edge of the lowest lame.
                     if k == n - 1 and f > 0.5:
                         z += 0.035 * (f - 0.5) * 2 * max(0.0, (j / cols - 0.75) * 4) ** 2
@@ -439,7 +446,7 @@ def corslet(ch, name, s):
     waist, point = c["waist"], c["point"]
     parts = []
     bm, _lip = _plate(field, -90.0, 93.0, breast_top, lambda a: breast_bottom(a, waist, point),
-                      lambda a, z: ridge(a, z, waist, c["ridge"], c["belly"]) + 0.0025, c, flange=c["flange"])
+                      lambda a, z: ridge(a, z, waist, c["ridge"], c["belly"], c["belly_z"]) + 0.0025, c, flange=c["flange"])
     breast = _finish(bm, f"{name}.breast", c["thick"])
     bm, _lip = _plate(field, 90.0, 90.0, back_top, lambda a: waist - 0.012,
                       lambda a, z: 0.004 * math.exp(-((z - 1.34) / 0.09) ** 2), c, cols=48, rows=30,
@@ -467,6 +474,196 @@ def corslet(ch, name, s):
 
 
 registry.gear("corslet", corslet)
+
+
+# -- helmets ---------------------------------------------------------------------------------
+
+# rx, ry: the skull's half width and length at the rim; h: its height; p: how square the dome
+# is (1 a half ellipsoid, less: fuller); rim: the rim's height in the hat frame; brim(sin, cos)
+# -> (width, drop, rise) with sin = -1 at the front; comb: (half length, height) of the crest.
+HELMETS = {
+    "pot": {"rx": 0.110, "ry": 0.124, "h": 0.128, "p": 0.80, "rim": -0.020,
+            "brim": lambda sn, cs: (0.062 + 0.012 * sn * sn, 0.040, 0.0), "comb": (0.105, 0.014)},
+    "morion": {"rx": 0.110, "ry": 0.126, "h": 0.150, "p": 0.85, "rim": -0.012,
+               "brim": lambda sn, cs: (0.030 + 0.070 * abs(sn) ** 3, 0.012, 0.115 * abs(sn) ** 4), "comb": (0.118, 0.058)},
+    "cabasset": {"rx": 0.110, "ry": 0.124, "h": 0.185, "p": 1.25, "rim": -0.012,
+                 "brim": lambda sn, cs: (0.032, 0.006, 0.0), "comb": None, "stalk": True},
+    "zischagge": {"rx": 0.113, "ry": 0.128, "h": 0.130, "p": 0.82, "rim": -0.008,
+                  "brim": None, "comb": (0.100, 0.016), "peak": True, "cheeks": True, "tail": 4, "bars": 3},
+}
+
+
+def skull_point(k, th, u):
+    """A point of helmet `k`'s skull: angle `th` round it, `u` 0 at the rim to 1 at the apex."""
+    a = u * math.pi / 2
+    rr = math.cos(a) ** k["p"]
+    return (k["rx"] * rr * math.cos(th), k["ry"] * rr * math.sin(th), k["rim"] + k["h"] * math.sin(a))
+
+
+def _grid(bm, rows, closed=True):
+    """Quads between consecutive rows of vertices (`closed`: round the ring)."""
+    for a, b in zip(rows, rows[1:]):
+        n = len(a)
+        for i in range(n if closed else n - 1):
+            j = (i + 1) % n
+            bm.faces.new((a[i], a[j], b[j], b[i]))
+
+
+def _rod(bm, p0, p1, r, n=8):
+    """A round bar from `p0` to `p1`."""
+    axis = (p1 - p0).normalized()
+    side = axis.cross(Vector((1.0, 0.0, 0.0)))
+    if side.length < 1e-3:
+        side = axis.cross(Vector((0.0, 1.0, 0.0)))
+    side.normalize()
+    up = axis.cross(side)
+    rings = [[bm.verts.new(p + (side * math.cos(2 * math.pi * i / n) + up * math.sin(2 * math.pi * i / n)) * r)
+              for i in range(n)] for p in (p0, p1)]
+    _grid(bm, rings)
+    for ring in rings:
+        bm.faces.new(ring)
+
+
+def helmet(kind, n=64, m=22, thick=0.002):
+    """Helmet `kind` (`HELMETS`) as a bmesh in the hat frame."""
+    import bmesh
+
+    k = HELMETS[kind]
+    bm = bmesh.new()
+    ths = [-math.pi + 2 * math.pi * i / n for i in range(n)]
+    # The skull, rim to apex; the last ring is the apex itself (welded below).
+    rows = [[bm.verts.new(skull_point(k, th, i / m)) for th in ths] for i in range(m + 1)]
+    _grid(bm, rows)
+    rim = rows[0]
+    out = [Vector((math.cos(th), math.sin(th), 0.0)) for th in ths]
+    if k.get("brim"):
+        prev = rim
+        steps = 7
+        for j in range(1, steps + 1):
+            f = j / steps
+            ring = []
+            for v, th, d in zip(rim, ths, out):
+                w, drop, rise = k["brim"](math.sin(th), math.cos(th))
+                ring.append(bm.verts.new(v.co + d * (w * f) + Vector((0.0, 0.0, rise * f * f - drop * f ** 1.3))))
+            _grid(bm, [ring, prev])
+            prev = ring
+        # The brim's edge rolled under.
+        r = 0.0035
+        last = prev
+        for j in range(1, 5):
+            a = math.radians(60.0 * j)
+            ring = [bm.verts.new(v.co + d * (r * math.sin(a)) - Vector((0.0, 0.0, r * (1 - math.cos(a))))) for v, d in zip(prev, out)]
+            _grid(bm, [ring, last])
+            last = ring
+    else:
+        # A turned rim round the skull.
+        r = 0.003
+        last = rim
+        for j in range(1, 5):
+            a = math.radians(60.0 * j)
+            ring = [bm.verts.new(v.co + d * (r * (1 - math.cos(a))) - Vector((0.0, 0.0, r * math.sin(a)))) for v, d in zip(rim, out)]
+            _grid(bm, [ring, last])
+            last = ring
+    if k.get("peak"):
+        # A fixed peak over the eyes: a fan of the front 110 degrees, pointed at the centre.
+        cols, steps = 20, 6
+        fan = []
+        for j in range(steps + 1):
+            f = j / steps
+            row = []
+            for i in range(cols + 1):
+                g = i / cols * 2 - 1  # -1..1 across
+                th = math.radians(-90.0 + 56.0 * g)
+                x, y, z = skull_point(k, th, 0.10)
+                w = 0.075 * (1 - g * g) ** 0.6
+                row.append(bm.verts.new((x + math.cos(th) * w * f, y + math.sin(th) * w * f, z - 0.016 * f - 0.010 * f * f)))
+            fan.append(row)
+        _grid(bm, fan, closed=False)
+    if k.get("cheeks"):
+        for sx in (1, -1):
+            cols, steps = 12, 10
+            rows_c = []
+            for j in range(steps + 1):
+                f = j / steps
+                half = 44.0 * (1 - 0.55 * f * f)  # narrowing to the chin
+                row = []
+                for i in range(cols + 1):
+                    g = i / cols * 2 - 1
+                    deg = -18.0 + half * g  # a little forward of the ear
+                    th = math.radians(deg if sx > 0 else 180.0 - deg)
+                    x, y, z = skull_point(k, th, 0.0)
+                    s_in = 1.0 - 0.10 * f  # drawn in to the jaw
+                    row.append(bm.verts.new((x * 1.02 * s_in, y * 1.02, z + 0.006 - 0.135 * f)))
+                rows_c.append(row)
+            _grid(bm, rows_c, closed=False)
+    for t in range(k.get("tail", 0)):
+        # The lobster tail: lames over the nape, each lapping the next, flaring out and down.
+        cols, bands = 26, 3
+        z0 = k["rim"] + 0.010 - 0.036 * t
+        rows_t = []
+        for b in range(bands + 1):
+            f = b / bands
+            row = []
+            for i in range(cols + 1):
+                g = i / cols * 2 - 1
+                th = math.radians(90.0 + (66.0 - 4.0 * t) * g)
+                x, y, _z = skull_point(k, th, 0.0)
+                grow = 1.03 + 0.045 * t + 0.07 * f + 0.02 * (t + f) ** 2 * max(0.0, math.sin(th)) ** 2
+                row.append(bm.verts.new((x * (1.03 + 0.02 * t), y * grow, z0 - 0.046 * f)))
+            rows_t.append(row)
+        _grid(bm, rows_t, closed=False)
+    if k.get("comb"):
+        # The comb: a crest along the skull's middle line, thin, with a rounded top.
+        half, high = k["comb"]
+        steps, t = 40, 0.0045
+        prof = ((-t, 0.0), (-t, 0.55), (-t * 0.7, 0.90), (0.0, 1.0), (t * 0.7, 0.90), (t, 0.55), (t, 0.0))
+        rows_k = []
+        for j in range(steps + 1):
+            g = j / steps * 2 - 1
+            # Along the middle line from front to back, over the apex.
+            u = 1 - abs(g) * half / (k["ry"] * 1.2)
+            th = -math.pi / 2 if g < 0 else math.pi / 2
+            _x, y, z = skull_point(k, th, max(0.0, min(1.0, u)))
+            lift = high * (1 - abs(g) ** 2.2) ** 0.5
+            rows_k.append([bm.verts.new((dx, y, z - 0.004 + (lift + 0.004) * f)) for dx, f in prof])
+        _grid(bm, rows_k, closed=False)
+    bmesh.ops.remove_doubles(bm, verts=bm.verts[:], dist=1e-5)
+    bmesh.ops.dissolve_degenerate(bm, dist=1e-6, edges=bm.edges[:])
+    bmesh.ops.recalc_face_normals(bm, faces=bm.faces[:])
+    bmesh.ops.solidify(bm, geom=bm.faces[:], thickness=thick)
+    if k.get("stalk"):
+        top = Vector(skull_point(k, 0.0, 1.0))
+        _rod(bm, top - Vector((0.0, 0.0, 0.004)), top + Vector((0.0, 0.012, 0.022)), 0.004)
+    for i in range(k.get("bars", 0)):
+        # Face bars from the peak's edge down to chin height, joined by a bar at the bottom.
+        g = (i - (k["bars"] - 1) / 2) * 0.55
+        th = math.radians(-90.0 + 56.0 * g)
+        x, y, z = skull_point(k, th, 0.10)
+        w = 0.075 * (1 - g * g) ** 0.6
+        top = Vector((x + math.cos(th) * w, y + math.sin(th) * w, z - 0.026))
+        _rod(bm, top, Vector((top.x * 0.85, top.y + 0.030, k["rim"] - 0.165)), 0.0035)
+    if k.get("bars"):
+        g = (k["bars"] - 1) / 2 * 0.55
+        ends = []
+        for sg in (-g, g):
+            th = math.radians(-90.0 + 56.0 * sg)
+            x, y, z = skull_point(k, th, 0.10)
+            w = 0.075 * (1 - sg * sg) ** 0.6
+            ends.append(Vector(((x + math.cos(th) * w) * 0.85, y + math.sin(th) * w + 0.030, k["rim"] - 0.165)))
+        _rod(bm, ends[0], ends[1], 0.0035)
+    bmesh.ops.recalc_face_normals(bm, faces=bm.faces[:])
+    for f in bm.faces:
+        f.smooth = True
+    return bm
+
+
+def helmet_object(kind, name):
+    """Helmet `kind` as an object `name` in the hat frame (for `registry.hat` builders)."""
+    from . import gear
+
+    obj = gear.from_bm(helmet(kind), name)
+    obj.data.validate()
+    return obj
 
 
 def poke(ch, objs=None, reach=0.03):

@@ -24,7 +24,8 @@ draped doublet by the shared `armour.corslet` (#522) in its 16th-century form
 a waist flange, shoulder straps; breast and back rigid on `spine1`, painted steel, key
 `plate`): gear `c_cuirass`, or `c_cuirass_tassets` where the layers listed `tassets`
 (SpnAlb: five lames a side, each one weight between `spine1` and its thigh, so the tasset
-hinges at the flange instead of turning with the thigh). Morion and cabasset are keyed `plate`.
+hinges at the flange instead of turning with the thigh). Morion and cabasset are
+`armour.helmet` shells (smooth, rolled brims, the morion's comb, the cabasset's stalk), keyed `plate`.
 Sheet `ACR-analysis/c17/sheet_c17.png` (SpnS15). Registered here: hats `morion`, `cabasset`,
 `flat_cap`; gear `plume` (on the hat socket), `c_scabbard` (sheath and cup-hilt).
 

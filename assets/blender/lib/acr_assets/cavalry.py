@@ -527,24 +527,11 @@ def morion(ch, name, plume=True):
 
 
 def zischagge(ch, name, plume=None):
-    """A lobster-pot helmet (zischagge): a rounded skull with a low comb, a peak with three
-    face bars, cheek pieces and a tail of four lames over the nape (`metal`); `plume`: a
+    """A lobster-pot helmet (zischagge, `armour.helmet`): a rounded skull with a low comb, a
+    peak with three face bars, cheek pieces and a tail of four lames over the nape (`plate`); `plume`: a
     plume rising from the back of the comb (`sash` and `crest`, red and white)."""
     sock = am.world(ch.arm, P + "socket.hat").translation + Vector((0, 0, -0.03))
-    bm = bmesh.new()
-    bmesh.ops.create_uvsphere(bm, u_segments=16, v_segments=8, radius=0.12)
-    for v in bm.verts:
-        v.co.z = max(v.co.z, -0.005) * 1.12
-        v.co.y *= 1.08
-    _box(bm, Vector((0, 0.0, 0.14)), (0.010, 0.17, 0.03))  # comb
-    _box(bm, Vector((0, -0.15, 0.0)), (0.19, 0.08, 0.008), Matrix.Rotation(math.radians(-12), 4, "X"))  # peak
-    for x in (-0.035, 0.0, 0.035):  # face bars from the peak to the chin
-        _tube(bm, Vector((x, -0.18, -0.005)), Vector((x * 0.8, -0.15, -0.20)), 0.005, 0.005, 5)
-    for sx in (-1, 1):  # cheek pieces
-        _box(bm, Vector((sx * 0.115, -0.03, -0.09)), (0.010, 0.10, 0.13), Matrix.Rotation(math.radians(sx * 6), 4, "Y"))
-    for k in range(4):  # the lobster tail
-        _box(bm, Vector((0, 0.12 + 0.018 * k, -0.02 - 0.045 * k)), (0.20 - 0.008 * k, 0.012, 0.05),
-             Matrix.Rotation(math.radians(20 + 6 * k), 4, "X"))
+    bm = armour.helmet("zischagge")
     for v in bm.verts:
         v.co += sock
     obj = _held(ch, f"{name}_zischagge", "plate", bm, "socket.hat", Matrix.Identity(4))

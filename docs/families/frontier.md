@@ -23,8 +23,8 @@ upper garment is `civil.peasant_coat` (the coat without lapels, collar, cuffs an
 turnbacks, the front sewn shut): with skirts the hunting shirt, without them a shirt or
 waistcoat; leggings and hose are the gaiter pattern without the garter (`frontier.legs`),
 in their own cloth key. Shells over the cloth (`SPEC["layers"]`): `cape` (shoulder cape
-and a wider fringe band at its edge), `blouse`, `sash`, `cloak`; family 12 adds `cuirass`,
-`tassets`, `slops`.
+and a wider fringe band at its edge), `blouse`, `sash`, `cloak`; family 12 adds `slops`
+(its plate armour is modelled by `armour.corslet`, not a shell).
 
 Registered here: cloth keys `hunting`, `leggings`, `fsash`, `fur`, `horn`, `pouch`,
 `fcloak`, `fshirt`, `fvest`, `fhose`, `doublet`, `dsleeve`, `slops`, `plume`, each with its

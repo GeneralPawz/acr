@@ -79,31 +79,14 @@ def broad_hat(name, n=16, lace=None):
 
 
 def morion(name, lace=None):
-    """A combed morion: a high steel skull, brim turned up front and back."""
-    bm = bmesh.new()
-    bmesh.ops.create_uvsphere(bm, u_segments=14, v_segments=8, radius=0.115)
-    for v in bm.verts:
-        v.co.z = max(v.co.z, -0.02) * 1.30
-    rim = bmesh.ops.create_cone(bm, cap_ends=False, segments=16, radius1=0.16, radius2=0.115, depth=0.02,
-                                matrix=Matrix.Translation((0, 0, -0.02)))
-    for v in rim["verts"]:
-        if v.co.xy.length > 0.13:
-            v.co.x *= 0.80
-            v.co.y *= 1.30
-            v.co.z += 0.12 * (abs(v.co.y) / 0.21) ** 3
-    bmesh.ops.create_cube(bm, size=1.0, matrix=Matrix.Translation((0, 0, 0.14)) @ Matrix.Diagonal((0.01, 0.20, 0.06, 1)))
-    return gear.from_bm(bm, name)
+    """A combed morion (`armour.helmet`): a high steel skull, the brim swept up front and back."""
+    return armour.helmet_object("morion", name)
 
 
 def pot(name, lace=None):
-    """The English pikeman's pot: a round skull and a broad brim sloping down all round."""
-    bm = bmesh.new()
-    bmesh.ops.create_uvsphere(bm, u_segments=14, v_segments=8, radius=0.112)
-    for v in bm.verts:
-        v.co.z = max(v.co.z, -0.02) * 1.12
-    bmesh.ops.create_cone(bm, cap_ends=False, segments=16, radius1=0.20, radius2=0.112, depth=0.05,
-                          matrix=Matrix.Translation((0, 0, -0.045)))
-    return gear.from_bm(bm, name)
+    """The English pikeman's pot (`armour.helmet`): a round skull with a low comb and a broad
+    brim sloping down all round."""
+    return armour.helmet_object("pot", name)
 
 
 registry.hat("pike_broad", broad_hat)
