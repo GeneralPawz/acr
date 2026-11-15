@@ -218,12 +218,14 @@ pub enum Aim {
 /// the targets of `docs/melee.md` (`strike_view::target_point`, `clips.TARGET_DOWN`,
 /// `finish.TARGET_FINISH`). `None`: not a strike clip.
 pub fn aim_of(name: &str, mounted: bool, reach: f32, gun: bool) -> Option<Aim> {
-    aim_at(name, mounted, reach, gun, STANDING)
+    aim_at(name, mounted, reach, gun, STANDING, 0.0)
 }
 
 /// [`aim_of`] with the standing man `standing` m off (centre to centre): the type's own melee
 /// distance ([`distances`]).
-pub fn aim_at(name: &str, mounted: bool, reach: f32, gun: bool, standing: f32) -> Option<Aim> {
+/// `turn`: the degrees he stands to the right of the facing (a rider's stance,
+/// `acr_sim::melee::strike_turn`).
+pub fn aim_at(name: &str, mounted: bool, reach: f32, gun: bool, standing: f32, turn: f32) -> Option<Aim> {
     let rest = name.strip_prefix("ATTACK")?;
     let suffix = rest.trim_start_matches(|c: char| c.is_ascii_digit());
     let tokens: Vec<&str> = suffix.split('_').filter(|t| !t.is_empty()).collect();
@@ -247,8 +249,10 @@ pub fn aim_at(name: &str, mounted: bool, reach: f32, gun: bool, standing: f32) -
         }
     }
     let me = Vec3::ZERO;
-    let to_standing =
-        |h: StrikeHeight, what: &'static str| Aim::At(target_point(at(0.0, standing, 0.0), me, h, false, 0.0), h, what);
+    let turn = turn.to_radians();
+    let to_standing = |h: StrikeHeight, what: &'static str| {
+        Aim::At(target_point(at(turn.sin() * standing, turn.cos() * standing, 0.0), me, h, false, 0.0), h, what)
+    };
     Some(if tokens.contains(&"FINISH") {
         Aim::At(at(FINISH[0], FINISH[1], FINISH[2]), StrikeHeight::Down, "finishing target (finish.TARGET_FINISH)")
     } else if tokens.contains(&"DOWN") {
@@ -321,15 +325,16 @@ fn weapon_vertices(data: &ModelData, socket: usize, clip: &str) -> Vec<(usize, V
 }
 
 /// The melee distances of the unit types (`assets/blender/data/melee_distance.json`, from
-/// `acr_sim::melee::strike_distance`): lower-case type id → `[distance, nearest, reach]` m.
-/// Types whose nations differ are left out.
-pub fn distances() -> BTreeMap<String, [f32; 3]> {
+/// `acr_sim::melee::strike_distance`): lower-case type id → `[distance, nearest, reach]` m
+/// and the turn (degrees the man stands to the right of a rider's facing at the blow, 0 for
+/// most). Types whose nations differ are left out.
+pub fn distances() -> BTreeMap<String, [f32; 4]> {
     let text = include_str!("../../../../assets/blender/data/melee_distance.json");
     let doc: serde_json::Value = serde_json::from_str(text).unwrap_or_default();
     let mut out = BTreeMap::new();
     for (id, v) in doc["units"].as_object().into_iter().flatten().filter(|(id, _)| !id.contains('(')) {
         let m = |k: &str| v[k].as_f64().unwrap_or(0.0) as f32;
-        out.insert(id.to_ascii_lowercase(), [m("distance"), m("nearest"), m("reach")]);
+        out.insert(id.to_ascii_lowercase(), [m("distance"), m("nearest"), m("reach"), m("turn")]);
     }
     out
 }
@@ -337,7 +342,7 @@ pub fn distances() -> BTreeMap<String, [f32; 3]> {
 /// Audits every clip of `data`; `melee`: the type's melee distances ([`distances`]: middle,
 /// nearest, reach; `None` keeps 1.67 m for the standing targets). `Err`: why the model is
 /// skipped.
-pub fn audit(data: &ModelData, melee: Option<[f32; 3]>) -> Result<Vec<Finding>, String> {
+pub fn audit(data: &ModelData, melee: Option<[f32; 4]>) -> Result<Vec<Finding>, String> {
     if data.clips.is_empty() {
         return Err("no clips".into());
     }
@@ -439,7 +444,8 @@ pub fn audit(data: &ModelData, melee: Option<[f32; 3]>) -> Result<Vec<Finding>, 
             w.tip.filter(|_| w.point).map(|t| (node_frame(&globals, t, Vec3::Y, &transform).0 - hand).length())
         });
         let gun = at_hit.is_some_and(|w| w.muzzle || w.tip.is_some_and(|t| data.nodes[t].name.contains("arrow")));
-        match aim_at(&clip.name, mounted, reach.unwrap_or(REACH), gun, melee.map_or(STANDING, |m| m[0])) {
+        let (standing, turn) = melee.map_or((STANDING, 0.0), |m| (m[0], m[3]));
+        match aim_at(&clip.name, mounted, reach.unwrap_or(REACH), gun, standing, turn) {
             None | Some(Aim::Not(_)) => {}
             Some(Aim::At(target, height, what)) => {
                 let finding = |value, result, note: String| Finding {
@@ -455,7 +461,8 @@ pub fn audit(data: &ModelData, melee: Option<[f32; 3]>) -> Result<Vec<Finding>, 
                 let plain = clip.name.strip_prefix("ATTACK").is_some_and(|r| !r.is_empty() && !r.contains('_'));
                 let unsure = if plain {
                     Some("ATTACK<n>: melee or ranged (or work) is the .MD's choice, not known offline")
-                } else if mounted && height != StrikeHeight::Down {
+                } else if mounted && height != StrikeHeight::Down && turn == 0.0 {
+                    // With a turn the type has a rider's stance (`melee::STANCES`): judged.
                     Some("a rider's standing target is assumed straight ahead")
                 } else {
                     None
@@ -466,7 +473,9 @@ pub fn audit(data: &ModelData, melee: Option<[f32; 3]>) -> Result<Vec<Finding>, 
                 let ends = match melee.filter(|_| standing && measured.is_some()) {
                     Some(m) => {
                         let off = |d: f32| {
-                            let shifted = Vec3::new(target.x, target.y - (d - m[0]), target.z);
+                            // Along the line from him to the man.
+                            let (sin, cos) = m[3].to_radians().sin_cos();
+                            let shifted = Vec3::new(target.x - sin * (d - m[0]), target.y - cos * (d - m[0]), target.z);
                             probe(data, ci, HIT_FRAME, shifted, height).map_or(0.0, |(_, l, _)| (l - shifted).length())
                         };
                         format!(
@@ -495,10 +504,20 @@ pub fn audit(data: &ModelData, melee: Option<[f32; 3]>) -> Result<Vec<Finding>, 
                                 (true, Some(_)) => "info",
                             },
                             format!(
-                                "clip alone {a:.2} m ({} {:.2} m); {what}{ends}; point {:.2} m from the hand{}",
+                                "clip alone {a:.2} m ({} {:.2} m); {what}{ends}; point {:.2} m from the hand{}{}",
                                 if short >= 0.0 { "short by" } else { "past by" },
                                 short.abs(),
                                 reach.unwrap_or(0.0),
+                                // Where a rider's point is, clip alone (his stance is set
+                                // from it: `acr_sim::melee::STANCES`, docs/melee.md).
+                                if mounted {
+                                    format!(
+                                        "; point at {:.2} m ahead, {:.2} m right, {:.2} m up",
+                                        -alone.y, -alone.x, alone.z
+                                    )
+                                } else {
+                                    String::new()
+                                },
                                 unsure.map_or(String::new(), |u| format!("; not judged: {u}")),
                             ),
                         )

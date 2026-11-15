@@ -161,11 +161,53 @@ pub const STRIKE_STANCE: i32 = 50;
 /// A stance beyond the type's `ATTACK_RADIUS` max extends its reach under the rule
 /// ([`long_reach`]). The pikemen: the 4.9 m pike's push is solved for a man 5.0 m off
 /// (`docs/families/pike.md`, Reach), `ENGPIK.MD` has `ATTACK_RADIUS` max 100 px.
-pub const STANCES: &[(&str, i32)] = &[("EngPik", 150), ("FrnPik", 150)];
+///
+/// Riders take a stance only with an entry (the types whose 3D model's blow was measured,
+/// clip alone at the hit frame: `ACR-analysis/clip-audit/riders/rider_points.csv`). The
+/// third number is the turn (1/256 of a circle): a rider's blade lands to his right, so at
+/// the blow he faces that much left of the enemy and the man stands where the blade comes
+/// down. Sabres (dragoons, mounted officers, `SpnRei`): the point 1.19 m ahead and 0.65 m
+/// right = 41 px, 29 degrees. Lances (`PueVsd`, `PueVsdA`, `SiuKPik`): 2.98 m ahead, 0.24 m
+/// right = 90 px, 5 degrees. The Sioux riders' clubs and tomahawks: 0.66 m ahead, 0.62 m
+/// right = 27 px, 43 degrees.
+pub const STANCES: &[(&str, i32, u8)] = &[
+    ("EngPik", 150, 0),
+    ("FrnPik", 150, 0),
+    ("EngD17", 41, 20),
+    ("EngD18", 41, 20),
+    ("EngKOf17", 41, 20),
+    ("EngKOf18", 41, 20),
+    ("FrnD17", 41, 20),
+    ("FrnD18", 41, 20),
+    ("FrnKOf17", 41, 20),
+    ("FrnKOf18", 41, 20),
+    ("SpnD17", 41, 20),
+    ("SpnD18", 41, 20),
+    ("SpnKOf17", 41, 20),
+    ("SpnKOf18", 41, 20),
+    ("SpnRei", 41, 20),
+    ("UsaD18", 41, 20),
+    ("UsaKOf18", 41, 20),
+    ("PueVsd", 90, 3),
+    ("PueVsdA", 90, 3),
+    ("SiuKPik", 90, 3),
+    ("SiuKLut", 27, 31),
+    ("SiuKVog", 27, 31),
+];
+
+fn entry(t: &crate::catalog::ObjectType) -> Option<&'static (&'static str, i32, u8)> {
+    STANCES.iter().find(|(n, ..)| n.eq_ignore_ascii_case(&t.id) || n.eq_ignore_ascii_case(&t.md_name))
+}
 
 /// The entry of type `t` in [`STANCES`] (px, against a man).
 pub fn stance_entry(t: &crate::catalog::ObjectType) -> Option<i32> {
-    STANCES.iter().find(|(n, _)| n.eq_ignore_ascii_case(&t.id) || n.eq_ignore_ascii_case(&t.md_name)).map(|e| e.1)
+    entry(t).map(|e| e.1)
+}
+
+/// The turn of type `t` at its blow ([`STANCES`]): he faces this much left of the enemy
+/// (1/256 of a circle); 0 without an entry.
+pub fn strike_turn(t: &crate::catalog::ObjectType) -> u8 {
+    entry(t).map_or(0, |e| e.2)
 }
 
 /// The reach of a type with a [`STANCES`] entry beyond its `.MD` reach, against a victim
@@ -176,16 +218,18 @@ pub fn long_reach(t: &crate::catalog::ObjectType, victim_add: i32) -> Option<i32
     stance_entry(t).map(|s| (s + victim_add + STRIKE_TOL) * 9 / 8 + 1)
 }
 
-/// Whether `i` is a man on foot (no rider, no beast, no building) on his feet: the men
-/// whose blows the strike stance and [`long_reach`] apply to.
+/// Whether `i` is a man (no beast, no building) on his feet whose blows the strike stance
+/// and [`long_reach`] apply to: every man on foot, and a rider whose type has an entry in
+/// [`STANCES`].
 pub fn foot_man(w: &World, i: usize) -> bool {
     let u = &w.units[i];
+    let t = w.catalog.get(u.kind);
     w.rules.hit_locations
         && u.alive
         && !u.building
         && !on_ground(&u.body)
-        && !rides(w, i)
-        && crate::body::Beast::of(&w.catalog.get(u.kind).md_name).is_none()
+        && (!rides(w, i) || stance_entry(t).is_some())
+        && crate::body::Beast::of(&t.md_name).is_none()
 }
 
 /// How near (px) to his stance he must be before the blow starts.
