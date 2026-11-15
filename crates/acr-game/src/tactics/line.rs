@@ -17,7 +17,7 @@ use acr_sim::{Command, EntityId, World};
 
 use super::frame::{dist, to_world};
 use super::picture::living;
-use super::{Duty, Phase, Report, Style, View};
+use super::{Duty, Phase, Plan, Report, Style, View};
 
 /// The length of a bound of the advance, pixels.
 const STEP: i32 = 160;
@@ -45,6 +45,8 @@ const ODDS: (u32, u32) = (3, 2);
 const MELEE_BEHIND: i32 = 120;
 /// Melee foot charges an enemy this near, pixels (a doctrine may rush from farther: [`Rules`]).
 pub(super) const RUSH: i32 = 300;
+/// A body called to hold out of a march or a charge re-forms this far on, pixels.
+const HALT_STEP: i32 = 32;
 /// A charge is ordered again when the enemy moved this far from the last aim, pixels.
 const RETARGET: i32 = 150;
 
@@ -118,6 +120,8 @@ pub(super) struct Line {
     waited: u64,
     /// Per body of the army.
     modes: Vec<Mode>,
+    /// The plan changed: what was ordered before no longer counts ([`Line::replan`]).
+    replanned: bool,
 }
 
 /// The foot body of the enemy nearest to `from` (any living body if no foot is left) and its
@@ -154,6 +158,14 @@ impl Line {
         self.marching
     }
 
+    /// The side got another ready command: every body starts it from where it stands.
+    pub(super) fn replan(&mut self) {
+        self.modes.clear();
+        self.waited = 0;
+        // A side that has not marched yet has nothing to stop.
+        self.replanned = self.marching;
+    }
+
     pub(super) fn cannonade_end(&self) -> Option<u64> {
         self.marched_at.or(self.began.map(|b| b + CANNONADE_TICKS))
     }
@@ -182,18 +194,40 @@ impl Line {
             return;
         }
         let reach = front.iter().map(|&i| v.mine[i].reach).max().unwrap_or(0);
-        if !self.marching {
+        let plan = v.plan;
+        if !self.marching && plan != Plan::Hold {
             let gap = front.iter().filter_map(|&i| nearest_foe(v, v.mine[i].centroid)).map(|f| f.1).min();
-            if gap.is_none_or(|g| g <= reach + CANNONADE_MARGIN) || v.tick - began >= CANNONADE_TICKS {
+            if plan == Plan::Storm
+                || gap.is_none_or(|g| g <= reach + CANNONADE_MARGIN)
+                || v.tick - began >= CANNONADE_TICKS
+            {
                 self.marching = true;
                 self.marched_at = Some(v.tick);
             }
         }
-        if !self.marching {
+        // A side that holds stands and fires without the march.
+        if !self.marching && plan != Plan::Hold {
             report.phase = report.phase.max(Phase::Cannonade);
             return;
         }
         let style = v.me.style;
+        // Called to hold out of a march or a charge: every body stops where it is.
+        if std::mem::take(&mut self.replanned) && plan == Plan::Hold {
+            for &i in front.iter().chain(&behind).filter(|&&i| !held[i]) {
+                // A short step on (a formation drops a move of under 16 px), after a stop that
+                // ends the loose men's attack-move.
+                let (dx, dy) = to_world(v.me.facing, HALT_STEP, 0);
+                let c = v.mine[i].centroid;
+                out.push(Command::Stop { player: v.me.owner, units: units(world, v, i) });
+                out.push(Command::MoveFacing {
+                    player: v.me.owner,
+                    units: units(world, v, i),
+                    x: c.0 + dx,
+                    y: c.1 + dy,
+                    dir: v.me.facing,
+                });
+            }
+        }
         let halt = if style == Style::Column { HALT_COLUMN } else { HALT };
         let stand = |i: usize| Command::StandGround { player: v.me.owner, units: units(world, v, i), on: true };
 
@@ -204,6 +238,11 @@ impl Line {
             let Some((_, d)) = nearest_foe(v, p.centroid) else { continue };
             let halts_at = if p.melee { rules.rush } else { p.reach * halt.0 / halt.1 };
             match m.stage {
+                Stage::Ready if plan == Plan::Hold && p.melee => {}
+                Stage::Ready if plan == Plan::Hold => {
+                    *m = Mode { stage: Stage::Halted, since: v.tick, ..Mode::default() };
+                    report.halts += 1;
+                }
                 Stage::Ready if p.melee && rules.hold_melee => {}
                 Stage::Ready if p.melee => movers.push((i, d - rules.rush)),
                 Stage::Ready if d - halts_at <= HALT_SLACK => {
@@ -211,7 +250,7 @@ impl Line {
                     report.halts += 1;
                 }
                 Stage::Ready => movers.push((i, d - halts_at)),
-                Stage::Halted if v.tick - m.since >= fire_ticks(style) => {
+                Stage::Halted if plan == Plan::Attack && v.tick - m.since >= fire_ticks(style) => {
                     let close = p.reach * CLOSE.0 / CLOSE.1;
                     let (foe, _) = nearest_foe(v, p.centroid).unwrap_or((0, 0));
                     if d - close > HALT_SLACK {
@@ -248,21 +287,23 @@ impl Line {
         }
 
         // The charge: one body's trigger sends the whole line, and the melee foot with it.
-        let triggered = front.iter().any(|&i| {
-            let (p, m) = (&v.mine[i], &self.modes[i]);
-            let Some((j, d)) = nearest_foe(v, p.centroid) else { return false };
-            match m.stage {
-                Stage::Charging => true,
-                _ if p.melee => d <= rules.rush + HALT_SLACK,
-                Stage::Ready | Stage::Second => false,
-                Stage::Halted | Stage::Closed => {
-                    let foe = &v.theirs[j];
-                    foe.alive * 100 <= foe.start * WEAK_PERCENT
-                        || p.alive * ODDS.1 >= foe.alive * ODDS.0
-                        || (m.stage == Stage::Closed && v.tick - m.since >= CLOSE_TICKS)
+        let triggered = plan == Plan::Storm
+            || front.iter().any(|&i| {
+                let (p, m) = (&v.mine[i], &self.modes[i]);
+                let Some((j, d)) = nearest_foe(v, p.centroid) else { return false };
+                match m.stage {
+                    Stage::Charging => true,
+                    _ if p.melee => d <= rules.rush + HALT_SLACK,
+                    Stage::Ready | Stage::Second => false,
+                    Stage::Halted | Stage::Closed if plan != Plan::Attack => false,
+                    Stage::Halted | Stage::Closed => {
+                        let foe = &v.theirs[j];
+                        foe.alive * 100 <= foe.start * WEAK_PERCENT
+                            || p.alive * ODDS.1 >= foe.alive * ODDS.0
+                            || (m.stage == Stage::Closed && v.tick - m.since >= CLOSE_TICKS)
+                    }
                 }
-            }
-        });
+            });
         for &i in front.iter().chain(&behind).filter(|&&i| !held[i]) {
             let near = nearest_foe(v, v.mine[i].centroid).is_some_and(|f| f.1 <= rules.rush + HALT_SLACK);
             let m = &mut self.modes[i];

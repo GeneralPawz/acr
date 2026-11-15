@@ -13,7 +13,7 @@
 //! controller. That is the batteries ([`guns`]) and the lines and melee foot ([`line`]) with
 //! their squares against cavalry ([`karree`]), the cavalry wings ([`cavalry`]), the skirmishers
 //! ([`screen`]), the reserve ([`reserve`]) and the native doctrines' rules and archers
-//! ([`native`]).
+//! ([`native`]). A side's ready command ([`Plan`]) changes how its foot and wings go about it.
 
 mod cavalry;
 pub mod frame;
@@ -72,6 +72,56 @@ pub enum Style {
     Riders,
 }
 
+/// A ready command for a whole side (the battle view's "Befehle"): how its foot and horse
+/// fight. [`Plan::Attack`] is the controller as it always was.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Plan {
+    /// Cannonade, advance in bounds, fire, close and charge; the wings ride round the flanks.
+    #[default]
+    Attack,
+    /// No cannonade and no firefight: foot and horse charge at once.
+    Storm,
+    /// Advance to musket range and fire from there; no second bound, and a charge only at an
+    /// enemy that has come within melee reach. The wings flank as in the attack.
+    Fire,
+    /// Stand where the army stands and fire; the melee foot charges what comes within its
+    /// reach, the wings stay home and only intercept enemy riders.
+    Hold,
+}
+
+impl Plan {
+    pub const ALL: [Plan; 4] = [Plan::Attack, Plan::Storm, Plan::Fire, Plan::Hold];
+
+    /// The button's text.
+    pub fn label(self) -> &'static str {
+        match self {
+            Plan::Attack => "Angriff",
+            Plan::Storm => "Sturm",
+            Plan::Fire => "Feuergefecht",
+            Plan::Hold => "Halten",
+        }
+    }
+
+    /// The name in ids (`editor/battle/plan/<name>`).
+    pub fn name(self) -> &'static str {
+        match self {
+            Plan::Attack => "attack",
+            Plan::Storm => "storm",
+            Plan::Fire => "fire",
+            Plan::Hold => "hold",
+        }
+    }
+
+    /// The number in savegames.
+    pub fn code(self) -> u8 {
+        self as u8
+    }
+
+    pub fn from_code(code: u8) -> Option<Self> {
+        Self::ALL.get(usize::from(code)).copied()
+    }
+}
+
 /// The stage of a side's battle plan.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
 pub enum Phase {
@@ -106,6 +156,8 @@ pub struct Army {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Report {
     pub phase: Phase,
+    /// The side's ready command.
+    pub plan: Plan,
     /// Living units of the army.
     pub alive: u32,
     /// The farthest any gun has ever stood from where it was placed, pixels.
@@ -121,6 +173,8 @@ pub struct Report {
 /// What one decision of a side looks at.
 struct View<'a> {
     tick: u64,
+    /// The side's ready command.
+    plan: Plan,
     me: &'a Army,
     foe: &'a Army,
     /// The pictures of the bodies of `me` and `foe`.
@@ -133,6 +187,7 @@ struct View<'a> {
 pub struct Commander {
     armies: [Army; 2],
     control: [Control; 2],
+    plans: [Plan; 2],
     batteries: [guns::Battery; 2],
     squares: [karree::Squares; 2],
     lines: [line::Line; 2],
@@ -152,6 +207,7 @@ impl Commander {
         Self {
             armies,
             control,
+            plans: [Plan::default(); 2],
             batteries,
             squares: [karree::Squares::new(world), karree::Squares::new(world)],
             lines: Default::default(),
@@ -167,6 +223,26 @@ impl Commander {
     /// Changes who commands each side; what the controller has seen of it stays.
     pub fn set_control(&mut self, control: [Control; 2]) {
         self.control = control;
+    }
+
+    /// The ready command of `side` (0 or 1).
+    pub fn plan(&self, side: usize) -> Plan {
+        self.plans[side]
+    }
+
+    /// Gives `side` another ready command: its foot starts the new plan from where it stands
+    /// (a charge under way is called off for [`Plan::Hold`], whose wings also ride home).
+    pub fn set_plan(&mut self, side: usize, plan: Plan) {
+        if self.plans[side] == plan {
+            return;
+        }
+        self.plans[side] = plan;
+        self.reports[side].plan = plan;
+        self.lines[side].replan();
+        if plan == Plan::Hold {
+            self.wings[side].recall();
+        }
+        self.cache = None;
     }
 
     /// The orders for the tick `world` is at: the sides whose turn it is decide, in side order.
@@ -218,7 +294,8 @@ impl Commander {
         let mine = picture::of(world, &self.armies[side]);
         self.reserves[side].decide(world, &mut self.armies[side], &mine, (&mut *out, &mut *report));
         let (me, foe) = (&self.armies[side], &self.armies[1 - side]);
-        let view = View { tick: world.tick.0, me, foe, mine: &mine, theirs: &foe_pics };
+        let plan = self.plans[side];
+        let view = View { tick: world.tick.0, plan, me, foe, mine: &mine, theirs: &foe_pics };
         let mut held = self.squares[side].decide(world, &view, (&mut *out, &mut *report));
         // Foot that flanks like a wing is the wings' while they have it.
         let flank = self.natives[side].flank(&view).to_vec();
@@ -228,7 +305,12 @@ impl Commander {
         let rules = self.natives[side].rules(view.me.style, view.tick);
         self.lines[side].decide(world, &view, (&held, rules), (&mut *out, &mut *report));
         if let Some(end) = self.lines[side].cannonade_end() {
-            self.wings[side].decide(world, &view, (end + cavalry::HOLD_AFTER, &flank), (&mut *out, &mut *report));
+            let release = match plan {
+                Plan::Attack | Plan::Fire => end + cavalry::HOLD_AFTER,
+                Plan::Storm => 0,
+                Plan::Hold => u64::MAX,
+            };
+            self.wings[side].decide(world, &view, (release, &flank), (&mut *out, &mut *report));
         }
         self.natives[side].decide(world, &view, self.lines[side].marching(), (&mut *out, &mut *report));
         self.screens[side].decide(world, &view, (out, report));

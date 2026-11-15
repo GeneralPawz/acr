@@ -482,6 +482,7 @@ pub fn build(world: &World, player: u8, sel: &[EntityId], v: &Value) -> Result<V
 fn battle_side(r: &crate::tactics::Report) -> Value {
     json!({
         "phase": format!("{:?}", r.phase),
+        "plan": r.plan.name(),
         "alive": r.alive,
         "guns_drift_max": r.guns_drift_max,
         "gun_orders": r.gun_orders,

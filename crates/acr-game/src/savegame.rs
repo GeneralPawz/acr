@@ -560,6 +560,11 @@ impl Writer {
                 self.u(8);
                 self.u(u64::from(ai[0]) | u64::from(ai[1]) << 1);
             }
+            EditorInput::Plan { side, plan } => {
+                self.u(9);
+                self.u(u64::from(*side));
+                self.u(u64::from(plan.code()));
+            }
             EditorInput::Battle { nation, era, size, fight } => {
                 self.u(5);
                 for n in nation {
@@ -782,6 +787,14 @@ impl<'a> Reader<'a> {
                     return Err(err("fight sides"));
                 }
                 EditorInput::Fight { ai: [bits & 1 != 0, bits & 2 != 0] }
+            }
+            9 => {
+                let side = self.u8()?;
+                if side > 1 {
+                    return Err(err("plan side"));
+                }
+                let plan = crate::tactics::Plan::from_code(self.u8()?).ok_or_else(|| err("plan"))?;
+                EditorInput::Plan { side, plan }
             }
             6 => EditorInput::Nature {
                 group: SpriteGroup::from_code([self.u8()?, self.u8()?]),
@@ -1161,6 +1174,8 @@ mod tests {
             (902, EditorInput::Fight { ai: [true, true] }),
             (903, EditorInput::Fight { ai: [true, false] }),
             (904, EditorInput::Fight { ai: [false, false] }),
+            (905, EditorInput::Plan { side: 0, plan: crate::tactics::Plan::Storm }),
+            (906, EditorInput::Plan { side: 1, plan: crate::tactics::Plan::Hold }),
         ]
     }
 

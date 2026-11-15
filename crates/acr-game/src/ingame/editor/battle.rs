@@ -12,6 +12,11 @@
 //! "Aufstellen" only places. The swords button then starts the fight: Kampf is switched on and
 //! the battle controller (`crate::tactics`) takes over the armies' orders. Each side is either
 //! the player's (only its guns are automatic) or the Ki's (the whole controller).
+//!
+//! The ready commands ("Befehle": Angriff, Sturm, Feuergefecht, Halten; [`Plan`]) are for the
+//! army the player is in, the side of the player he controls ("Ich steuere"; side 1 for
+//! every player but player 2). One of them hands that side to the controller under the plan
+//! and starts the fight if it does not run yet, so "Angriff" after "Aufstellen" is a battle.
 
 use acr_formats::m3d::MapSize;
 use acr_sim::World;
@@ -22,7 +27,7 @@ use super::presets::{self, Block, Doctrine, Era, Error, Role, Size};
 use super::touch::TouchControl;
 use super::{Act as EditorAct, ENTRIES, Editor};
 use super::{CELL, FIRST_EXTRA, Item, Look, OY, ROW, W, X0, sides};
-use crate::tactics::{self, Control, Duty, Style};
+use crate::tactics::{self, Control, Duty, Plan, Style};
 use crate::ui::Ctx;
 use crate::ui::dialog::Reject;
 use crate::ui::draw::Rect;
@@ -48,6 +53,8 @@ pub enum Act {
     Control(usize),
     /// The swords button: starts the fight.
     Fight,
+    /// A ready command for the army the player is in.
+    Plan(Plan),
     /// Places both armies.
     Go,
 }
@@ -61,6 +68,8 @@ pub struct Battle {
     size: Size,
     /// Whether the Ki commands the side (otherwise the player does, only the guns are automatic).
     pub ai: [bool; 2],
+    /// The ready command of each side, for when the controller commands it.
+    pub plan: [Plan; 2],
     /// The units the last "Aufstellen" placed.
     placed: Vec<acr_sim::EntityId>,
     /// The bodies of each side's army with the units that stand in them (officers, drummers
@@ -80,6 +89,7 @@ impl Default for Battle {
             era: [None, None],
             size: Size::Medium,
             ai: [false, true],
+            plan: [Plan::default(); 2],
             placed: Vec::new(),
             bodies: [Vec::new(), Vec::new()],
             at: [(0, 0); 2],
@@ -94,6 +104,12 @@ impl Battle {
         let all = presets::eras(self.nation[side]);
         self.era[side].filter(|e| all.contains(e)).or_else(|| presets::default_era(self.nation[side]))
     }
+}
+
+/// The side of the battle the player `local` is in: player 2's is Seite 2, everyone else's
+/// Seite 1.
+pub fn side_of(local: u8) -> usize {
+    usize::from(local == 1)
 }
 
 /// How far an army reaches around its origin in its own frame (forward and right-hand side).
@@ -270,7 +286,7 @@ fn duty_of(world: &World, owner: u8, b: &Block, front_row: Option<u8>) -> Duty {
 
 impl Editor {
     /// A click on the battle view; "Aufstellen" returns the input that places the armies.
-    pub(super) fn battle_act(&mut self, act: Act) -> Option<Input> {
+    pub(super) fn battle_act(&mut self, act: Act, local: u8) -> Option<Input> {
         let b = &mut self.battle;
         let step = |v: usize, d: i32| (v as i32 + d).rem_euclid(FIRST_EXTRA as i32) as usize;
         match act {
@@ -297,6 +313,7 @@ impl Editor {
                 }
             }
             Act::Fight => return Some(Input::Fight { ai: b.ai }),
+            Act::Plan(plan) => return Some(Input::Plan { side: side_of(local) as u8, plan }),
             Act::Go => {
                 return Some(Input::Battle {
                     nation: b.nation,
@@ -349,7 +366,11 @@ impl Editor {
             return b"Steuerung geaendert".to_vec();
         }
         let Some(armies) = armies(world, b) else { return b"Erst aufstellen".to_vec() };
-        b.tactics = Some(tactics::Commander::new(world, armies, control));
+        let mut commander = tactics::Commander::new(world, armies, control);
+        for s in 0..2 {
+            commander.set_plan(s, b.plan[s]);
+        }
+        b.tactics = Some(commander);
         if self.sides == sides::Mode::Off {
             self.sides = sides::Mode::Free;
         }
@@ -357,8 +378,31 @@ impl Editor {
         b"Kampf".to_vec()
     }
 
+    /// A ready command ([`Input::Plan`]): the controller commands `side` under `plan`, and
+    /// the fight starts if it does not run yet.
+    pub(super) fn order(&mut self, world: &mut World, side: usize, plan: Plan) -> Vec<u8> {
+        if armies(world, &self.battle).is_none() {
+            return b"Erst aufstellen".to_vec();
+        }
+        let b = &mut self.battle;
+        b.plan[side] = plan;
+        b.ai[side] = true;
+        let ai = b.ai;
+        if let Some(t) = &mut b.tactics {
+            t.set_plan(side, plan);
+        }
+        self.start_fight(world, ai);
+        format!("Seite {}: {}", side + 1, plan.label()).into_bytes()
+    }
+
+    /// Whether `plan` is what the controller does for `side` right now.
+    fn plan_on(&self, side: usize, plan: Plan) -> bool {
+        let b = &self.battle;
+        b.tactics.is_some() && b.ai[side] && b.plan[side] == plan
+    }
+
     /// The battle view for the touch drawer (`touch.rs`), in the order of the classic lines.
-    pub(super) fn battle_touch(&self, ctx: &Ctx) -> Vec<TouchControl> {
+    pub(super) fn battle_touch(&self, ctx: &Ctx, local: u8) -> Vec<TouchControl> {
         let b = &self.battle;
         let mut out = Vec::new();
         let stepper = |name: String, text: String| TouchControl::Stepper {
@@ -397,6 +441,15 @@ impl Editor {
             on: b.tactics.is_some(),
             draws: super::touch::cell_draws(&fight, ctx),
         });
+        let side = side_of(local);
+        out.push(TouchControl::Line { text: format!("Befehle an Seite {}:", side + 1).into_bytes() });
+        for plan in Plan::ALL {
+            out.push(TouchControl::Button {
+                id: format!("editor/battle/plan/{}", plan.name()),
+                text: plan.label().as_bytes().to_vec(),
+                on: self.plan_on(side, plan),
+            });
+        }
         out
     }
 
@@ -425,12 +478,13 @@ impl Editor {
             ["control", s] => Ok(Act::Control(side(s)?)),
             ["go"] => Ok(Act::Go),
             ["fight"] => Ok(Act::Fight),
+            ["plan", name] => Plan::ALL.into_iter().find(|p| p.name() == *name).map(Act::Plan).ok_or(Reject::NoWidget),
             _ => Err(Reject::NoWidget),
         }
     }
 
     /// The battle view's lines inside the window.
-    pub(super) fn battle_items(&self) -> Vec<Item> {
+    pub(super) fn battle_items(&self, local: u8) -> Vec<Item> {
         let b = &self.battle;
         let mut out = Vec::new();
         let mut y = OY + 4;
@@ -501,6 +555,22 @@ impl Editor {
             look: Look::Icon { frame: self.fight_icon.get() },
             gp: None,
         });
+        // The ready commands for the player's army, two by two beside the swords.
+        let side = side_of(local);
+        let (px, pw) = (X0 + 4 + CELL + 8, (W - CELL - 12) / 2);
+        for (n, plan) in Plan::ALL.into_iter().enumerate() {
+            let (col, row) = ((n % 2) as i32, (n / 2) as i32);
+            out.push(Item {
+                rect: Rect::new(px + col * pw, y + 4 + row * ROW, pw, ROW),
+                ..text(
+                    y,
+                    plan.label().into(),
+                    &format!("Befehl {}", plan.label()),
+                    self.plan_on(side, plan),
+                    Some(Act::Plan(plan)),
+                )
+            });
+        }
         y += CELL + 6;
         let mut status = self.status.clone();
         status.truncate(44);
@@ -620,18 +690,18 @@ mod tests {
     fn the_swords_ask_for_a_fight_and_the_switches_send_one_only_while_it_runs() {
         let mut e = Editor::default();
         assert_eq!(e.battle.ai, [false, true], "Seite 1 is the player's, Seite 2 the Ki's");
-        assert_eq!(e.battle_act(Act::Fight), Some(Input::Fight { ai: [false, true] }));
+        assert_eq!(e.battle_act(Act::Fight, 0), Some(Input::Fight { ai: [false, true] }));
         // Before the fight a switch is only the view's state.
-        assert_eq!(e.battle_act(Act::Control(0)), None);
+        assert_eq!(e.battle_act(Act::Control(0), 0), None);
         assert_eq!(e.battle.ai, [true, true]);
         // "Aufstellen" never fights.
-        assert!(matches!(e.battle_act(Act::Go), Some(Input::Battle { fight: false, .. })));
+        assert!(matches!(e.battle_act(Act::Go, 0), Some(Input::Battle { fight: false, .. })));
         // While it runs, a switch is an input that is logged.
         let w = empty();
         let army = |owner| tactics::Army { owner, facing: 0, origin: (0, 0), style: Style::Linear, bodies: Vec::new() };
         e.battle.tactics = Some(tactics::Commander::new(&w, [army(0), army(1)], [Control::Ai; 2]));
-        assert_eq!(e.battle_act(Act::Control(1)), Some(Input::Fight { ai: [true, false] }));
-        let items = e.battle_items();
+        assert_eq!(e.battle_act(Act::Control(1), 0), Some(Input::Fight { ai: [true, false] }));
+        let items = e.battle_items(0);
         let swords = items.iter().find(|i| i.name == "Kampf").expect("the swords");
         assert!(
             swords.hot && matches!(swords.look, Look::Icon { frame: None }),
@@ -650,6 +720,48 @@ mod tests {
         let mut w = empty();
         assert_eq!(e.start_fight(&mut w, [false, true]), b"Erst aufstellen");
         assert!(e.battle.tactics.is_none() && e.sides == sides::Mode::Off);
+        // A ready command too, and it changes nothing.
+        assert_eq!(e.order(&mut w, 0, Plan::Storm), b"Erst aufstellen");
+        assert!(e.battle.tactics.is_none() && e.battle.ai == [false, true] && e.battle.plan[0] == Plan::Attack);
+    }
+
+    /// The ready commands go to the side of the player in control, are listed in both views
+    /// and light up only while the controller follows them.
+    #[test]
+    fn the_ready_commands_are_for_the_army_the_player_is_in() {
+        let mut e = Editor::default();
+        assert_eq!(e.battle_act(Act::Plan(Plan::Storm), 0), Some(Input::Plan { side: 0, plan: Plan::Storm }));
+        assert_eq!(e.battle_act(Act::Plan(Plan::Hold), 1), Some(Input::Plan { side: 1, plan: Plan::Hold }));
+        assert_eq!(side_of(5), 0, "any other player commands Seite 1");
+        let names = ["Befehl Angriff", "Befehl Sturm", "Befehl Feuergefecht", "Befehl Halten"];
+        let items = e.battle_items(0);
+        let swords = items.iter().find(|i| i.name == "Kampf").expect("the swords").rect;
+        for name in names {
+            let i = items.iter().find(|i| i.name == name).expect(name);
+            assert!(!i.hot && i.rect.x0 >= swords.x1 && i.rect.x1 <= X0 + W, "{name}: {:?}", i.rect);
+            assert!(i.rect.y0 >= swords.y0 && i.rect.y1 <= swords.y1, "{name} beside the swords");
+        }
+        for name in ["attack", "storm", "fire", "hold"] {
+            assert!(matches!(e.battle_intent(&["plan", name]), Ok(Act::Plan(p)) if p.name() == name));
+        }
+        assert_eq!(e.battle_intent(&["plan", "retreat"]), Err(Reject::NoWidget));
+        // Running under the plan: lit for that side only.
+        let w = empty();
+        let army = |owner| tactics::Army { owner, facing: 0, origin: (0, 0), style: Style::Linear, bodies: Vec::new() };
+        e.battle.tactics = Some(tactics::Commander::new(&w, [army(0), army(1)], [Control::Ai; 2]));
+        e.battle.ai = [true, true];
+        e.battle.plan = [Plan::Storm, Plan::Attack];
+        let lit = |e: &Editor, local: u8| -> Vec<String> {
+            e.battle_items(local)
+                .into_iter()
+                .filter(|i| i.hot && i.name.starts_with("Befehl"))
+                .map(|i| i.name)
+                .collect()
+        };
+        assert_eq!(lit(&e, 0), ["Befehl Sturm"]);
+        assert_eq!(lit(&e, 1), ["Befehl Angriff"]);
+        e.battle.ai[0] = false;
+        assert!(lit(&e, 0).is_empty(), "the player commands it himself");
     }
 
     /// England against France, Mittel: "Aufstellen" places and the swords start the fight;

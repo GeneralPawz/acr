@@ -13,7 +13,7 @@ use acr_sim::{Command, EntityId, Pos, TypeId, World};
 
 use super::frame::{dist, to_army, to_world};
 use super::picture;
-use super::{Army, Body, Commander, Control, Duty, PERIOD, Style};
+use super::{Army, Body, Commander, Control, Duty, PERIOD, Phase, Plan, Style};
 
 const OFFICER: &str = "NAME Off\r\nUSERLC 0 G SHADOW 0 0\r\n#STAND 9 1 0 0\r\n@MOTION_L 9 0 0 9\r\n\
     @MOTION_R 9 0 10 19\r\nLIFE 100\r\nGEOMETRY 1 10 40\r\nOFFICER\r\nMATHERIAL 1 BODY\r\n[END]\r\n";
@@ -612,7 +612,7 @@ fn the_flank_route_is_blocked_at_the_map_edge() {
 }
 
 fn view_of<'a>(armies: &'a [Army; 2], mine: &'a [picture::Picture], theirs: &'a [picture::Picture]) -> super::View<'a> {
-    super::View { tick: 0, me: &armies[0], foe: &armies[1], mine, theirs }
+    super::View { tick: 0, plan: super::Plan::Attack, me: &armies[0], foe: &armies[1], mine, theirs }
 }
 
 #[test]
@@ -953,4 +953,121 @@ fn two_clones_give_the_same_orders_and_the_same_world() {
     assert!(seen_a.iter().any(|s| s != "[]"), "the controller gave orders");
     assert_eq!(seen_a, seen_b);
     assert_eq!(w_a.state_hash(), w_b.state_hash());
+}
+
+/// A line of 12 musketeers at x = `x` facing a crowd at x = 3000, under `plan`.
+fn planned(x: i32, plan: Plan) -> (Rig, Vec<EntityId>, Vec<EntityId>, Commander) {
+    let mut r = rig();
+    let line = formed(r.mus, &mut r, 0, (x, 4000), 0, "LINE12");
+    let foe = crowd(&mut r.w, r.mus, 1, (3000, 4000), 12, (6, 20), 128);
+    let armies = [army(0, 0, vec![body(Duty::Line, &line)]), army(1, 128, vec![body(Duty::Line, &foe)])];
+    let mut cm = Commander::new(&r.w, armies, [Control::Ai, Control::Player]);
+    cm.set_plan(0, plan);
+    (r, line, foe, cm)
+}
+
+#[test]
+fn plans_keep_their_codes_and_names() {
+    for (n, plan) in Plan::ALL.into_iter().enumerate() {
+        assert_eq!(usize::from(plan.code()), n);
+        assert_eq!(Plan::from_code(plan.code()), Some(plan));
+    }
+    assert_eq!(Plan::from_code(4), None);
+    assert_eq!(Plan::default(), Plan::Attack);
+    assert_eq!(Plan::ALL.map(Plan::label), ["Angriff", "Sturm", "Feuergefecht", "Halten"]);
+}
+
+#[test]
+fn a_storm_charges_at_once() {
+    // 1500 px away: the attack would stand through its cannonade and then advance in bounds.
+    let (mut r, line, _, mut cm) = planned(1500, Plan::Storm);
+    let first = run(&mut r.w, &mut cm, 1);
+    assert!(
+        first.iter().any(|c| matches!(c, Command::AttackMove { units, .. } if units.contains(&line[1]))),
+        "{first:?}"
+    );
+    assert_eq!(moves(&first), 0);
+    assert_eq!((cm.report(0).charges, cm.report(0).phase), (1, Phase::Assault));
+    let (mut r, _, _, mut cm) = planned(1500, Plan::Attack);
+    let first = run(&mut r.w, &mut cm, 1);
+    assert!(!first.iter().any(|c| matches!(c, Command::AttackMove { .. })), "{first:?}");
+}
+
+#[test]
+fn a_firefight_halts_and_never_closes() {
+    let (mut r, line, foe, mut cm) = planned(1900, Plan::Fire);
+    let all = run(&mut r.w, &mut cm, 4000);
+    assert_eq!(cm.report(0).halts, 1);
+    assert!(all.iter().any(|c| matches!(c, Command::StandGround { on: true, .. })));
+    assert!(!all.iter().any(|c| matches!(c, Command::AttackMove { .. })), "a firefight charged");
+    let d = dist(centroid(&r.w, &line), centroid(&r.w, &foe));
+    assert!((680..=808).contains(&d), "stands {d} px from the foe (reach 850)");
+    assert_eq!(cm.report(0).phase, Phase::Firefight);
+}
+
+#[test]
+fn a_side_that_holds_stands_where_it_is() {
+    let (mut r, line, _, mut cm) = planned(1500, Plan::Hold);
+    let at = centroid(&r.w, &line);
+    let all = run(&mut r.w, &mut cm, 2000);
+    assert!(all.iter().any(|c| matches!(c, Command::StandGround { on: true, units, .. } if units.contains(&line[1]))));
+    assert_eq!(moves(&all), 0, "{all:?}");
+    assert!(!all.iter().any(|c| matches!(c, Command::AttackMove { .. })));
+    // The formation only settles into its slots.
+    assert!(dist(centroid(&r.w, &line), at) <= 40, "{:?} from {at:?}", centroid(&r.w, &line));
+}
+
+#[test]
+fn hold_stops_a_march_and_attack_takes_it_up_again() {
+    let (mut r, line, foe, mut cm) = planned(1900, Plan::Storm);
+    run(&mut r.w, &mut cm, 100);
+    let gone = centroid(&r.w, &line).0;
+    assert!(gone > 1950, "the storm went {gone}");
+    cm.set_plan(0, Plan::Hold);
+    let halt = run(&mut r.w, &mut cm, PERIOD as usize);
+    assert_eq!(moves(&halt), 1, "{halt:?}");
+    run(&mut r.w, &mut cm, 600);
+    let stood = centroid(&r.w, &line).0;
+    assert!((stood - gone).abs() <= 120, "held at {stood}, was at {gone}");
+    assert!(dist(centroid(&r.w, &line), centroid(&r.w, &foe)) > 400, "it never reached the foe");
+    assert!(line.iter().skip(1).all(|id| r.w.units[id.0 as usize].stand_ground));
+    // Back to the attack: it fires from where it stands and charges in the end.
+    cm.set_plan(0, Plan::Attack);
+    let at = first_order(&mut r, &mut cm, 4000, |c| matches!(c, Command::AttackMove { .. }));
+    assert!(at.is_some(), "the attack never charged");
+}
+
+#[test]
+fn the_wings_ride_at_once_in_a_storm_and_stay_home_on_hold() {
+    let scene = |plan: Plan| {
+        let mut r = rig();
+        let line = formed(r.mus, &mut r, 0, (1500, 4000), 0, "LINE12");
+        let wing = crowd(&mut r.w, r.horse, 0, (1500, 4600), 12, (6, 20), 0);
+        let foe = foe_line(&mut r, (3000, 4000));
+        let armies = [
+            army(0, 0, vec![body(Duty::Line, &line), body(Duty::Cavalry, &wing)]),
+            army(1, 128, vec![body(Duty::Line, &foe)]),
+        ];
+        let mut cm = Commander::new(&r.w, armies, [Control::Ai, Control::Player]);
+        cm.set_plan(0, plan);
+        (r, wing, cm)
+    };
+    let (mut r, wing, mut cm) = scene(Plan::Storm);
+    let first = run(&mut r.w, &mut cm, 1);
+    assert_eq!(moves_to(&first, &wing).len(), 1, "{first:?}");
+    let (mut r, wing, mut cm) = scene(Plan::Attack);
+    let early = run(&mut r.w, &mut cm, 100);
+    assert!(moves_to(&early, &wing).is_empty(), "the attack's wings wait for the cannonade");
+    let (mut r, wing, mut cm) = scene(Plan::Hold);
+    let all = run(&mut r.w, &mut cm, 1500);
+    assert!(moves_to(&all, &wing).is_empty(), "{:?}", moves_to(&all, &wing));
+    // Called to hold while on its flank route, the wing rides home.
+    let (mut r, wing, mut cm) = scene(Plan::Storm);
+    let home = centroid(&r.w, &wing);
+    run(&mut r.w, &mut cm, 200);
+    assert!(dist(centroid(&r.w, &wing), home) > 200);
+    cm.set_plan(0, Plan::Hold);
+    let back = run(&mut r.w, &mut cm, PERIOD as usize);
+    assert!(moves_to(&back, &wing).iter().any(|&p| dist(p, home) < 60), "{back:?}");
+    assert_eq!(cm.report(0).rallies, 1);
 }
