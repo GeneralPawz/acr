@@ -188,6 +188,44 @@ pub fn finish_names(anim: &str, kind: Option<StrikeKind>) -> Vec<String> {
     }
 }
 
+/// The close clips to try for the attack animation `anim` at a standing man far inside the
+/// stance ([`close_blow`], #511), best first: `ATTACK_<KIND>_CLOSE`, `ATTACK_CLOSE`. The
+/// pikemen have them: the shortened pike at a man 1.67 m off (`docs/families/pike.md`).
+pub fn close_names(anim: &str, kind: Option<StrikeKind>) -> Vec<String> {
+    let base = anim.trim_start_matches(['#', '@']);
+    match kind {
+        Some(StrikeKind::Shot | StrikeKind::Bite) => Vec::new(),
+        Some(k) => vec![format!("{base}_{}_CLOSE", kind_name(k)), format!("{base}_CLOSE")],
+        None => vec![format!("{base}_CLOSE")],
+    }
+}
+
+/// A victim nearer than this part of the stance is struck with the close clip.
+pub const CLOSE_PART: f32 = 0.5;
+
+/// Whether a type with the strike stance `stance` (px, `acr_sim::melee::STANCES`) and the
+/// `.MD` reach `md_reach` strikes a standing man `distance` px off with its close clip: its
+/// stance is beyond the `.MD` reach (a long weapon, whose clip is made for the stance) and
+/// the man is nearer than [`CLOSE_PART`] of it.
+pub fn close_blow(stance: i32, md_reach: i32, distance: f32) -> bool {
+    stance > md_reach && distance < stance as f32 * CLOSE_PART
+}
+
+/// The close clip for `u` at the standing man `v`, when his type and the distance ask for
+/// it ([`close_blow`]) and the model has one.
+fn close_clip(data: &ModelData, world: &World, u: &Unit, v: &Unit, kind: Option<StrikeKind>) -> Option<usize> {
+    let t = world.catalog.get(u.kind);
+    let add = world.catalog.get(v.kind).add_shot_radius;
+    let stance = acr_sim::melee::stance_entry(t)? + add;
+    let reach = acr_sim::melee::strike_distance(t, add)?.reach;
+    let (dx, dy) = ((v.pos.x - u.pos.x) as f32, (v.pos.y - u.pos.y) as f32);
+    let d = dx.hypot(dy) / acr_sim::fixed::SUBPIXEL as f32;
+    if !close_blow(stance, reach, d) {
+        return None;
+    }
+    close_names(&u.anim.name(), kind).iter().find_map(|n| data.clip(n))
+}
+
 /// Whether a clip is a finishing blow (the man already stands over his victim).
 pub fn is_finish(name: &str) -> bool {
     name.ends_with("_FINISH")
@@ -215,6 +253,12 @@ pub fn strike_clip(data: &ModelData, world: &World, u: &Unit) -> Option<usize> {
     // A musket shot (#296): from the shoulder at range, from the hip up close.
     if height != StrikeHeight::Down
         && let Some(c) = fire_clip(data, &u.anim.name(), u, v)
+    {
+        return Some(c);
+    }
+    // A long weapon at a man far inside its stance (#511): the close clip.
+    if height != StrikeHeight::Down
+        && let Some(c) = close_clip(data, world, u, v, kind)
     {
         return Some(c);
     }
@@ -1067,6 +1111,21 @@ mod tests {
             clip_names("ATTACK", Some(StrikeKind::Thrust), StrikeHeight::Low),
             ["ATTACK_THRUST_LOW", "ATTACK_LOW", "ATTACK_THRUST_MID"]
         );
+    }
+
+    /// A pikeman (stance 150 px, `.MD` reach 100) pushes with the close clip at a man nearer
+    /// than half his stance; a type whose stance is inside its `.MD` reach never does.
+    #[test]
+    fn close_clip_by_distance() {
+        assert_eq!(close_names("@ATTACK", Some(StrikeKind::Thrust)), ["ATTACK_THRUST_CLOSE", "ATTACK_CLOSE"]);
+        assert_eq!(close_names("ATTACK", None), ["ATTACK_CLOSE"]);
+        assert!(close_names("ATTACK1", Some(StrikeKind::Shot)).is_empty());
+        assert!(close_blow(150, 100, 50.0));
+        assert!(close_blow(150, 100, 74.0));
+        assert!(!close_blow(150, 100, 75.0));
+        assert!(!close_blow(150, 100, 150.0));
+        assert!(!close_blow(41, 60, 10.0));
+        assert_eq!(clip_kind("ATTACK_THRUST_CLOSE"), Some(StrikeKind::Thrust));
     }
 
     /// A man on the ground is finished by the kind's finishing clip; a point-blank shot keeps

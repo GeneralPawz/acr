@@ -1336,7 +1336,11 @@ def make(ctx, spec):
              # behind the grip passes outside the rider's body instead of through it.
              "lance_down": strike(dict(LEGS_SEAT, spine=(-6, -8, 0), spine1=(-2, -4, 0)),
                                   Vector((-0.81, -1.73, 0.20)), axis_of(44, 3), lance_len, None),
-             "lance_mid": _with_world(dict(LEGS_SEAT, spine=(-14, 0, 8)), right(side(0.02, -0.66, 0.36), (2, 0, 0))),
+             # The thrust at a standing man: his chest (1.15 m up) 3.0 m ahead, 4 degrees right
+             # (the lancers' stance of 90 px, #511), the lance 12 degrees down from the hand at
+             # the shoulder's height. Level (2 degrees) the point passed 1.68 m up, over him.
+             "lance_mid": strike(dict(LEGS_SEAT, spine=(-14, 0, 8)), Vector((-0.21, -2.99, 1.15)), axis_of(12, 2),
+                                 lance_len, None),
              # Drawn sabre (`drawn`): raised over the right shoulder, the blade up and back;
              # the cuts down at a man on the ground right and left of the horse, and the cut
              # at a standing man (the blade level with his shoulder).

@@ -435,18 +435,43 @@ BRACE = _two(dict(cl.STAND_FREE, root_loc=(0, 0.06, -0.40), thigh_l=(-80, -6, 0)
              (62, 0, 8), left_along=0.45, short=True)
 
 
+# The close blow (#511), at a man who has come inside the pike (1.67 m, the other weapons'
+# distance): the shortened pike (`socket.blade_r`, the point 1.81 m before the right hand)
+# level under the right arm at the lower ribs, both hands on it; a short push from the rear
+# foot onto the front foot. The 3.35 m of shaft behind the right hand run back level at rib
+# height, turned 10 degrees out to the right (the butt 0.9 m right of his line).
+TARGET_CLOSE = cl.TARGET_MID
+CLOSE_LEVEL = 92
+CLOSE_PUSH = dict(cl.STAND_FREE, **dict(TWIST, spine=(12, 0, -12)), thigh_l=(-34, -4, 0), shin_l=(34, 0, 0),
+                  thigh_r=(22, 4, 0), shin_r=(4, 0, 0), foot_r=(-12, 0, 0), root_loc=(0, -0.10, -0.08))
+
+
+def pike_close():
+    """(ready, hit) of the close blow."""
+    hit, rot = cl.beside(TARGET_CLOSE, CLOSE_LEVEL, SHORT_TIP, SIDE)
+    return (_two(CHARGE_BASE, cl.add(hit, (0, 0.26, 0.02)), rot, left_along=0.45, short=True),
+            _two(CLOSE_PUSH, hit, rot, left_along=0.45, short=True))
+
+
 def pike_strikes(n):
     """ATTACK_THRUST_MID (the push at a man's chest), ATTACK_THRUST_DOWN = ATTACK_DOWN (down at
     a man on the ground at 2.0 m), the point (`socket.tip`) on the target on frame 2."""
     ready, raised = pike_ready(), pike_down_raised()
+    near, close = pike_close()
+    close = cl._strike(n, near, close, near)
     return {
+        # `ATTACK_<KIND>_CLOSE`, `ATTACK_CLOSE` (as the finishing clips' names): for the view
+        # to play when the victim is far inside the stance.
+        "ATTACK_THRUST_CLOSE": close,
+        "ATTACK_CLOSE": close,
         "ATTACK_THRUST_MID": cl._strike(n, ready, pike_thrust(), ready),
         "ATTACK_THRUST_DOWN": cl._strike(n, raised, pike_down(), raised),
         "ATTACK_DOWN": cl._strike(n, raised, pike_down(), raised),
     }
 
 
-TARGETS = {"ATTACK_THRUST_MID": TARGET_MID, "ATTACK_THRUST_DOWN": TARGET_DOWN, "ATTACK_DOWN": TARGET_DOWN}
+TARGETS = {"ATTACK_THRUST_MID": TARGET_MID, "ATTACK_THRUST_DOWN": TARGET_DOWN, "ATTACK_DOWN": TARGET_DOWN,
+           "ATTACK_THRUST_CLOSE": TARGET_CLOSE, "ATTACK_CLOSE": TARGET_CLOSE}
 
 
 def pikeman_clips(md):

@@ -249,6 +249,9 @@ pub fn aim_at(name: &str, mounted: bool, reach: f32, gun: bool, standing: f32, t
         }
     }
     let me = Vec3::ZERO;
+    // The close blow (`strike_view::close_names`): at a man 1.67 m off, straight ahead.
+    let close = tokens.contains(&"CLOSE");
+    let (standing, turn) = if close { (STANDING, 0.0) } else { (standing, turn) };
     let turn = turn.to_radians();
     let to_standing = |h: StrikeHeight, what: &'static str| {
         Aim::At(target_point(at(turn.sin() * standing, turn.cos() * standing, 0.0), me, h, false, 0.0), h, what)
@@ -274,6 +277,8 @@ pub fn aim_at(name: &str, mounted: bool, reach: f32, gun: bool, standing: f32, t
                 "man on the ground 2.0 m ahead (clips.TARGET_DOWN)",
             )
         }
+    } else if close {
+        to_standing(StrikeHeight::Mid, "standing man 1.67 m off, mid (1.15 m): the close blow")
     } else if tokens.contains(&"HIGH") {
         to_standing(StrikeHeight::High, "standing man, high (1.65 m)")
     } else if tokens.contains(&"LOW") {
@@ -470,7 +475,8 @@ pub fn audit(data: &ModelData, melee: Option<[f32; 4]>) -> Result<Vec<Finding>, 
                 let measured = reach.filter(|r| *r >= HIDDEN).and_then(|_| probe(data, ci, HIT_FRAME, target, height));
                 // A standing man: also from the nearest and the furthest the type strikes from.
                 let standing = height != StrikeHeight::Down;
-                let ends = match melee.filter(|_| standing && measured.is_some()) {
+                let close = clip.name.ends_with("_CLOSE");
+                let ends = match melee.filter(|_| standing && measured.is_some() && !close) {
                     Some(m) => {
                         let off = |d: f32| {
                             // Along the line from him to the man.
@@ -487,6 +493,7 @@ pub fn audit(data: &ModelData, melee: Option<[f32; 4]>) -> Result<Vec<Finding>, 
                             m[2]
                         )
                     }
+                    None if close => "; man at 1.67 m (inside the type's stance)".to_string(),
                     None if standing => "; man at 1.67 m (no melee distance for this model)".to_string(),
                     None => String::new(),
                 };
@@ -886,6 +893,9 @@ mod tests {
         assert!(near(at(aim_of("ATTACK_THRUST_MID", false, 1.4, true)), (0.0, 1.50, 1.15)));
         assert!(near(at(aim_of("ATTACK", false, 1.4, true)), (0.0, 1.50, 1.15)));
         assert!(near(at(aim_of("ATTACK_DOWN", false, 2.0, false)), (0.0, 2.0, 0.2)));
+        // The close blow keeps 1.67 m whatever the type's melee distance.
+        assert!(near(at(aim_at("ATTACK_THRUST_CLOSE", false, 1.8, false, 5.0, 0.0)), (0.0, 1.50, 1.15)));
+        assert!(near(at(aim_at("ATTACK_THRUST_MID", false, 4.7, false, 5.0, 0.0)), (0.0, 4.83, 1.15)));
         assert!(near(at(aim_of("ATTACK_CUT_FINISH", false, 0.9, false)), (0.05, 0.9, 0.2)));
         // The doc's lance: a man at 1.9 m, 25 deg right: 0.81/1.73/0.20.
         assert!(near(at(aim_of("ATTACK_THRUST_DOWN", true, 2.5, false)), (0.80, 1.72, 0.2)));
