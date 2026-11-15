@@ -401,6 +401,10 @@ sabre hangs short of him), `run1/sheet_fence.png` and `run1/crop.png` (frame 26:
 bayonets stop at the chests). Rebuilt on the VM: EngD18 and PueVsdA (old ones in
 `showcase/backup-melee5/`).
 
+All clips of all built models at once (reach at the hit frame, the weapon through the
+holder's body, hands off the weapon): the clip audit, `docs/testing.md` "The clip audit
+(#509)".
+
 ### Shoulders as posed, sides and the ready stance (m2-melee6)
 
 - **Why the sabre hand stopped ~1.45 m up:** `cavalry.reins_world` solved the arm from the

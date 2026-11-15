@@ -400,6 +400,58 @@ path) and `models=all` in the settings (the VM's showcase settings have it).
 Not yet: `reload_models` (hot reload of rebuilt glbs), before/after sheets, cloth
 poke-through and eye-line numbers, loading only the listed models.
 
+### The clip audit (#509)
+
+Every clip of every built human model measured offline (no game, no GPU), to find weapons
+that pass through their holder, blows that end short and hands off the weapon
+(`crates/acr-game/src/ingame/clip_audit.rs`; the runner is the test `clip_audit_run`, which
+does nothing without its variables):
+
+```
+acr-vm-cargo -- 'ACR_AUDIT_MODELS=<abs folder of .glb> ACR_AUDIT_OUT=<abs output folder> \
+    cargo test -q -p acr-game --lib -- clip_audit --nocapture'
+```
+
+`ACR_AUDIT_ONLY=engof17,engm18` narrows it to some models. The showcase models (104 audited,
+2887 clips) take about 70 s. It writes `audit.csv` and `summary.md` (thresholds, counts, the
+40 worst rows per check, failing clips per model, skipped models and why). Models without
+clips, without a skeleton-H rig (animals, guns with their crews, ships) or without a weapon
+socket in a hand are skipped.
+
+`audit.csv` has one row per model, clip and check:
+
+| Column | Meaning |
+|---|---|
+| `model`, `clip` | the `.glb`'s name and the clip |
+| `check` | `reach`, `body`, `grip_right`, `grip_left`, `gear` (below) |
+| `worst_frame` | the sprite frame of the value (`reach`: always the hit frame 2) |
+| `value_m` | metres; empty when it could not be measured |
+| `threshold_m` | the value fails above this |
+| `result` | `pass`, `fail`, `info` (measured, not judged) or `n/a` |
+| `note` | the body part, the clip-alone reach, the target, what was assumed |
+
+| Check | Value | Fails above |
+|---|---|---|
+| `reach` | strike clips (`ATTACK`, `ATTACK_<KIND>_<HEIGHT>`, `ATTACK_<HEIGHT>`, `*_FINISH`; not shots, not butt strokes): the weapon's point (`socket.tip`, `socket.muzzle`) to the clip's target at the hit frame, after the aiming layer (`strike_view::probe`); the note has the clip alone and how far short or past | 0.15 m (`REACH_MAX`) |
+| `body` | every clip, every frame: the shown held weapon's axis (its mesh's extent along the axis, also behind the hand; hand to point when the mesh is not under the socket) against the holder's trunk, head and legs (capsules on the rig's joints, radii of `skeleton_h`). `fail` = **through**: deeper than 0.03 m (`BODY_MAX`) with at least 0.15 m (`BEYOND`) of weapon on either side; the value is the length of weapon inside the part. `info` = **touch**: it dips in near one of its ends or shallowly (a butt at the shoulder); the value is the depth. `pass`: clear (negative: by that much) | through |
+| `grip_right`, `grip_left` | muskets and pole weapons (1.5 m or longer, on foot): the furthest the hand (the middle of the hand bone) is from the weapon over the clip; judged in the melee strike clips and `PSTAND*`, `info` in all others (carry, shots with their reload, `PATTACK`/`UATTACK`) | 0.12 m (`GRIP_MAX`) |
+| `gear` | every part that is its own node with an unskinned mesh (held weapon, hat, tool), per clip: the most its distance to the node it hangs on differs from the rest pose (rigid: 0); `info` when it is hidden in some frames while that node is shown; the note has how far it moves against its bone (an animated socket: a reload, a carry) | 0.01 m (`GEAR_MAX`) |
+
+Targets (`clip_audit::aim_of`, from `docs/melee.md`): a standing man 1.67 m ahead at his
+body's surface (`target_point`: 1.50 m, at 1.15 / 1.65 / 0.7 m up), a man on the ground 2.0 m
+ahead (`clips.TARGET_DOWN`; a lancer's 1.9 m off 25° right, a sabre rider's near part 1.7 m
+off 75° right or 40° left), the finishing target (`finish.TARGET_FINISH`). Not judged
+(`info`): a plain `ATTACK<n>` (melee, ranged or work is the `.MD`'s choice) and a rider's
+blow at a standing man (his place beside the horse is not defined). Limits: the weapons are the right
+hand's and pointed ones in the left (`socket.hand_l` with a `socket.tip`: a pikeman's
+`pike_l`; no bows, no ramrods), reach the right hand's only; the weapon is a line and the body bare capsules (no cloth, no gear, no
+horse); `body`, `grip` and `gear` measure the clip alone, without the layer; `gear` cannot
+see skinned gear (scabbards) or a part modelled into another's mesh (the muskets' bayonets
+are in the musket's mesh), and nothing a pose layer does at run time. Carry poses and
+animals are not checked yet. A file `verified.md` in the output folder is put at the top of
+`summary.md` (what was checked on pictures). First run: `ACR-analysis/clip-audit/2026-11-15/`
+(10 `body` rows checked on studio sheets, `pictures/`: 7 agree, 3 unclear).
+
 ### The widget tree (`ui`)
 
 ```json
