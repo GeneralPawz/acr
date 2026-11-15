@@ -115,6 +115,14 @@ those palette colours against the sprites (`cavalry.PALETTE17`).
 | *KOf17 | broad hat; buff sleeves, sash | pistol, sword |
 | SpnRei | zischagge with plumes; cuirass, arm defences, buff sleeves | a pair of pistols (hand, left holster), sword drawn for the cuts |
 
+SpnRei's cuirass (`armour` in the SPEC) is the shared `armour.corslet` (#522): back and breast
+without tassets, rigid on `rider.spine1`, fitted round the rider's `origin`. The zischagge is
+`armour.helmet("zischagge")` (skull with a low comb, peak, three bars, cheek pieces, a tail of
+four lames; one mesh on the hat socket). Both are painted steel (key `plate`, fixed in
+`FIXED17`). The arm defences are off (`arms` False in the unit): the `vambraces` body shell
+bent like cloth, and back, breast and pot over buff sleeves is a harquebusier's equipment;
+rigid arm plate (pauldron, cannons, couter) is not built.
+
 The sprites show no cuirass on the dragoons and no helmet but the reiter's, so the troopers
 have none. SpnRei's sprite shows bright steel (not black), so its `metal` stays steel.
 Before/after sheet: `ACR-analysis/cav17/sheet_cav17.png` (sprites, old, new, head).

@@ -19,10 +19,13 @@ century"): long **hose** (key `hose`, the palette's `fhose` colour) to mid-thigh
 **slops** gathered into a thigh band (`slops`, the lining `slashes` in the panes), linen
 cuffs and a **doublet with slashed sleeves** (`doublet`, `dsleeve`, `slashes`). The
 `blouse`/`slops`/`cuirass`/`tassets` shells are gone: the armour is modelled over the
-draped doublet, `c_cuirass` (breast and back fitted per angle to the cloth: a peascod
-breast swelling low, a medial ridge, the lower edge dipping to a point, a scooped neck,
-a fauld turned out at the waist; rigid on `spine1`) and, where the layers listed
-`tassets` (SpnAlb), `c_tassets` (four lapping lames on each thigh, rigid on the thigh).
+draped doublet by the shared `armour.corslet` (#522) in its 16th-century form
+(`armour.PEASCOD`: a full belly, the medial ridge to a deep point, rolled neck and arm edges,
+a waist flange, shoulder straps; breast and back rigid on `spine1`, painted steel, key
+`plate`): gear `c_cuirass`, or `c_cuirass_tassets` where the layers listed `tassets`
+(SpnAlb: five lames a side, each one weight between `spine1` and its thigh, so the tasset
+hinges at the flange instead of turning with the thigh). Morion and cabasset are
+`armour.helmet` shells (smooth, rolled brims, the morion's comb, the cabasset's stalk), keyed `plate`.
 Sheet `ACR-analysis/c17/sheet_c17.png` (SpnS15). Registered here: hats `morion`, `cabasset`,
 `flat_cap`; gear `plume` (on the hat socket), `c_scabbard` (sheath and cup-hilt).
 

@@ -33,10 +33,14 @@ with the `#STAND` sprites (`line`'s `mix`); belts, armour, match and scabbard fi
   (`held.musket_rest`) in the left hand with the coiled match. `line.build` has no hook
   for its `make`: `pike.build` swaps `line.make` for the build's duration.
 - Registered here: hats `pike_broad` (broad felt, brim cocked up on the left), `pike_morion`,
-  `pike_pot`; gear `pike_corselet` (breast and back fitted per angle to the draped cloth
-  1.00-1.42 m, a peascod ridge, four tassets on `hips`), `pike_apostles` (nine charges down
+  `pike_pot` (both `armour.helmet` shells in steel, key `plate`); gear `pike_corselet` = `armour.corslet` (#522, shared:
+  breast and back formed over the dressed trunk, medial ridge, rolled neck and arm edges, a
+  waist flange (shoulder straps optional, off), all rigid on `spine1`; two tassets of 7 lames, each lame one
+  weight between `spine1` and its thigh, so they hinge and slide without bending; painted
+  steel, painter `plate`, metallic 1, roughness 0.4; `stats.armour`: fit gap, triangles and
+  `poke` per clip), `pike_apostles` (nine charges down
   the front run of `belt_l` and a bullet bag), `pike_match` (a coil of slow match rigid on
-  `hand_l`, lit ends); material keys `armour` (metal), `match` (linen).
+  `hand_l`, lit ends); material keys `plate` (metal, `armour.py`), `match` (linen).
 - The sword on its baldric is `belt_r` + officers' `off_scabbard` (registered gear, reused).
 - **Musketeers** keep the line's musket path: present, fire and the line's reload drill
   (`aim.drill`, `poses.RELOAD_STEPS`); the musket is the line's flintlock shape. `ATTACK`
