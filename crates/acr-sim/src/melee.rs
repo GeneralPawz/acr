@@ -158,7 +158,80 @@ pub fn strike_distance(t: &crate::catalog::ObjectType, victim_add: i32) -> Optio
 pub const STRIKE_STANCE: i32 = 50;
 /// Stances per type that differ from [`STRIKE_STANCE`]: the type id (`EngPik(EN)`) or the
 /// `.MD` name (`EngPik`, every nation's member of it), any case, and the distance in px.
-pub const STANCES: &[(&str, i32)] = &[];
+/// A stance beyond the type's `ATTACK_RADIUS` max extends its reach under the rule
+/// ([`long_reach`]). The pikemen: the 4.9 m pike's push is solved for a man 5.0 m off
+/// (`docs/families/pike.md`, Reach), `ENGPIK.MD` has `ATTACK_RADIUS` max 100 px.
+///
+/// Riders take a stance only with an entry (the types whose 3D model's blow was measured,
+/// clip alone at the hit frame: `ACR-analysis/clip-audit/riders/rider_points.csv`). The
+/// third number is the turn (1/256 of a circle): a rider's blade lands to his right, so at
+/// the blow he faces that much left of the enemy and the man stands where the blade comes
+/// down. Sabres (dragoons, mounted officers, `SpnRei`): the point 1.19 m ahead and 0.65 m
+/// right = 41 px, 29 degrees. Lances (`PueVsd`, `PueVsdA`, `SiuKPik`): 2.98 m ahead, 0.24 m
+/// right = 90 px, 5 degrees. The Sioux riders' clubs and tomahawks: 0.66 m ahead, 0.62 m
+/// right = 27 px, 43 degrees.
+pub const STANCES: &[(&str, i32, u8)] = &[
+    ("EngPik", 150, 0),
+    ("FrnPik", 150, 0),
+    ("EngD17", 41, 20),
+    ("EngD18", 41, 20),
+    ("EngKOf17", 41, 20),
+    ("EngKOf18", 41, 20),
+    ("FrnD17", 41, 20),
+    ("FrnD18", 41, 20),
+    ("FrnKOf17", 41, 20),
+    ("FrnKOf18", 41, 20),
+    ("SpnD17", 41, 20),
+    ("SpnD18", 41, 20),
+    ("SpnKOf17", 41, 20),
+    ("SpnKOf18", 41, 20),
+    ("SpnRei", 41, 20),
+    ("UsaD18", 41, 20),
+    ("UsaKOf18", 41, 20),
+    ("PueVsd", 90, 3),
+    ("PueVsdA", 90, 3),
+    ("SiuKPik", 90, 3),
+    ("SiuKLut", 27, 31),
+    ("SiuKVog", 27, 31),
+];
+
+fn entry(t: &crate::catalog::ObjectType) -> Option<&'static (&'static str, i32, u8)> {
+    STANCES.iter().find(|(n, ..)| n.eq_ignore_ascii_case(&t.id) || n.eq_ignore_ascii_case(&t.md_name))
+}
+
+/// The entry of type `t` in [`STANCES`] (px, against a man).
+pub fn stance_entry(t: &crate::catalog::ObjectType) -> Option<i32> {
+    entry(t).map(|e| e.1)
+}
+
+/// The turn of type `t` at its blow ([`STANCES`]): he faces this much left of the enemy
+/// (1/256 of a circle); 0 without an entry.
+pub fn strike_turn(t: &crate::catalog::ObjectType) -> u8 {
+    entry(t).map_or(0, |e| e.2)
+}
+
+/// The reach of a type with a [`STANCES`] entry beyond its `.MD` reach, against a victim
+/// with `ADDSHOTRADIUS` `victim_add`, in the engine's distance (`trig::norma`, up to 12 %
+/// long between the axes, hence the ninth eighths): the blow starts below it and lands up
+/// to it (plus `ADDRADIUS`). `None` without an entry.
+pub fn long_reach(t: &crate::catalog::ObjectType, victim_add: i32) -> Option<i32> {
+    stance_entry(t).map(|s| (s + victim_add + STRIKE_TOL) * 9 / 8 + 1)
+}
+
+/// Whether `i` is a man (no beast, no building) on his feet whose blows the strike stance
+/// and [`long_reach`] apply to: every man on foot, and a rider whose type has an entry in
+/// [`STANCES`].
+pub fn foot_man(w: &World, i: usize) -> bool {
+    let u = &w.units[i];
+    let t = w.catalog.get(u.kind);
+    w.rules.hit_locations
+        && u.alive
+        && !u.building
+        && !on_ground(&u.body)
+        && (!rides(w, i) || stance_entry(t).is_some())
+        && crate::body::Beast::of(&t.md_name).is_none()
+}
+
 /// How near (px) to his stance he must be before the blow starts.
 pub const STRIKE_TOL: i32 = 4;
 /// What a man spends at most on reaching his stance between two blows: a step costs
@@ -169,42 +242,42 @@ pub const STANCE_STEP_COST: u8 = 12;
 
 /// The strike stance of type `t` against a standing victim whose type has `ADDSHOTRADIUS`
 /// `victim_add`: its entry in [`STANCES`] or [`STRIKE_STANCE`], plus `victim_add`; at least
-/// [`STRIKE_TOL`] above the melee index's `ATTACK_RADIUS` min and below its reach (the blow
-/// starts only when `min <= distance < reach`). `None` for a type without a melee attack or
-/// whose min is above the stance: it keeps the original's distances.
+/// [`STRIKE_TOL`] above the melee index's `ATTACK_RADIUS` min. The default is kept below
+/// the `.MD` reach (the blow starts only when `min <= distance < reach`); an entry is not,
+/// it extends the reach ([`long_reach`]). `None` for a type without a melee attack or whose
+/// min is above the stance: it keeps the original's distances.
 pub fn strike_stance(t: &crate::catalog::ObjectType, victim_add: i32) -> Option<i32> {
     let sd = strike_distance(t, victim_add)?;
-    let want = STANCES
-        .iter()
-        .find(|(n, _)| n.eq_ignore_ascii_case(&t.id) || n.eq_ignore_ascii_case(&t.md_name))
-        .map_or(STRIKE_STANCE, |e| e.1)
-        + victim_add;
+    if let Some(s) = stance_entry(t) {
+        let want = s + victim_add;
+        return (want >= sd.min).then(|| want.max(sd.min + STRIKE_TOL));
+    }
+    let want = STRIKE_STANCE + victim_add;
     (want >= sd.min && sd.reach > sd.min).then(|| want.max(sd.min + STRIKE_TOL).min(sd.reach - 1).max(sd.min))
 }
 
-/// Whether `i` is a man who takes a strike stance at all: on foot, on his feet, no beast,
-/// no building, not standing ground.
+/// Whether `i` is a man who takes a strike stance at all: a [`foot_man`] not standing
+/// ground.
 pub fn takes_stance(w: &World, i: usize) -> bool {
-    let u = &w.units[i];
-    w.rules.hit_locations
-        && u.alive
-        && !u.building
-        && !u.stand_ground
-        && !on_ground(&u.body)
-        && !rides(w, i)
-        && crate::body::Beast::of(&w.catalog.get(u.kind).md_name).is_none()
+    foot_man(w, i) && !w.units[i].stand_ground
 }
 
-/// Whether `j`, attacked by `i`, is himself stepping to his stance against `i` (he attacks
-/// `i`, takes a stance, has one against `i`'s type and patience left): of two such men the
-/// one with the lower unit index steps and the other waits for him.
-pub fn steps_to_stance(w: &World, j: usize, i: usize) -> bool {
+/// The strike stance of `j` against `i` when `j` attacks `i` and takes a stance (two men at
+/// each other); `None` otherwise.
+pub fn stance_against(w: &World, j: usize, i: usize) -> Option<i32> {
     let (v, u) = (&w.units[j], &w.units[i]);
-    takes_stance(w, j)
-        && v.body.stance_steps < STANCE_PATIENCE
-        && matches!(v.orders.last(), Some(crate::world::Order::Attack { target, .. }) if *target == u.id)
-        && strike_stance(w.catalog.get(v.kind), w.catalog.get(u.kind).add_shot_radius).is_some()
-        && in_slot_after(w, j, v.pos)
+    (takes_stance(w, j)
+        && matches!(v.orders.last(), Some(crate::world::Order::Attack { target, .. }) if *target == u.id))
+    .then(|| strike_stance(w.catalog.get(v.kind), w.catalog.get(u.kind).add_shot_radius))
+    .flatten()
+}
+
+/// Whether `j`, attacked by `i`, is himself stepping to his stance against `i`
+/// ([`stance_against`], with patience left and free to leave his slot): of two such men
+/// with equal stances the one with the lower unit index steps and the other waits for him.
+pub fn steps_to_stance(w: &World, j: usize, i: usize) -> bool {
+    let v = &w.units[j];
+    stance_against(w, j, i).is_some() && v.body.stance_steps < STANCE_PATIENCE && in_slot_after(w, j, v.pos)
 }
 
 /// Body spacing and formations: whether the brigade member `i` may stand at `to` (1/16 px).

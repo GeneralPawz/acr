@@ -37,8 +37,17 @@ from .humans import LAYER_OF, prepare_export
 # The pike: 16 ft of ash (4.9 m) with a leaf head and langets.
 PIKE_LEN = 4.9
 GRIP_ORDER = 1.30  # left hand, from the butt: ordered and shouldered
-GRIP_CHARGE = 3.35  # right hand, from the butt: the charge (the point 1.81 m beyond the hand)
+# The charge and the push (#511): the right hand near the butt, the point 4.71 m before it, so
+# the pike outreaches every other weapon: the push lands on a standing man `STANCE` m away
+# (centre to centre; his chest's surface 0.17 m nearer).
+GRIP_CHARGE = 0.45
 PIKE_TIP = PIKE_LEN - GRIP_CHARGE + 0.25 + 0.05 * 0.25
+STANCE = 5.0  # m = 150 px
+# Shortened for the thrust down at a man on the ground 2.0 m ahead (a third pike, on
+# `socket.blade_r`): the right hand 3.35 m from the butt, the point 1.81 m before it.
+GRIP_SHORT = 3.35
+SHORT_TIP = PIKE_LEN - GRIP_SHORT + 0.25 + 0.05 * 0.25
+BLADE = "socket.blade_r"
 
 registry.material("match", "linen", fallback=(0.55, 0.45, 0.30))
 registry.material("armour", "metal", fallback=(0.50, 0.51, 0.53))
@@ -331,17 +340,20 @@ def make_pikeman(root, name, s):
     ch.keys.pop(gun.name, None)
     bpy.data.objects.remove(gun, do_unlink=True)
     am.pose(ch.arm, {})
-    for side, grip in (("l", GRIP_ORDER), ("r", GRIP_CHARGE)):
+    line._add_sockets(ch.arm, ch.prefix)  # `socket.blade_r`, beside `socket.hand_r`
+    for side, grip, sock in (("l", GRIP_ORDER, "socket.hand_l"), ("r", GRIP_CHARGE, "socket.hand_r"),
+                             ("d", GRIP_SHORT, BLADE)):
         it = held.spear(length=PIKE_LEN, grip=grip, head=0.25)
         it.name = "pike"
-        gear.hold(ch, it, f"{name}.pike_{side}", f"socket.hand_{side}", slot=f"pike_{side}")
+        gear.hold(ch, it, f"{name}.pike_{side}", ch.prefix + sock, slot=f"pike_{side}")
     return ch
 
 
 _with = poses._with
 _r, _l = cl._r, cl._l
-SHOW_ORDER = {"socket.hand_l": 1, "socket.hand_r": 0}
-SHOW_CHARGE = {"socket.hand_l": 0, "socket.hand_r": 1}
+SHOW_ORDER = {"socket.hand_l": 1, "socket.hand_r": 0, BLADE: 0}
+SHOW_CHARGE = {"socket.hand_l": 0, "socket.hand_r": 1, BLADE: 0}
+SHOW_SHORT = {"socket.hand_l": 0, "socket.hand_r": 0, BLADE: 1}
 
 # Ordered: the pike upright at the left side, the butt by the left foot, the left hand at
 # the chest; the right arm hangs.
@@ -354,32 +366,36 @@ SHOULDER = dict(_with(cl.STAND_FREE, world={"socket.hand_l": (-48, 0, 0)}),
 
 # Targets (docs/melee.md): a standing man's chest at the fencing distance, a man on the
 # ground where the sim leaves him (2.0 m, `officers.TARGET_DOWN`).
-TARGET_MID = cl.TARGET_MID
+TARGET_MID = (0.0, -(STANCE - 0.17), 1.15)
 TARGET_DOWN = officers.TARGET_DOWN
 
 
-def _two(base, r_point, rot, left_along=0.45, pole=(-0.35, 0.25, -0.25)):
+def _two(base, r_point, rot, left_along=0.58, pole=(-0.35, 0.25, -0.25), short=False):
+    """`base` with the pike at `rot`, the right hand at `r_point`, the left `left_along` m
+    before it; `short`: the shortened pike (`socket.blade_r`, turned with the hand's)."""
     p = cl._blow(base, r_point, rot, pole=pole)
     p["reach"]["l"] = _l(cl.add(r_point, cl.axis(rot), left_along), (0.35, 0.0, -0.30))
-    p["show"] = SHOW_CHARGE
+    p["show"] = SHOW_SHORT if short else SHOW_CHARGE
+    if short:
+        p["world"][BLADE] = rot
     return p
 
 
 # The charge: the pike level at the right side, under the arm at the lower ribs (the right
-# hand `SIDE` m right of the centre line, `clips.beside`), the left hand before it on the
-# shaft, the left shoulder leading. In the centre plane (until #510) the shaft ran through
-# neck and chest. The point lies 1.81 m before the right hand and the target 1.50 m ahead,
-# so the right hand is behind the hip at the hit: the body goes back for the ready and
-# forward with the push.
+# hand `SIDE` m right of the centre line, `clips.beside`) and near the butt, the left hand an
+# arm's reach before it on the shaft, the left shoulder leading. In the centre plane (until
+# #510) the shaft ran through neck and chest. The push is the body's: back on the rear foot
+# for the ready, the weight thrown onto the front foot with the hit, the right hand staying
+# just behind the hip.
 SIDE = 0.32
-LEVEL = 92
+LEVEL = 89
 TWIST = {"spine": (6, 0, -12), "spine1": (0, 0, -10), "spine2": (0, 0, -6), "neck": (0, 0, 10), "head": (4, 0, 14)}
 CHARGE_BASE = dict(cl.STAND_FREE, **TWIST, thigh_l=(-30, -4, 0), shin_l=(10, 0, 0), thigh_r=(8, 4, 0), shin_r=(14, 0, 0),
                    root_loc=(0, 0.12, -0.04))
 # The push: the weight onto the front foot, the trunk forward (positive spine X: forward on
 # skeleton H; the shared `clips.STOOP` leans back).
-PUSH_BASE = dict(cl.STAND_FREE, **dict(TWIST, spine=(12, 0, -12)), thigh_l=(-34, -4, 0), shin_l=(34, 0, 0),
-                 thigh_r=(22, 4, 0), shin_r=(4, 0, 0), foot_r=(-12, 0, 0), root_loc=(0, -0.10, -0.08))
+PUSH_BASE = dict(cl.STAND_FREE, **dict(TWIST, spine=(12, 0, -12)), thigh_l=(-46, -4, 0), shin_l=(44, 0, 0),
+                 thigh_r=(28, 4, 0), shin_r=(6, 0, 0), foot_r=(-16, 0, 0), root_loc=(0, -0.28, -0.11))
 DOWN_BASE = dict(cl.STAND_FREE, **dict(officers.LUNGE_DOWN, root_loc=(0, -0.62, -0.22), spine=(30, 0, -12), spine1=(10, 0, -8),
                                        spine2=(4, 0, 0), head=(14, 0, 10)))
 
@@ -387,7 +403,7 @@ DOWN_BASE = dict(cl.STAND_FREE, **dict(officers.LUNGE_DOWN, root_loc=(0, -0.62, 
 def pike_ready():
     """The charge (PSTAND): levelled at the right side, the hand drawn back."""
     hit, rot = cl.beside(TARGET_MID, LEVEL, PIKE_TIP, SIDE)
-    return _two(CHARGE_BASE, cl.add(hit, (0, 0.26, 0.02)), rot)
+    return _two(CHARGE_BASE, cl.add(hit, (0, 0.34, 0.02)), rot)
 
 
 def pike_thrust():
@@ -400,8 +416,8 @@ SIDE_DOWN = 0.44  # wider: the shaft rises past the bent head and the helmet's b
 
 
 def pike_down():
-    hit, rot = cl.beside(TARGET_DOWN, DOWN, PIKE_TIP, SIDE_DOWN)
-    return _two(DOWN_BASE, hit, rot, left_along=0.50)
+    hit, rot = cl.beside(TARGET_DOWN, DOWN, SHORT_TIP, SIDE_DOWN)
+    return _two(DOWN_BASE, hit, rot, left_along=0.50, short=True)
 
 
 def pike_down_raised():
@@ -409,14 +425,14 @@ def pike_down_raised():
     base = _with(DOWN_BASE, root_loc=(0, -0.30, -0.08), spine=(14, 0, -8), thigh_l=(-40, -3, 0), shin_l=(40, 0, 0),
                  thigh_r=(20, 3, 0), shin_r=(14, 0, 0))
     return _two(base, cl.add(hit["reach"]["r"][0], (0, 0.30, 0.35)), (122, 0, hit["world"]["socket.hand_r"][2]),
-                left_along=0.50)
+                left_along=0.50, short=True)
 
 
 # Charge for horse: kneeling, the butt set against the right foot, the point raised at a
 # rider's chest; the shaft beside the right hip.
 BRACE = _two(dict(cl.STAND_FREE, root_loc=(0, 0.06, -0.40), thigh_l=(-80, -6, 0), shin_l=(82, 0, 0), thigh_r=(0, 6, 0),
                   shin_r=(100, 0, 0), foot_r=(30, 0, 0), spine=(10, 0, -12), spine1=(0, 0, -8)), (-0.30, -0.10, 0.90),
-             (62, 0, 8), left_along=0.45)
+             (62, 0, 8), left_along=0.45, short=True)
 
 
 def pike_strikes(n):
@@ -494,7 +510,7 @@ def build_pikeman(ctx, s):
     # The crawl: both pikes hidden (dropped with the fall).
     for clip, keys in crawl.clips().items():
         k = list(keys)
-        k[0] = (k[0][0], dict(k[0][1], show={"socket.hand_l": 0, "socket.hand_r": 0}))
+        k[0] = (k[0][0], dict(k[0][1], show={"socket.hand_l": 0, "socket.hand_r": 0, BLADE: 0}))
         cl.apply(ch.arm, clip, k)
     am.set_clip(ch.arm, "STAND")
     report = {}

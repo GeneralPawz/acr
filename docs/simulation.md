@@ -727,7 +727,9 @@ Implemented in `combat.rs`, recovered from `SearchVictim` (0x52622b), `AttackObj
        (the transition animation plays at the cycle end), then start `#ATTACKi`.
        With the hit-locations rule (not in the original) a man on foot first steps to his
        strike stance (50 px, `melee::strike_stance`) when he is inside the range but more
-       than 4 px off it: docs/melee.md, 2a "The strike stance".
+       than 4 px off it, and the pikemen (EngPik, FrnPik) start and land their blow from 150
+       px, beyond `ATTACK_RADIUS` max; riders with a stance face left of the enemy at the
+       blow: docs/melee.md, 2a "The strike stance".
      - **Out of range:** walk to the enemy's cell, in the index's walking stance if the type
       has `#MOTION_Lk` (pikemen with the pike lowered), else in the ground stance.
      - **Too close** (closer than the index's `r1`, 0x520689): the unit stands for 32 ticks

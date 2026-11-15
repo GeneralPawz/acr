@@ -48,15 +48,20 @@ with the `#STAND` sprites (`line`'s `mix`); belts, armour, match and scabbard fi
   pikes**, one per hand socket, shown one at a time by the socket's scale (`show`):
   - `socket.hand_l`: the pike gripped 1.30 m from the butt: ordered (STAND, upright at the
     left side) and shouldered on the left for the march (MOTION_*);
-  - `socket.hand_r`: gripped 3.35 m from the butt (the point 1.81 m beyond the hand): the
-    charge (PSTAND, MOTION_*0, the strikes). One grip cannot serve both: ordered, a hand
-    1.3 m up the shaft; in the push, the point must land at the fencing distance (1.5 m).
-    Since #510 the charge is carried **beside the body**: level under the right arm at the
-    lower ribs, the right hand 0.32 m right of the centre line (`pike.SIDE`,
-    `clips.beside`; 0.44 m for the thrust down, past the bent head and the helmet's brim),
-    the left hand 0.45 m before it on the shaft, the left shoulder leading (`pike.TWIST`).
-    Until then every charge pose lay in the centre plane and the shaft ran through neck
-    and chest (clip audit #509: 12 clips through the body per pikeman).
+  - `socket.hand_r`: gripped **0.45 m from the butt** (#511; the point 4.71 m beyond the
+    hand): the charge (PSTAND, MOTION_*0) and the push (ATTACK, ATTACK_THRUST_MID). The pike
+    is level at the right hip (89°), beside the body: the right hand 0.32 m right of the
+    centre line (`pike.SIDE`, `clips.beside`), the left 0.58 m before it on the shaft, the
+    left shoulder leading (`pike.TWIST`). The push lands on the chest of a standing man
+    **5.0 m away, centre to centre** (`pike.STANCE`, 150 px; his surface 4.83 m ahead): the
+    body goes from the rear foot (root +0.12 m) onto the front foot (−0.28 m), the right hand
+    staying just behind the hip, the point travelling 0.34 m. Until #511 this pike was
+    gripped 3.35 m from the butt and fought at sword distance (1.67 m).
+  - `socket.blade_r` (added beside `socket.hand_r` by `line._add_sockets`): a third pike
+    gripped 3.35 m from the butt (the point 1.81 m beyond the hand), for the thrust down at a
+    man on the ground 2.0 m ahead (0.44 m right of the centre line, past the bent head and
+    the helmet's brim) and BRACE: with the butt grip the point cannot come down on a man that
+    near. The strike layer and the audit take the shown right-hand socket.
   - Every pose-bone scale is reset to 1 before export (the hidden-socket bug); the crawl
     clips hide both pikes.
 
@@ -85,10 +90,10 @@ seated on the surface under it (`line_kit.seat_back`); `acr_decay` on every mate
 |---|---|
 | STAND | pike ordered at the left side |
 | MOTION_L/R/LB/RB | `poses.walk_cycle` with the pike shouldered (left) |
-| PSTAND, MOTION_*0 | the charge: pike level (92°) at the right side, both hands on it, the body back on the rear foot |
+| PSTAND, MOTION_*0 | the charge: pike level (89°) at the right hip, the right hand near the butt, both hands on it, the body back on the rear foot |
 | PATTACK / UATTACK | order to charge / back (the pikes swap between two neighbouring frames at mid-clip) |
-| ATTACK = ATTACK_THRUST_MID | the push: the weight onto the front foot, the point 0.26 m forward onto the chest (1.5 m, 1.15 m). The point lies 1.81 m before the right hand, so that hand is behind the hip at the hit |
-| ATTACK_THRUST_DOWN = ATTACK_DOWN | lunge (officers' `LUNGE_DOWN`), trunk over the man, pike 50° down, point at 2.0 m, 0.2 m |
+| ATTACK = ATTACK_THRUST_MID | the push: the weight onto the front foot, the point 0.34 m forward onto the chest of a man 5.0 m away (4.83 m, 1.15 m) |
+| ATTACK_THRUST_DOWN = ATTACK_DOWN | the shortened pike (`socket.blade_r`): lunge (officers' `LUNGE_DOWN`), trunk over the man, pike 50° down, point at 2.0 m, 0.2 m |
 | BRACE (extra) | charge for horse: kneeling, the pike raised at a rider's chest (not played by the sim yet) |
 | DEATH, DEATHLIE1, crawl | as the line's; through the fall the pike keeps the corpse's lie (level, turned out) instead of following the hand through the right leg |
 
@@ -141,3 +146,13 @@ slots): the pike's steel head and the musket's barrel now show apart from the wo
   `clips.STOOP`.
 - `SETACTIVEPOINT #ATTACK1` (EngMus 13, SpnMus 12, FrnS17 19) is not passed to the musket
   path (the line's own fire frame is used).
+
+**Reach (#511).** Pike 4.9 m (`PIKE_LEN`; 5.16 m to the point). Clip alone, the point is on a
+standing man's chest at the hit frame from 5.0 m centre to centre = 150 px (clip audit with the
+type's distance set to 5.0 m: reach 0.000 m, through 0, grip fails 0; `ACR-analysis/clip-audit/
+pike-reach`). The sim must bring him there: `melee::STANCES` 150 px for EngPik and FrnPik, and a
+blow that lands from that far (`ATTACK_RADIUS` max is 100 px in `ENGPIK.MD`); at the old
+distances the strike layer cannot close the gap (1.20 m off at 3.33 m, 2.02 m at 2.50 m). There
+is no finishing clip: on a man 0.9 m ahead even the shortened pike's grip would be 1.85 m up.
+The native and Meso-American spears (2.0-2.1 m, the point 1.4-1.6 m from the hand) keep their
+grips: a butt grip would gain about 0.5 m and needs their carry redone.

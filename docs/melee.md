@@ -82,17 +82,30 @@ A man on the ground is helpless: one blow ends him.
   The original (`AttackObjLink` 0x51bcaf, step (D)) starts a blow anywhere in the band
   `ATTACK_RADIUS` min ≤ distance < reach, so the distance depends on where the man came from
   (EngM18 55–80 px, EngPik 75–100 px), while every strike clip is solved for a man 1.67 m
-  (50 px) off. Under the rule a **man on foot** (no rider, no beast, no building, no gun;
+  (50 px) off. Under the rule a **man on foot** (and a rider whose type has a stance, see
+  "Riders" below; no beast, no building, no gun;
   `melee::takes_stance`) whose melee index is about to strike a unit that is not on the
   ground and not a building strikes from his **strike stance** (`combat::attack_link_aim`,
   step (D), before the original's in-range branch):
   - **The distance:** `melee::strike_stance(type, victim's ADDSHOTRADIUS)`: the type's entry
     in the table `melee::STANCES` (type id `EngPik(EN)` or `.MD` name `EngPik`, px), else
     `STRIKE_STANCE` = 50 px, plus the victim's `ADDSHOTRADIUS`; at least `STRIKE_TOL` above
-    the index's `ATTACK_RADIUS` min and below the reach. The table is empty: everyone has 50
-    px until the pikemen's clips are rebuilt for a longer reach. It is the **true** distance
+    the index's `ATTACK_RADIUS` min; the default is also kept below the reach, a table
+    entry is not. The table holds `EngPik` and `FrnPik` at 150 px (5.0 m, what their rebuilt
+    push is solved for: docs/families/pike.md, Reach); everyone else has 50 px. It is the
+    **true** distance
     (an integer square root, 1/16 px), not `trig::norma`, which is up to 12 % long between
     the axes.
+  - **The long reach.** `ENGPIK.MD` has `ATTACK_RADIUS 0 40 100`, so a stance of 150 px is
+    beyond the original's reach. For a type with a table entry (`melee::long_reach`,
+    `combat::long_reach`: a man on foot, his melee index, a unit on its feet, no building)
+    the reach of the blow-start test (D) becomes at least (stance + `ADDSHOTRADIUS` +
+    `STRIKE_TOL`) × 9/8 + 1 = 174 px in `trig::norma` (the 9/8 covers its 12 % between the
+    axes), and the range test at the active frame (A) at least that plus `ADDRADIUS`. Beyond
+    it he walks up a cycle at a time as before; inside it he steps to 150 px (backwards,
+    facing the enemy, only when he is less than a walking cycle too near: the step that
+    overshot is corrected). This also holds for a pikeman standing ground (he strikes
+    from where he is, up to 174 px). Nothing changes with the rule off.
   - **A min above the stance** keeps the original's distances (`strike_stance` is `None`):
     on the 1.46 data `EngTap`, `EngTapDragon` and `FrnBuk` (`ATTACK_RADIUS 60 80`). Every
     other type with a melee index has the default (the animal `AnmOlns`, reach 1 px,
@@ -113,9 +126,50 @@ A man on the ground is helpless: one blow ends him.
     stance against the attacker (`melee::steps_to_stance`: his order is an attack on him, he
     takes a stance, has patience left), the man with the **lower unit index** steps the
     whole gap and the other waits, facing him, and strikes when the gap is right (or his
-    patience is used up). Nobody is pushed; with equal stances both end at 50 px. With
-    different stances (a later table entry) the lower index gets his and the other strikes
-    from there after his patience.
+    patience is used up). Nobody is pushed; with equal stances both end at 50 px.
+  - **Different stances (pike against sword):** the man with the **longer** stance holds his
+    distance (`melee::stance_against`): he never steps towards or away from a man who is
+    coming at him. Out of reach he does not walk in but waits, facing him, weapon lowered;
+    with the man beyond his stance he waits (patience); with the man at or inside it he
+    strikes from where he is, again and again. The man with the shorter stance walks and
+    steps in to his own 50 px and strikes from there. So a swordsman closing on a pikeman
+    takes pike blows on the way in (the first starts once he is within 154 px) and inside.
+    The pikeman does not back away: a retreat would only be followed. In the view his blow
+    at a man inside the stance is still the long push (`ATTACK_THRUST_MID`; `strike_view::
+    clip_names` picks by kind and height, not by distance), whose point passes the man: a
+    short-grip clip at a standing man and a pick by distance are render work not done here.
+    The same holds against a victim who does not attack him: a weapon whose stance is
+    beyond its `.MD` reach (pike, lance) does not back away from a man more than a walking
+    cycle inside the stance; he strikes from where he is.
+  - **Riders.** A rider takes a stance only when his type has an entry in `STANCES`; the
+    others keep the original's distances. The entries come from the clips, measured alone
+    at the hit frame from the rider's centre (the clip audit's reach rows now say "point at
+    … m ahead, … m right, … m up" for mounted models;
+    `ACR-analysis/clip-audit/riders/rider_points.csv`). They fall into three groups:
+
+    | Riders | Clip | Point ahead / right / up (m) | Stance | Turn |
+    |---|---|---|---|---|
+    | sabres: `Eng/Frn/Spn D17, D18, KOf17, KOf18`, `UsaD18`, `UsaKOf18`, `SpnRei` | `ATTACK_CUT_MID` | 1.18–1.20 / 0.64–0.65 / 1.41 | 41 px (1.37 m) | 20/256 (28°) |
+    | lances: `PueVsd`, `PueVsdA`, `SiuKPik` | `ATTACK_THRUST_MID` | 2.98 / 0.24 / 1.68 | 90 px (3.0 m) | 3/256 (4°) |
+    | Sioux club and tomahawk: `SiuKLut`, `SiuKVog` | `ATTACK_CUT_MID` | 0.66 / 0.62 / 1.47 | 27 px (0.9 m) | 31/256 (44°) |
+
+    A sabre comes down 0.65 m to the rider's right, beside the horse. So the stance is the
+    distance of the point from his centre, and at the blow he **faces `melee::strike_turn`
+    left of the enemy** (`combat::strike_turn`: the facing the blow turns to in (D) and at
+    the active frame (A)), which puts the man where the blade lands. He steps to the stance
+    facing the enemy (the mounted type's own step, `motion::step_rate`), with the same
+    patience, then turns. The stance is kept `STRIKE_TOL` above `ATTACK_RADIUS` min: the
+    dragoons (min 40) stand at 44 px, 0.1 m further than the clip. `SiuKLut` and `SiuKVog`
+    have min 40 above their 27 px: **no stance**, the original's distance (59 px in the
+    inspector's scene, the club 0.8–0.9 m short even with the layer); their clips need to be
+    rebuilt for a longer blow. The lancers' 90 px is beyond `SIUKPIK.MD`'s reach of 80: the
+    long reach applies, and like a pikeman a lancer does not back away. Against a rider or
+    another big victim the stance grows by his `ADDSHOTRADIUS`, as for men on foot; the
+    clips are solved for a man on foot and their error at a mounted target is not measured.
+    With the turn in `melee_distance.json` the audit judges these riders at their stance:
+    the sabre riders' `ATTACK_CUT_MID`/`_HIGH` pass (0.01–0.08 m off with the layer, 0.2–0.3
+    m clip alone); the lancers' `ATTACK_THRUST_MID`/`_HIGH` fail narrowly (0.16–0.18 m with
+    the layer; the clip's point is 1.68 m up, 0.5 m above the chest).
   - **Standing ground:** he does not step; he strikes from where he is (the original's
     band), as in the finishing rule.
   - **Formations and body spacing:** a brigade member within one walking cycle of his slot
@@ -130,11 +184,22 @@ A man on the ground is helpless: one blow ends him.
     starting distances: 50 px ± 5; without the rule the band),
     `two_men_at_each_other_both_stand_at_the_stance`,
     `standing_ground_and_riders_keep_their_distance`,
-    `the_stance_is_deterministic_and_off_without_the_rule`. On the real data
+    `the_stance_is_deterministic_and_off_without_the_rule`,
+    `a_pikeman_strikes_from_his_long_stance` (5 directions × 6 starts from 80 to 200 px:
+    150 px ± 5, from 80 and 110 px where he stands; without the rule below 101),
+    `riders_strike_from_their_stance` (a dragoon 41 px ± 5 with the man 20/256 to his right,
+    a lancer 90 px, from 5 directions and 5 starts; without the rule he faces the man and
+    the band holds), `a_swordsman_comes_in_under_the_pike` (first
+    pike blows from 144–146 px, then ~95 and ~51; the sword from 51; the pikeman moves less
+    than 30 px; every fight ends). On the real data
     (`acr-game`, ignored test `the_first_blow_comes_from_the_stance`, the inspector's scene:
     a standing FrnM18/EngM18 110 px off at direction 32, first blow, centre to centre):
-    EngPik 85.6 → 52.3 px, EngM18 60.8 → 52.3, EngOf17 60.8 → 52.3, DelPik 70.0 → 53.0,
-    IroTam (melee only) 53.7 → 53.7 (he arrives inside the tolerance).
+    EngPik 85.6 → 108.9 px (110 px is well inside his stance: he strikes from there), EngM18 60.8 → 52.3, EngOf17 60.8 → 52.3, DelPik 70.0 → 53.0,
+    IroTam (melee only) 53.7 → 53.7 (he arrives inside the tolerance). EngPik against an
+    attacking FrnM18 (melee only) from 110 px: the pike's blows from 103, 54 and 49 px, the
+    musketeer's bayonet from 49 px. Riders, same scene: EngD17 72.8 → 46.0 px, EngD18 55.2 →
+    44.6, EngKOf18 55.2 → 43.1, SpnRei 46.0 → 41.7, PueVsd 61.5 → 89.1, SiuKPik 59.4 → 88.4,
+    SiuKLut and SiuKVog 59.4 → 59.4 (no stance).
 - **The body's axis in the sim.** A man on the ground lies along his facing (`Unit::dir`):
   the feet behind his ground point, the hips ~0.4 m and the head ~1.05 m ahead (the crawl
   clips' prone root, `poses.lie_prone`; WRITHE lies the same way on his back). So the sim
@@ -422,11 +487,14 @@ point); without the variables it does nothing.
   `ADDRADIUS` (step (A)). A man on the ground is finished from `FINISH_REACH` (27 px, the
   finishing clips' 0.9 m; hit-locations rule, on foot); riders keep their reach.
   - **With the hit-locations rule a man on foot does not use the band:** he steps to his
-    strike stance (`melee::strike_stance`, 50 px = 1.67 m for every type now, the distance
-    the clips are solved for) and strikes from there within 4 px (2a, "The strike stance").
-    The band above and `melee_distance.json` describe the original rule: riders, men
-    standing ground, the three types whose min is above the stance, and everyone with the
-    rule off.
+    strike stance (`melee::strike_stance`: 50 px = 1.67 m, the distance the clips are
+    solved for; EngPik and FrnPik 150 px = 5.0 m, beyond their `.MD` reach) and strikes from
+    there within 4 px (2a, "The strike stance"). The band above describes the original
+    rule: riders without a stance, men standing ground, the types whose min is above the
+    stance, and everyone with the rule off. `melee_distance.json` holds the band too, except
+    for the types with a stance of their own (EngPik, FrnPik: distance 5.0, nearest 4.87,
+    reach 5.13 m; the riders of `STANCES` with their `turn` in degrees), so the clip audit
+    measures them where the rule puts them.
   - **The table:** `assets/blender/data/melee_distance.json`: type id without the nation →
     `distance` (the middle), `nearest`, `reach` in metres, for the Blender pipeline and the
     clip audit. Generated and checked by the ignored test `the_melee_table_matches`

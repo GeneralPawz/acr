@@ -452,3 +452,174 @@ fn the_stance_is_deterministic_and_off_without_the_rule() {
     assert!(!spent);
     assert_ne!(on, off);
 }
+
+/// The long reach (#511): a pikeman with a `STANCES` entry (`EngPik`, 150 px, `ATTACK_RADIUS`
+/// max 100), a swordsman (reach 80, the default stance) and a post.
+fn pike_setup(rules: Rules) -> (World, TypeId, TypeId, TypeId) {
+    let mut c = Catalog::new();
+    // He lowers his pike in 4 frames (the 36 of `PIKEMAN` are as long as a man's way in).
+    let pikeman = PIKEMAN
+        .replace("NAME Pik", "NAME EngPik")
+        .replace("@PATTACK 9 0 0 35", "@PATTACK 9 0 0 3")
+        .replace("@UATTACK 9 0 35 0", "@UATTACK 9 0 3 0");
+    let pik = c.add(ObjectType::from_def("EngPik(EN)", &UnitDef::parse(pikeman.as_bytes())));
+
+    let sword = PIKEMAN
+        .replace("NAME Pik", "NAME Swd")
+        .replace("ATTACK_RADIUS 0 40 100", "ATTACK_RADIUS 0 0 80")
+        .replace("WEAPONKIND 0 PIKA", "WEAPONKIND 0 MECH");
+    let swd = c.add(ObjectType::from_def("Swd(FR)", &UnitDef::parse(sword.as_bytes())));
+    let post = PIKEMAN.replace("NAME Pik", "NAME Post").replace("SEARCH_ENEMY_RADIUS 700", "SEARCH_ENEMY_RADIUS 0");
+    let post = c.add(ObjectType::from_def("Post(FR)", &UnitDef::parse(post.as_bytes())));
+    c.set_weapon_kinds(&weapon_kinds(NRES));
+    let mut w = World::new(Arc::new(MapGrid::open(1)), Arc::new(c), Arc::new(Formations::default()));
+    w.rules = rules;
+    (w, pik, swd, post)
+}
+
+/// A pikeman and a post `start` px apart towards `dir`: how far he stood at his first blow.
+fn pike_blow(rules: Rules, start: f64, dir: u8) -> f64 {
+    let (mut w, pik, _, post) = pike_setup(rules);
+    let ang = f64::from(dir) * std::f64::consts::TAU / 256.0;
+    w.spawn(pik, 0, Pos::from_pixels(2000, 2000), dir);
+    let at = Pos::from_pixels(2000 + (ang.cos() * start).round() as i32, 2000 + (ang.sin() * start).round() as i32);
+    let v = w.spawn(post, 1, at, dir.wrapping_add(128)).0 as usize;
+    w.units[v].life = 5000;
+    for _ in 0..600 {
+        w.step(&[]);
+        if let Some(d) = w.hits.iter().find(|h| h.victim == v as u32).map(reach_of) {
+            return d;
+        }
+    }
+    panic!("no blow from {start} px, dir {dir}");
+}
+
+/// A type with a stance beyond its reach starts and lands its blow from there, from any
+/// side and from nearer or further; without the rule its `.MD` reach holds.
+#[test]
+fn a_pikeman_strikes_from_his_long_stance() {
+    use acr_sim::melee::{STRIKE_TOL, long_reach, stance_entry, strike_stance};
+    let (w, pik, swd, _) = pike_setup(ON);
+    assert_eq!(stance_entry(w.catalog.get(pik)), Some(150));
+    assert_eq!(strike_stance(w.catalog.get(pik), 0), Some(150), "not clamped to the reach of 100");
+    assert_eq!(long_reach(w.catalog.get(pik), 0), Some(174));
+    assert_eq!((strike_stance(w.catalog.get(swd), 0), long_reach(w.catalog.get(swd), 0)), (Some(50), None));
+    for dir in [0u8, 32, 64, 150, 224] {
+        for start in [80.0, 110.0, 150.0, 165.0, 185.0, 200.0] {
+            // From well inside his stance he does not back away: he strikes from where he is.
+            let want = if start < 120.0 { start } else { 150.0 };
+            let d = pike_blow(ON, start, dir);
+            assert!((d - want).abs() <= f64::from(STRIKE_TOL) + 1.0, "from {start} px, dir {dir}: {d:.1} px");
+            let d = pike_blow(Rules::default(), start, dir);
+            assert!(d < 101.0, "without the rule, from {start} px, dir {dir}: {d:.1} px");
+        }
+    }
+}
+
+/// A swordsman closing on a pikeman: the pikeman holds his ground and strikes him on the
+/// way in and when he is inside; a swordsman who lives that long strikes from his own
+/// stance; every fight ends.
+#[test]
+fn a_swordsman_comes_in_under_the_pike() {
+    use acr_sim::melee::{STRIKE_STANCE, STRIKE_TOL};
+    let mut sword_blows = 0;
+    for (start, dir, pike_first) in [(200, 0u8, true), (190, 32, false), (200, 128, true), (185, 200, false)] {
+        let (mut w, pik, swd, _) = pike_setup(ON);
+        let ang = f64::from(dir) * std::f64::consts::TAU / 256.0;
+        let (x, y) = ((ang.cos() * f64::from(start)).round() as i32, (ang.sin() * f64::from(start)).round() as i32);
+        let (p, s) = if pike_first {
+            let p = w.spawn(pik, 0, Pos::from_pixels(2000, 2000), dir).0 as usize;
+            (p, w.spawn(swd, 1, Pos::from_pixels(2000 + x, 2000 + y), dir.wrapping_add(128)).0 as usize)
+        } else {
+            let s = w.spawn(swd, 1, Pos::from_pixels(2000 + x, 2000 + y), dir.wrapping_add(128)).0 as usize;
+            (w.spawn(pik, 0, Pos::from_pixels(2000, 2000), dir).0 as usize, s)
+        };
+        let home = w.units[p].pos;
+        let (mut by_pike, mut by_sword) = (Vec::new(), Vec::new());
+        let (mut seen, mut ticks) = (0, 0);
+        while w.units[p].living() && w.units[s].living() && ticks < 5000 {
+            w.step(&[]);
+            ticks += 1;
+            let n = w.hits.iter().filter(|h| h.victim == p as u32 || h.victim == s as u32).count();
+            if n > seen {
+                seen = n;
+                let h = w.hits.iter().rfind(|h| h.victim == p as u32 || h.victim == s as u32).unwrap();
+                if h.victim == s as u32 { by_pike.push(reach_of(h)) } else { by_sword.push(reach_of(h)) }
+            }
+        }
+        assert!(ticks < 5000, "the fight ends (from {start} px, dir {dir})");
+        assert!(!by_pike.is_empty(), "the pike strikes");
+        sword_blows += by_sword.len();
+        let first = by_pike[0];
+        assert!((75.0..=155.0).contains(&first), "the pike's first blow, on the way in: {first:.1} px");
+        let tol = f64::from(STRIKE_TOL) + 1.0;
+        for sword in &by_sword {
+            assert!((sword - f64::from(STRIKE_STANCE)).abs() <= tol, "the sword from its stance: {sword:.1} px");
+        }
+        let moved = w.units[p].pos;
+        let moved = f64::from(moved.x - home.x).hypot(f64::from(moved.y - home.y)) / 16.0;
+        assert!(moved < 30.0, "the pikeman holds his ground: {moved:.1} px (from {start} px, dir {dir})");
+    }
+    assert!(sword_blows > 0, "a swordsman who gets inside strikes too");
+}
+
+/// Riders with a stance (#511): a dragoon (`EngD18`: 41 px, the man 20/256 to his right), a
+/// lancer (`PueVsd`: 90 px, beyond his reach of 80) and a post.
+fn rider_blow(rules: Rules, lancer: bool, start: f64, dir: u8) -> (f64, i8) {
+    let mut c = Catalog::new();
+    let rider = |name: &str, radius: &str| {
+        PIKEMAN
+            .replace("NAME Pik", &format!("NAME {name}"))
+            .replace("ATTACK_RADIUS 0 40 100", radius)
+            .replace("WEAPONKIND 0 PIKA", "WEAPONKIND 0 MECH\r\nUSAGE FASTHORSE")
+    };
+    let dragoon = rider("EngD18", "ATTACK_RADIUS 0 20 60");
+    let dra = c.add(ObjectType::from_def("EngD18(EN)", &UnitDef::parse(dragoon.as_bytes())));
+    let lance = rider("PueVsd", "ATTACK_RADIUS 0 20 80");
+    let lan = c.add(ObjectType::from_def("PueVsd(PU)", &UnitDef::parse(lance.as_bytes())));
+    let post = PIKEMAN.replace("NAME Pik", "NAME Post").replace("SEARCH_ENEMY_RADIUS 700", "SEARCH_ENEMY_RADIUS 0");
+    let post = c.add(ObjectType::from_def("Post(FR)", &UnitDef::parse(post.as_bytes())));
+    c.set_weapon_kinds(&weapon_kinds(NRES));
+    let mut w = World::new(Arc::new(MapGrid::open(1)), Arc::new(c), Arc::new(Formations::default()));
+    w.rules = rules;
+    let ang = f64::from(dir) * std::f64::consts::TAU / 256.0;
+    let a = w.spawn(if lancer { lan } else { dra }, 0, Pos::from_pixels(2000, 2000), dir).0 as usize;
+    let at = Pos::from_pixels(2000 + (ang.cos() * start).round() as i32, 2000 + (ang.sin() * start).round() as i32);
+    let v = w.spawn(post, 1, at, dir.wrapping_add(128)).0 as usize;
+    w.units[v].life = 5000;
+    for _ in 0..800 {
+        w.step(&[]);
+        if let Some(h) = w.hits.iter().find(|h| h.victim == v as u32) {
+            // How far left of the enemy he faces.
+            let to = acr_sim::trig::get_dir(h.dir.0, h.dir.1);
+            return (reach_of(h), to.wrapping_sub(w.units[a].dir) as i8);
+        }
+    }
+    panic!("no blow from {start} px, dir {dir}");
+}
+
+/// A rider with a stance strikes from it, the man where his blade comes down (a sabre:
+/// to his right); a lancer from beyond his `.MD` reach. Without the rule nothing changes.
+#[test]
+fn riders_strike_from_their_stance() {
+    use acr_sim::melee::STRIKE_TOL;
+    let tol = f64::from(STRIKE_TOL) + 1.0;
+    let mut off = Vec::new();
+    for dir in [0u8, 40, 96, 128, 210] {
+        for start in [30.0, 58.0, 90.0, 130.0, 190.0] {
+            let (d, turn) = rider_blow(ON, false, start, dir);
+            assert!((d - 41.0).abs() <= tol, "a dragoon from {start} px, dir {dir}: {d:.1} px");
+            assert!((i32::from(turn) - 20).abs() <= 3, "the man to his right: {turn} (from {start} px, dir {dir})");
+            let (d, turn) = rider_blow(ON, true, start, dir);
+            // Inside his stance a lancer does not back away.
+            let want = if start < 60.0 { start } else { 90.0 };
+            assert!((d - want).abs() <= tol, "a lancer from {start} px, dir {dir}: {d:.1} px");
+            assert!((i32::from(turn) - 3).abs() <= 3, "the lance nearly ahead: {turn}");
+            let (d, turn) = rider_blow(Rules::default(), false, start, dir);
+            assert!(turn.abs() <= 2, "without the rule he faces the man: {turn}");
+            off.push(d);
+        }
+    }
+    let (lo, hi) = off.iter().fold((f64::MAX, 0f64), |(lo, hi), &d| (lo.min(d), hi.max(d)));
+    assert!(hi - lo > 2.0 * tol, "without the rule the original's band: {lo:.1} to {hi:.1} px");
+}
