@@ -311,18 +311,21 @@ def halberd_strikes(n, tip):
     and ATTACK_THRUST_DOWN = ATTACK_DOWN (an overhand stab down at a man on the ground, the
     trunk bent forward, the left hand above and behind the right). `socket.tip` on the
     target on frame 2. Positive spine X bends the trunk forward here."""
-    level = (88, 0, 0)
-    lean = dict(cl.STAND_FREE, spine=(10, 0, -12), spine1=(4, 0, 0), root_loc=(0, -0.16, -0.04),
+    # Beside the body (`clips.beside`, #510: in the centre plane the shaft ran through the
+    # trunk in every ready and strike clip), the left hand before the right on the shaft.
+    twist = cl.POLE_TWIST
+    grip, level = cl.beside(cl.TARGET_MID, 88, tip)
+    lean = dict(cl.STAND_FREE, **dict(twist, spine=(10, 0, -12)), root_loc=(0, -0.16, -0.04),
                 thigh_l=(-26, -3, 0), shin_l=(20, 0, 0), thigh_r=(12, 3, 0), shin_r=(8, 0, 0))
-    hit_mid = _two(lean, cl.grip_for(cl.TARGET_MID, level, tip), level, 0.45)
-    back = _two(dict(cl.STAND_FREE, spine=(0, 0, 10)), cl.add(hit_mid["reach"]["r"][0], (0, 0.30, -0.03)), level, 0.45)
-    down_r = (125, 0, 0)
-    bend = dict(cl.STAND_FREE, spine=(26, 0, -6), spine1=(8, 0, 0), spine2=(4, 0, 0), head=(10, 0, 0),
+    hit_mid = _two(lean, grip, level, 0.40)
+    back = _two(dict(cl.STAND_FREE, **twist), cl.add(grip, (0, 0.30, -0.03)), level, 0.40)
+    grip, down_r = cl.beside(TARGET_DOWN, 125, tip, cl.POLE_SIDE + 0.10)
+    bend = dict(cl.STAND_FREE, spine=(26, 0, -14), spine1=(8, 0, -10), spine2=(4, 0, -6), neck=(0, 0, 10), head=(10, 0, 14),
                 root_loc=(0, -0.30, -0.14), thigh_l=(-50, -3, 0), shin_l=(52, 0, 0), foot_l=(-4, 0, 0),
                 thigh_r=(26, 3, 0), shin_r=(20, 0, 0), foot_r=(-8, 0, 0))
-    hit_down = _two(bend, cl.grip_for(TARGET_DOWN, down_r, tip), down_r, -0.35)
-    raised = _two(dict(cl.STAND_FREE, spine=(10, 0, 0), root_loc=(0, -0.12, -0.04), thigh_l=(-24, -3, 0),
-                       shin_l=(20, 0, 0)), cl.add(hit_down["reach"]["r"][0], (0, 0.25, 0.30)), (112, 0, 0), -0.35)
+    hit_down = _two(bend, grip, down_r, 0.40)
+    raised = _two(dict(cl.STAND_FREE, **dict(twist, spine=(10, 0, -12)), root_loc=(0, -0.12, -0.04), thigh_l=(-24, -3, 0),
+                       shin_l=(20, 0, 0)), cl.add(grip, (0, 0.25, 0.30)), (112, 0, down_r[2]), 0.40)
     return {
         "ATTACK_THRUST_MID": cl._strike(n, back, hit_mid, back),
         "ATTACK_THRUST_DOWN": cl._strike(n, raised, hit_down, raised),
@@ -407,10 +410,12 @@ def build_pole(ctx, s):
     ch.morphs(extra_deflate=ch.layers["gear"])
     ch.masks()
     clips = halberd_clips(md)
+    # Every frame keyed so both hands stay on the shaft (`clips.solved`); the halberd is
+    # dropped for the crawl (#510).
+    cl.keep_shown(clips)
     for clip, keys in clips.items():
-        cl.apply(ch.arm, clip, keys)
-    for clip, keys in crawl.clips().items():
-        am.add_clip(ch.arm, clip, keys)
+        cl.apply(ch.arm, clip, keys, dense=True)
+    cl.apply_crawl(ch.arm)
     ch.arm.animation_data.action = None
     ctx.probe = probe(ch, ctx.name, clips)
     am.set_clip(ch.arm, "STAND")

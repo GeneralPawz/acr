@@ -85,3 +85,8 @@ section 2.7. The family adds what it needs by registering it (docs/assets-humans
   replica after the lost Real Armería piece; the chimalli in the Weltmuseum Wien.
 
 No images were copied; the shapes are modelled from the descriptions and proportions.
+
+**Pole weapons beside the body (#510, slice 2).** The spear thrusts (`meso.strikes`, mid and down) and the shared finishing blow put the shaft right of the body (`clips.beside`), both hands on it; a spear unit's `PSTAND`, `PATTACK` and `UATTACK` are the two-handed ready (the thrust's wind-up) instead of the stand. Every frame of a spear unit's clips is
+keyed (`clips.apply(..., dense=True)`), the weapon is hidden in the crawl clips
+(`clips.apply_crawl`; every other clip keys it shown, `clips.keep_shown`). Clip audit (#509,
+`ACR-analysis/clip-audit/pole2` against `2026-11-15`): MayPik and MayVog through the body 8 -> 0, `grip_left` fails 4 -> 0 (worst 0.722 -> 0.072 m); AtcMet through 7 -> 0, grip fails 6 -> 1: `PSTAND1` (the dart held ready for the throw in one hand, 0.572 m, by design; the audit judges every `PSTAND*`). Reach 6 of 6 pass on each.

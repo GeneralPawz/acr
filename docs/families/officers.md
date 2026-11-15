@@ -48,6 +48,18 @@ Strike clips on ATTACK's frames, the blow on frame 2 (`officers.sword_strikes`,
 `clips.spear_strikes` for the spontoon): `ATTACK_CUT_MID`, `ATTACK_CUT_HIGH`,
 `ATTACK_THRUST_MID` (lunge), `ATTACK_THRUST_DOWN` = `ATTACK_DOWN`. ATTACK plays the cut.
 
+The spontoon (EngOf17, #510) is fought with both hands **beside the body**
+(`clips.spear_strikes`, `clips.beside`): the right hand at the right hip 0.30 m off the centre
+line (0.40 m for the thrust down), the left 0.40 m before it, the left shoulder leading
+(`clips.POLE_TWIST`); the finishing blow (`finish._poses`) the same way and back to a port in
+both hands (`finish.PORT`). Every frame is keyed (`clips.apply(..., dense=True)`) so the left
+hand stays on the shaft between the keys, and the spontoon is hidden in the crawl clips (as
+the pikeman's pike; every other clip keys it shown). Before, the shaft lay in the centre plane,
+through the chest (ATTACK, PSTAND) or the face and hat (ATTACK_DOWN, the finish). Clip audit
+(#509, `ACR-analysis/clip-audit/pole1` against `2026-11-15`): through the body 11 clips -> 0,
+`grip_left` fails 6 -> 0 (worst 0.716 -> 0.098 m), reach 6 of 6 pass (ATTACK_DOWN alone
+0.43 -> 0.01 m short). FrnOf17 and SpnOf17 carry swords and are unchanged.
+
 **The shared stoop leaned back.** `clips.STOOP` (and the cut's `lean` in
 `clips.sword_strikes`) bend the spine with negative X, which on skeleton H leans the trunk
 *back*: the right shoulder ended 0.09 m in front of the hips instead of over the man, and
@@ -92,7 +104,8 @@ puts the point into the man on the ground.
 
 ## Not yet
 
-- The spontoon's stab down (EngOf17) uses the shared `spear_strikes` at 1.6 m.
+- ~~The spontoon's stab down (EngOf17) uses the shared `spear_strikes` at 1.6 m~~ (#510): the shared
+  `spear_strikes` now lunges to the man on the ground at 2.0 m (`clips.TARGET_DOWN`; clip alone 0.01 m short).
 - ~~17th-century officers wear the 18th-century line cut~~ (m2-c17): `officers.spec17`
   (EngOf17, FrnOf17, SpnOf17) drapes `DRAPE17` (breeches, long hose, linen cuffs, a buff
   coat with cloth sleeves in the coat colour) and adds `KIT17`: modelled bucket-top boots

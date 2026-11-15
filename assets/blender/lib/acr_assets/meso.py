@@ -667,11 +667,17 @@ def _stoop_down():
                                       spine2=(4, 0, 0), head=(18, 0, 0), **LUNGE_DOWN))
 
 
-def _raised(hit, r_rot, lift=(0, 0.20, 0.70), hand="r"):
-    base = cl._with(hit, root_loc=(0, -0.40, -0.10), spine=(12, 0, -4), spine1=(4, 0, 0),
-                    thigh_l=(-40, -3, 0), shin_l=(40, 0, 0), thigh_r=(20, 3, 0), shin_r=(14, 0, 0))
+def _raised(hit, r_rot, lift=(0, 0.20, 0.70), hand="r", **over):
+    base = cl._with(hit, **dict(dict(root_loc=(0, -0.40, -0.10), spine=(12, 0, -4), spine1=(4, 0, 0),
+                                     thigh_l=(-40, -3, 0), shin_l=(40, 0, 0), thigh_r=(20, 3, 0), shin_r=(14, 0, 0)), **over))
     base.pop("reach", None)
-    return _hit(base, cl.add(hit["reach"][hand][0], lift), r_rot, hand=hand, two=len(hit["reach"]) > 1)
+    two = len(hit["reach"]) > 1
+    # The other hand as far along the haft as in the hit.
+    along = 0.40
+    if two and hand == "r":
+        along = sum(a * (q - p) for a, p, q in zip(cl.axis(hit["world"]["socket.hand_r"]), hit["reach"]["r"][0],
+                                                   hit["reach"]["l"][0]))
+    return _hit(base, cl.add(hit["reach"][hand][0], lift), r_rot, hand=hand, two=two, along=along)
 
 
 def _hit(base, point, rot, hand="r", two=False, along=0.40):
@@ -696,13 +702,18 @@ def strikes(s, n):
     tip = tips(s)
     lean = dict(cl.STAND_FREE, **LEAN_IN)
     if s["melee"] == "spear":
+        # Both hands on the haft, the shaft beside the body (`clips.beside`, #510: in the
+        # centre plane it ran through the trunk).
         out = cl.spear_strikes(n, tip=tip)
-        level, down_r = (88, 0, 0), (130, 0, 0)
-        mid = _hit(lean, cl.grip_for(cl.TARGET_MID, level, tip), level, two=True, along=0.45)
-        back = _hit(dict(cl.STAND_FREE, spine=(0, 0, 12)), cl.add(mid["reach"]["r"][0], (0, 0.38, -0.05)), level,
-                    two=True, along=0.45)
-        down = _hit(_stoop_down(), cl.grip_for(TARGET_DOWN, down_r, tip), down_r, two=True, along=0.45)
-        up = _raised(down, (122, 0, 0), lift=(0, 0.30, 0.30))
+        twist = cl.POLE_TWIST
+        grip, level = cl.beside(cl.TARGET_MID, 88, tip)
+        mid = _hit(dict(lean, **twist), grip, level, two=True, along=0.40)
+        back = _hit(dict(cl.STAND_FREE, **twist), cl.add(grip, (0, 0.30, -0.03)), level, two=True, along=0.40)
+        grip, down_r = cl.beside(TARGET_DOWN, 130, tip, cl.POLE_SIDE + 0.10)
+        down = _hit(dict(_stoop_down(), spine=(30, 0, -14), spine1=(10, 0, -10), spine2=(4, 0, -6), neck=(0, 0, 10),
+                         head=(18, 0, 14)), grip, down_r, two=True, along=0.40)
+        up = _raised(down, (122, 0, down_r[2]), lift=(0, 0.28, 0.22), root_loc=(0, -0.60, -0.18), spine=(20, 0, -14),
+                     spine1=(8, 0, -10), thigh_l=(-56, -3, 0), shin_l=(58, 0, 0), thigh_r=(30, 3, 0))
         out["ATTACK_THRUST_MID"] = cl._strike(n, back, mid, back)
         out["ATTACK_THRUST_DOWN"] = out["ATTACK_DOWN"] = cl._strike(n, up, down, up)
         return out
@@ -807,6 +818,15 @@ def unit_clips(s):
                                  c.event) for k, c in made.items()}
         out.update(made)
         out["ATTACK"] = made["ATTACK_CUT_MID" if "ATTACK_CUT_MID" in made else "ATTACK_THRUST_MID"]
+        if s["melee"] == "spear":
+            # The melee ready (PSTAND; PSTAND1 is the throw's): the spear in both hands, as the
+            # thrust's wind-up; PATTACK / UATTACK bring it there and back.
+            ready = made["ATTACK_THRUST_MID"][0][1]
+            for k, ks in (("PSTAND", [(0.0, ready)]), ("PATTACK", [(0.0, stand), (1.0, ready)]),
+                          ("UATTACK", [(0.0, ready), (1.0, stand)])):
+                if k in md:
+                    m = rig.md_clip_frames(md[k])[0]
+                    out[k] = rig.clip_keys(m, ks)
         if s["work"] and "ATTACK5" in md:
             n5 = rig.md_clip_frames(md["ATTACK5"])[0]
             out["ATTACK5"] = strikes(s, n5)["ATTACK_CUT_MID"]
@@ -1053,10 +1073,18 @@ def build(ctx, s):
     ch.morphs(extra_deflate=ch.layers["gear"])
     ch.masks()
     made, extra = unit_clips(s)
+    # A spear fought with both hands (#510): every frame keyed so the hands stay on the haft
+    # (`clips.solved`), and the spear dropped for the crawl.
+    pole = s["melee"] == "spear"
+    if pole:
+        cl.keep_shown(made)
     for clip, keys in made.items():
-        cl.apply(ch.arm, clip, keys)
-    for clip, keys in crawl.clips().items():
-        am.add_clip(ch.arm, clip, keys)
+        cl.apply(ch.arm, clip, keys, dense=pole)
+    if pole:
+        cl.apply_crawl(ch.arm)
+    else:
+        for clip, keys in crawl.clips().items():
+            am.add_clip(ch.arm, clip, keys)
     am.set_clip(ch.arm, "STAND")
     ch.arm.animation_data.action = None
     am.pose(ch.arm, cl.solve(ch.arm, stance(s)))
@@ -1065,6 +1093,8 @@ def build(ctx, s):
     outfit.dress(ch, colours, LAYER_OF)
     heads.finish(ch)
     ch.arm.animation_data.action = None
+    for pb in ch.arm.pose.bones:  # the "show" keys leave socket scales behind
+        pb.scale = (1.0, 1.0, 1.0)
     am.pose(ch.arm, cl.solve(ch.arm, stance(s)))
     tris = ch.triangles()
     prepare_export(ch.all_meshes(), ctx.root, acr_triangles=sum(tris.values()),

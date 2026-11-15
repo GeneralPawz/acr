@@ -289,6 +289,9 @@ def officer_clips(s):
             if key in md:
                 m = cl.md_frames(md[key])
                 out[key] = cl.frames(m, rig.clip_keys(m, keys))
+    if melee == "spear":
+        # The spontoon is hidden in the crawl (`build`), so every other clip keys it shown.
+        cl.keep_shown(out)
     return out
 
 
@@ -299,10 +302,17 @@ def build(ctx, s):
     ch.morphs(extra_deflate=ch.layers["gear"])
     ch.masks()
     clips = officer_clips(s)
+    # A pole weapon: every frame keyed, so both hands stay on the shaft between the keys
+    # (`clips.solved`), and dropped for the crawl as the pikeman's pike (in the crawling
+    # hand it swept through trunk and leg, clip audit #509).
+    spear = MELEE[s["weapon"]] == "spear"
     for clip, keys in clips.items():
-        cl.apply(ch.arm, clip, keys)
-    for clip, keys in crawl.clips().items():
-        am.add_clip(ch.arm, clip, keys)
+        cl.apply(ch.arm, clip, keys, dense=spear)
+    if spear:
+        cl.apply_crawl(ch.arm)
+    else:
+        for clip, keys in crawl.clips().items():
+            am.add_clip(ch.arm, clip, keys)
     am.set_clip(ch.arm, "STAND")
     report = {}
     colours = ch.colours(ctx.ref, s["palette"], report=report, mix=s["mix"], fixed=s["fixed"])
@@ -310,6 +320,9 @@ def build(ctx, s):
     heads.finish(ch)
     ch.arm.animation_data.action = None
     am.pose(ch.arm, cl.solve(ch.arm, clips["STAND"][0][1]))
+    # Scales back to 1 before export: a zero socket scale would be baked into the item's node.
+    for pb in ch.arm.pose.bones:
+        pb.scale = (1.0, 1.0, 1.0)
     tris = ch.triangles()
     prepare_export(ch.all_meshes(), ctx.root, acr_triangles=sum(tris.values()),
                    acr_clips=list(clips) + list(crawl.CLIPS), acr_limb_radius=ch.limb_radius,

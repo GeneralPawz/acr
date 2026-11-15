@@ -748,6 +748,7 @@ def build(ctx, s):
     ch.morphs(extra_deflate=ch.layers["gear"])
     ch.masks()
     names = []
+    pole = s["weapon"] == "spear" and s["melee"] == "spear"
     if s["weapon"] == "gun":
         rod = gear.rammer(f"{ctx.name}.rammer")
         am.attach(rod, ch.arm, aiming.ROD_SOCKET, am.world(ch.arm, aiming.ROD_SOCKET))
@@ -778,15 +779,24 @@ def build(ctx, s):
         ctx.reload = aiming.reload_report(ch.arm, plan)
         stand = poses.STAND_MUSKET
     else:
-        for clip, keys in unit_clips(s).items():
-            cl.apply(ch.arm, clip, keys)
+        # A spear fought with both hands (#510): every frame keyed so the hands stay on the
+        # shaft (`clips.solved`), and the spear dropped for the crawl.
+        made = unit_clips(s)
+        if pole:
+            cl.keep_shown(made)
+        for clip, keys in made.items():
+            cl.apply(ch.arm, clip, keys, dense=pole)
             names.append(clip)
         stand = stand_of(s)
-    for clip, keys in crawl.clips().items():
-        am.add_clip(ch.arm, clip, keys)
-        if s["weapon"] == "gun":
-            aiming.stow_rammer(ch.arm, clip)
-        names.append(clip)
+    if pole:
+        cl.apply_crawl(ch.arm)
+        names.extend(crawl.clips())
+    else:
+        for clip, keys in crawl.clips().items():
+            am.add_clip(ch.arm, clip, keys)
+            if s["weapon"] == "gun":
+                aiming.stow_rammer(ch.arm, clip)
+            names.append(clip)
     report = {}
     colours = ch.colours(ctx.ref, s["palette"], report=report, mix=s["mix"], fixed=s["fixed"])
     outfit.dress(ch, colours, LAYER_OF)

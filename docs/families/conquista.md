@@ -45,7 +45,12 @@ Sheet `ACR-analysis/c17/sheet_c17.png` (SpnS15). Registered here: hats `morion`,
   draw a sword for melee (`frontier.build(..., make_fn=line.with_sidearm(frontier.make,
   "sword"))`, the arquebus slung); SpnS15 probe: `ATTACK_CUT_MID` 0.00, `ATTACK_THRUST_DOWN`
   0.00 at 2.0 m. The sheathed sword (`c_scabbard`) still shows beside the drawn one; no rodela.
-- The halberd's own forward stoop (`halberd_strikes`) stays (a two-handed pole).
+- The halberd's own forward stoop (`halberd_strikes`) stays (a two-handed pole). Since #510 the shaft is
+  carried beside the body (`clips.beside`: the right hand 0.30 m right of the centre line, 0.40 m for the
+  stab down), the left hand 0.40 m before the right in every pose (in the stab down it was behind it),
+  every frame keyed (`clips.apply(..., dense=True)`) and the halberd hidden in the crawl
+  (`clips.apply_crawl`). Clip audit (#509, `ACR-analysis/clip-audit/pole2` against `2026-11-15`), SpnAlb:
+  through the body 10 clips -> 0, `grip_left` fails 2 -> 0 (worst 0.210 -> 0.092 m), reach 4 of 4 pass.
 - The halberd's cut (`ATTACK_CUT_*`) is not made; only thrusts.
 - FrnS15's stripes on the slops (a paint mask) are not done.
 - Extra sprite stances (`ATTACK3`, `PSTAND3`) are not modelled.

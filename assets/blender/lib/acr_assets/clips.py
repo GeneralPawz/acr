@@ -100,6 +100,20 @@ def grip_for(tip, r, length):
     return add(tip, axis(r), -length)
 
 
+POLE_SIDE = 0.30  # m: a two-handed pole weapon's rear hand right of the centre line
+
+
+def beside(target, pitch, tip, off=POLE_SIDE):
+    """(grip, "world" rotation) of a pole weapon carried beside the body, not through it: the
+    rear (right) hand `off` m right of the target's line, the shaft pitched `pitch` degrees
+    (90 level, 180 straight down) and turned in about Z so its point, `tip` m along the axis
+    from the grip, lies on `target`. With `off` 0 this is `grip_for` in the centre plane,
+    which runs the shaft through the holder's trunk (clip audit #509, issue #510)."""
+    yaw = math.degrees(math.asin(min(off / (tip * math.sin(math.radians(pitch))), 1.0)))
+    r = (pitch, 0, round(yaw, 3))
+    return grip_for(target, r, tip), r
+
+
 def _r(point, pole=(-0.30, 0.10, -0.30)):
     return (tuple(round(c, 4) for c in point), pole)
 
@@ -559,22 +573,33 @@ def club_strikes(n, tip=CLUB_TIP):
     }
 
 
-def spear_strikes(n, tip=SPEAR_TIP, left_along=0.45):
-    """Spear or pike thrust on foot (`PIKA` natives: DelPik, MayPik, IncPik): two hands on the
-    shaft, `ATTACK_THRUST_MID` (driven forward from the hip) and `ATTACK_THRUST_DOWN` =
-    `ATTACK_DOWN` (point down at a man on the ground). `socket.tip` on the target at frame 2."""
-    level = (88, 0, 0)
+# The trunk turned for a two-handed pole weapon on the right side: the left shoulder leads so
+# the left hand reaches the shaft, the head still faces the enemy.
+POLE_TWIST = {"spine": (4, 0, -12), "spine1": (2, 0, -10), "spine2": (0, 0, -6), "neck": (0, 0, 10), "head": (4, 0, 14)}
+
+
+def spear_strikes(n, tip=SPEAR_TIP, left_along=0.40, off=POLE_SIDE):
+    """Spear, spontoon or pike thrust on foot (`PIKA` natives: DelPik, MayPik, IncPik; the
+    17th-century officers): two hands on the shaft, `ATTACK_THRUST_MID` (driven forward from
+    the hip) and `ATTACK_THRUST_DOWN` = `ATTACK_DOWN` (point down at a man on the ground).
+    `socket.tip` on the target at frame 2. The shaft passes `off` m right of the body
+    (`beside`): the rear hand at the right hip, the left `left_along` m before it."""
 
     def two(base, r_point, r):
         return _blow(base, r_point, r, l_point=add(r_point, axis(r), left_along))
 
-    hit_mid = two(dict(STAND_FREE, spine=(-8, 0, -10), thigh_l=(-20, -3, 0), shin_l=(14, 0, 0)),
-                  grip_for(TARGET_MID, level, tip), level)
-    back = two(dict(STAND_FREE, spine=(0, 0, 12)), add(hit_mid["reach"]["r"][0], (0, 0.38, -0.05)), level)
-    down_r = (130, 0, 0)
-    hit_down = two(dict(STAND_FREE, spine=(-18, 0, -8), thigh_l=(-24, -3, 0), shin_l=(22, 0, 0),
-                        root_loc=(0, -0.08, -0.06)), grip_for(TARGET_DOWN, down_r, tip), down_r)
-    up_down = two(dict(STAND_FREE, spine=(-8, 0, 0)), add(hit_down["reach"]["r"][0], (0, 0.30, 0.22)), (122, 0, 0))
+    grip, level = beside(TARGET_MID, 88, tip, off)
+    hit_mid = two(dict(STAND_FREE, **POLE_TWIST, root_loc=(0, -0.12, -0.05), thigh_l=(-28, -3, 0), shin_l=(24, 0, 0),
+                       thigh_r=(12, 3, 0), shin_r=(6, 0, 0)), grip, level)
+    back = two(dict(STAND_FREE, **POLE_TWIST, root_loc=(0, 0.04, -0.02), thigh_l=(-14, -3, 0), shin_l=(8, 0, 0),
+                    thigh_r=(4, 3, 0)), add(grip, (0, 0.30, -0.03)), level)
+    grip, down_r = beside(TARGET_DOWN, 130, tip, off + 0.10)  # past the bent head and the hat's brim
+    hit_down = two(dict(STAND_FREE, root_loc=(0, -0.55, -0.20), thigh_l=(-60, -3, 0), shin_l=(62, 0, 0), foot_l=(4, 0, 0),
+                        thigh_r=(34, 3, 0), shin_r=(16, 0, 0), foot_r=(-24, 0, 0), spine=(24, 0, -14),
+                        spine1=(10, 0, -10), spine2=(4, 0, -6), neck=(0, 0, 10), head=(10, 0, 14)), grip, down_r)
+    up_down = two(dict(STAND_FREE, **dict(POLE_TWIST, spine=(14, 0, -14), spine1=(6, 0, -12)), root_loc=(0, -0.36, -0.10),
+                       thigh_l=(-40, -3, 0), shin_l=(40, 0, 0), thigh_r=(20, 3, 0), shin_r=(12, 0, 0)),
+                  add(grip, (0, 0.30, 0.18)), (122, 0, down_r[2]))
     return {
         "ATTACK_THRUST_MID": _strike(n, back, hit_mid, back),
         "ATTACK_THRUST_DOWN": _strike(n, up_down, hit_down, up_down),
@@ -704,18 +729,64 @@ def solve(arm_obj, pose):
     return aim._solve(arm_obj, spec, goals, show=pose.get("show"))
 
 
-def apply(arm_obj, name, clip):
-    """Keys `clip` on the armature as action `name`: every pose solved (`solve`), the
-    socket scales of "show" keyed as one-frame steps. Returns the action."""
+def _lerp(a, b, t):
+    return tuple(p + (q - p) * t for p, q in zip(a, b))
+
+
+def _between(arm_obj, p0, s0, p1, s1, t):
+    """The solved spec a share `t` of the way from key pose `p0` (solved: `s0`) to `p1`
+    (`s1`): the angles blended, and every hand that has a "reach" goal in both solved again
+    for the blended goal, so a hand on a shaft stays on it between the keys."""
+    from mathutils import Vector
+
+    from . import aim
     from . import armature as am
 
+    t = t * t * (3.0 - 2.0 * t)
+    spec = {}
+    for k in set(s0) | set(s1):
+        if k in ("world", "world_loc"):
+            a, b = s0.get(k, {}), s1.get(k, {})
+            spec[k] = {n: _lerp(a.get(n, b.get(n)), b.get(n, a.get(n)), t) for n in set(a) | set(b)}
+        else:
+            spec[k] = _lerp(s0.get(k, (0.0, 0.0, 0.0)), s1.get(k, (0.0, 0.0, 0.0)), t)
+    r0, r1 = p0.get("reach") or {}, p1.get("reach") or {}
+    sides = [s for s in ("r", "l") if s in r0 and s in r1]
+    if not sides:
+        return spec
+    am.pose(arm_obj, spec)
+    arm = arm_obj.pose.bones
+    goals = {s: (Vector(_lerp(r0[s][0], r1[s][0], t)), arm[f"upperarm_{s}"].head + Vector(_lerp(r0[s][1], r1[s][1], t)))
+             for s in sides}
+    return aim._solve(arm_obj, spec, goals, show=(p0 if t < 0.5 else p1).get("show"))
+
+
+def solved(arm_obj, clip, dense=False):
+    """[(frame, solved spec)] of `clip`. `dense`: every frame between two keys gets its own
+    key (`_between`); without it the exporter's interpolation of the arm angles carries the
+    hands off a held shaft between the keys (clip audit #509: up to 0.7 m)."""
     cache = {}
     keys = []
     for f, pose in clip:
         k = id(pose)
         if k not in cache:
             cache[k] = solve(arm_obj, pose)
+        if dense and keys and f - keys[-1][0] > 1 and pose is not last:
+            f0, s0 = keys[-1]
+            for g in range(f0 + 1, f):
+                keys.append((g, _between(arm_obj, last, s0, pose, cache[k], (g - f0) / (f - f0))))
         keys.append((f, cache[k]))
+        last = pose
+    return keys
+
+
+def apply(arm_obj, name, clip, dense=False):
+    """Keys `clip` on the armature as action `name`: every pose solved (`solve`; `dense`:
+    every frame, `solved`), the socket scales of "show" keyed as one-frame steps. Returns
+    the action."""
+    from . import armature as am
+
+    keys = solved(arm_obj, clip, dense)
     act = am.add_clip(arm_obj, name, keys)
     shows = [(f, p["show"]) for f, p in clip if p.get("show")]
     if shows:
@@ -736,6 +807,35 @@ def apply(arm_obj, name, clip):
             pb.scale = (1.0, 1.0, 1.0)
         arm_obj.animation_data.action = None
     return act
+
+
+SHOWN = {"socket.hand_r": 1}
+HIDDEN = {"socket.hand_r": 0}
+
+
+def keep_shown(clips, show=SHOWN):
+    """Every pose of `clips` ({name: [(frame, pose)]}, changed in place) keys `show` (a pose's
+    own "show" wins): needed once any clip hides the socket (`apply_crawl`), since a clip
+    that does not key a socket's scale inherits the last one played."""
+    memo = {}
+    for clip in clips.values():
+        for i, (f, p) in enumerate(clip):
+            # (the original is kept alive beside its copy: a freed dict's id is reused)
+            clip[i] = (f, memo.setdefault(id(p), (p, dict(p, show=dict(show, **(p.get("show") or {})))))[1])
+    return clips
+
+
+def apply_crawl(arm_obj, hide=HIDDEN):
+    """Keys the crawl clips with the sockets of `hide` hidden: a pole weapon is dropped with
+    the fall (in the crawling hand it swept through trunk and legs, clip audit #509). The
+    other clips must key it shown (`keep_shown`) and the build reset the scales before
+    export."""
+    from . import crawl
+
+    for clip, keys in crawl.clips().items():
+        k = list(keys)
+        k[0] = (k[0][0], dict(k[0][1], show=dict(hide)))
+        apply(arm_obj, clip, k)
 
 
 # -- finishing blows (docs/melee.md, `finish.py`): the melee builders above also return the

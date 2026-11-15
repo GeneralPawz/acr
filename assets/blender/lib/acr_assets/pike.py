@@ -15,8 +15,9 @@ stockings and shoes), with the period's kit registered here:
 The pikeman holds two pikes, one per hand socket, shown one at a time (the socket's scale,
 `show`): `socket.hand_l` carries the pike gripped near the butt (ordered at the side,
 shouldered on the march, de Gheyn's left-shoulder carry), `socket.hand_r` the pike gripped
-two-thirds down (the charge: the thrust overhand, the butt high behind, so the point lands
-at the game's fencing distance, 1.5 m ahead, and on a man on the ground at 2.0 m).
+two-thirds down (the charge: level at the right side, beside the body, both hands on the
+shaft, so the point lands at the game's fencing distance, 1.5 m ahead, and on a man on the
+ground at 2.0 m).
 `line.make` only knows the musket: the pikeman is built with it, then disarmed (as
 `officers.make`).
 """
@@ -357,53 +358,65 @@ TARGET_MID = cl.TARGET_MID
 TARGET_DOWN = officers.TARGET_DOWN
 
 
-def _two(base, r_point, rot, left_along=0.55, pole=(-0.35, 0.25, -0.25)):
+def _two(base, r_point, rot, left_along=0.45, pole=(-0.35, 0.25, -0.25)):
     p = cl._blow(base, r_point, rot, pole=pole)
     p["reach"]["l"] = _l(cl.add(r_point, cl.axis(rot), left_along), (0.35, 0.0, -0.30))
     p["show"] = SHOW_CHARGE
     return p
 
 
-# The charge, overhand: the right hand at the shoulder, the point down a little.
-LEVEL = (98, 0, 0)
-CHARGE_BASE = dict(cl.STAND_FREE, thigh_l=(-22, -4, 0), shin_l=(16, 0, 0), thigh_r=(10, 4, 0), root_loc=(0, -0.04, -0.03),
-                   spine=(6, 0, -10))
-# The push: a long step, the trunk thrown forward (positive spine X: forward on skeleton H;
-# the shared `clips.STOOP` leans back).
-PUSH_BASE = dict(cl.STAND_FREE, thigh_l=(-50, -4, 0), shin_l=(46, 0, 0), thigh_r=(26, 4, 0), shin_r=(10, 0, 0),
-                 foot_r=(-16, 0, 0), root_loc=(0, -0.26, -0.10), spine=(14, 0, -10), spine1=(6, 0, 0))
-DOWN_BASE = dict(cl.STAND_FREE, **dict(officers.LUNGE_DOWN, root_loc=(0, -0.62, -0.22), spine=(30, 0, -8), spine1=(10, 0, 0),
-                                       spine2=(4, 0, 0), head=(14, 0, 0)))
+# The charge: the pike level at the right side, under the arm at the lower ribs (the right
+# hand `SIDE` m right of the centre line, `clips.beside`), the left hand before it on the
+# shaft, the left shoulder leading. In the centre plane (until #510) the shaft ran through
+# neck and chest. The point lies 1.81 m before the right hand and the target 1.50 m ahead,
+# so the right hand is behind the hip at the hit: the body goes back for the ready and
+# forward with the push.
+SIDE = 0.32
+LEVEL = 92
+TWIST = {"spine": (6, 0, -12), "spine1": (0, 0, -10), "spine2": (0, 0, -6), "neck": (0, 0, 10), "head": (4, 0, 14)}
+CHARGE_BASE = dict(cl.STAND_FREE, **TWIST, thigh_l=(-30, -4, 0), shin_l=(10, 0, 0), thigh_r=(8, 4, 0), shin_r=(14, 0, 0),
+                   root_loc=(0, 0.12, -0.04))
+# The push: the weight onto the front foot, the trunk forward (positive spine X: forward on
+# skeleton H; the shared `clips.STOOP` leans back).
+PUSH_BASE = dict(cl.STAND_FREE, **dict(TWIST, spine=(12, 0, -12)), thigh_l=(-34, -4, 0), shin_l=(34, 0, 0),
+                 thigh_r=(22, 4, 0), shin_r=(4, 0, 0), foot_r=(-12, 0, 0), root_loc=(0, -0.10, -0.08))
+DOWN_BASE = dict(cl.STAND_FREE, **dict(officers.LUNGE_DOWN, root_loc=(0, -0.62, -0.22), spine=(30, 0, -12), spine1=(10, 0, -8),
+                                       spine2=(4, 0, 0), head=(14, 0, 10)))
 
 
 def pike_ready():
-    """The charge (PSTAND): levelled overhand, the hand drawn back."""
-    hit = cl.grip_for(TARGET_MID, LEVEL, PIKE_TIP)
-    return _two(CHARGE_BASE, cl.add(hit, (0, 0.62, 0.05)), LEVEL)
+    """The charge (PSTAND): levelled at the right side, the hand drawn back."""
+    hit, rot = cl.beside(TARGET_MID, LEVEL, PIKE_TIP, SIDE)
+    return _two(CHARGE_BASE, cl.add(hit, (0, 0.26, 0.02)), rot)
 
 
 def pike_thrust():
-    return _two(PUSH_BASE, cl.grip_for(TARGET_MID, LEVEL, PIKE_TIP), LEVEL)
+    hit, rot = cl.beside(TARGET_MID, LEVEL, PIKE_TIP, SIDE)
+    return _two(PUSH_BASE, hit, rot)
 
 
-DOWN = (140, 0, 0)
+DOWN = 140
+SIDE_DOWN = 0.44  # wider: the shaft rises past the bent head and the helmet's brim
 
 
 def pike_down():
-    return _two(DOWN_BASE, cl.grip_for(TARGET_DOWN, DOWN, PIKE_TIP), DOWN, left_along=0.50)
+    hit, rot = cl.beside(TARGET_DOWN, DOWN, PIKE_TIP, SIDE_DOWN)
+    return _two(DOWN_BASE, hit, rot, left_along=0.50)
 
 
 def pike_down_raised():
     hit = pike_down()
-    base = _with(DOWN_BASE, root_loc=(0, -0.30, -0.08), spine=(14, 0, -4), thigh_l=(-40, -3, 0), shin_l=(40, 0, 0),
+    base = _with(DOWN_BASE, root_loc=(0, -0.30, -0.08), spine=(14, 0, -8), thigh_l=(-40, -3, 0), shin_l=(40, 0, 0),
                  thigh_r=(20, 3, 0), shin_r=(14, 0, 0))
-    return _two(base, cl.add(hit["reach"]["r"][0], (0, 0.30, 0.35)), (122, 0, 0), left_along=0.50)
+    return _two(base, cl.add(hit["reach"]["r"][0], (0, 0.30, 0.35)), (122, 0, hit["world"]["socket.hand_r"][2]),
+                left_along=0.50)
 
 
 # Charge for horse: kneeling, the butt set against the right foot, the point raised at a
-# rider's chest.
+# rider's chest; the shaft beside the right hip.
 BRACE = _two(dict(cl.STAND_FREE, root_loc=(0, 0.06, -0.40), thigh_l=(-80, -6, 0), shin_l=(82, 0, 0), thigh_r=(0, 6, 0),
-                  shin_r=(100, 0, 0), foot_r=(30, 0, 0), spine=(10, 0, 0)), (-0.10, -0.10, 0.90), (62, 0, 0), left_along=0.45)
+                  shin_r=(100, 0, 0), foot_r=(30, 0, 0), spine=(10, 0, -12), spine1=(0, 0, -8)), (-0.30, -0.10, 0.90),
+             (62, 0, 8), left_along=0.45)
 
 
 def pike_strikes(n):
@@ -437,9 +450,10 @@ def pikeman_clips(md):
     keyed = {
         "STAND": [(0.0, ORDER)],
         "PSTAND": [(0.0, ready)],
-        "PATTACK": [(0.0, ORDER), (0.45, dict(ORDER, show=SHOW_ORDER)), (0.5, ready), (1.0, ready)],
-        "UATTACK": [(0.0, ready), (0.5, ready), (0.55, ORDER), (1.0, ORDER)],
-        "DEATH": [(f, dict(p, show=SHOW_CHARGE)) for f, p in poses.death_keys(cl.STAND_FREE, lie)],
+        # The pike keeps the corpse's lie through the fall (level, turned out): following the
+        # hand it swung through the right leg.
+        "DEATH": [(f, dict(p, world=dict(p.get("world", {}), **lie["world"]), show=SHOW_CHARGE))
+                  for f, p in poses.death_keys(cl.STAND_FREE, lie)],
         "DEATHLIE1": [(0.0, dict(lie, show=SHOW_CHARGE))],
     }
     for sfx, w in (("", walk), ("0", rwalk)):
@@ -453,6 +467,13 @@ def pikeman_clips(md):
         if key in md or key == "STAND":
             n = cl.md_frames(md[key]) if key in md else 1
             out[key] = cl.frames(n, rig.clip_keys(n, keys))
+    # Port to the charge and back: the pikes change hands between two neighbouring frames
+    # (no frame in between, where the left hand would be half way with its pike upright).
+    for key, a, b in (("PATTACK", ORDER, ready), ("UATTACK", ready, ORDER)):
+        if key in md:
+            n = cl.md_frames(md[key])
+            h = max(n // 2, 1)
+            out[key] = cl.frames(n, [(0, a), (h - 1, a), (h, b), (n - 1, b)])
     if "ATTACK" in md:
         strikes = pike_strikes(cl.md_frames(md["ATTACK"]))
         out.update(strikes)
@@ -469,7 +490,7 @@ def build_pikeman(ctx, s):
     ch.masks()
     clips = pikeman_clips(s["md"])
     for clip, keys in clips.items():
-        cl.apply(ch.arm, clip, keys)
+        cl.apply(ch.arm, clip, keys, dense=True)
     # The crawl: both pikes hidden (dropped with the fall).
     for clip, keys in crawl.clips().items():
         k = list(keys)

@@ -50,8 +50,13 @@ with the `#STAND` sprites (`line`'s `mix`); belts, armour, match and scabbard fi
     left side) and shouldered on the left for the march (MOTION_*);
   - `socket.hand_r`: gripped 3.35 m from the butt (the point 1.81 m beyond the hand): the
     charge (PSTAND, MOTION_*0, the strikes). One grip cannot serve both: ordered, a hand
-    1.3 m up the shaft; in the push, the point must land at the fencing distance (1.5 m)
-    and the butt rides high behind the head (overhand, as the push of pike was fought).
+    1.3 m up the shaft; in the push, the point must land at the fencing distance (1.5 m).
+    Since #510 the charge is carried **beside the body**: level under the right arm at the
+    lower ribs, the right hand 0.32 m right of the centre line (`pike.SIDE`,
+    `clips.beside`; 0.44 m for the thrust down, past the bent head and the helmet's brim),
+    the left hand 0.45 m before it on the shaft, the left shoulder leading (`pike.TWIST`).
+    Until then every charge pose lay in the centre plane and the shaft ran through neck
+    and chest (clip audit #509: 12 clips through the body per pikeman).
   - Every pose-bone scale is reset to 1 before export (the hidden-socket bug); the crawl
     clips hide both pikes.
 
@@ -80,12 +85,20 @@ seated on the surface under it (`line_kit.seat_back`); `acr_decay` on every mate
 |---|---|
 | STAND | pike ordered at the left side |
 | MOTION_L/R/LB/RB | `poses.walk_cycle` with the pike shouldered (left) |
-| PSTAND, MOTION_*0 | the charge: pike levelled overhand, point down 8° |
-| PATTACK / UATTACK | order to charge / back (pikes swap at mid-clip) |
-| ATTACK = ATTACK_THRUST_MID | the push: long step, trunk thrown forward, the point at the chest (1.5 m, 1.15 m) |
+| PSTAND, MOTION_*0 | the charge: pike level (92°) at the right side, both hands on it, the body back on the rear foot |
+| PATTACK / UATTACK | order to charge / back (the pikes swap between two neighbouring frames at mid-clip) |
+| ATTACK = ATTACK_THRUST_MID | the push: the weight onto the front foot, the point 0.26 m forward onto the chest (1.5 m, 1.15 m). The point lies 1.81 m before the right hand, so that hand is behind the hip at the hit |
 | ATTACK_THRUST_DOWN = ATTACK_DOWN | lunge (officers' `LUNGE_DOWN`), trunk over the man, pike 50° down, point at 2.0 m, 0.2 m |
 | BRACE (extra) | charge for horse: kneeling, the pike raised at a rider's chest (not played by the sim yet) |
-| DEATH, DEATHLIE1, crawl | as the line's |
+| DEATH, DEATHLIE1, crawl | as the line's; through the fall the pike keeps the corpse's lie (level, turned out) instead of following the hand through the right leg |
+
+Every frame of every clip is keyed (`clips.apply(..., dense=True)`, `clips.solved`): between
+two keys the hands are solved again for the blended goals, so they stay on the shaft (the
+exporter's interpolation of arm angles carried the left hand up to 0.66 m off it).
+
+Clip audit (#509, `ACR-analysis/clip-audit/pole1/audit.csv` against `2026-11-15`), EngPik and
+FrnPik alike: through the body 12 clips -> 0, touching 1 -> 0, `grip_left` fails 2 -> 0 (worst
+0.658 -> 0.107 m), reach 4 of 4 pass (ATTACK 0.111 -> 0.000 m, ATTACK_DOWN 0.050 -> 0.042 m).
 
 **The shared stoop leans back** (`clips.STOOP`, spine X negative): the family's down thrust
 bends the trunk forward with positive spine X (`DOWN_BASE`, `PUSH_BASE`); `clips.py` is
