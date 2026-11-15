@@ -87,6 +87,8 @@ pub(super) struct Mapping {
     /// The held parts: per slot of an unskinned mesh on a node (a musket, its ramrod, a hat)
     /// the two ends of its long axis in the node's space ([`held_parts`]).
     parts: Vec<(usize, [f32; 3], [f32; 3])>,
+    /// The arms of skeleton H ([`held_arms`]).
+    arms: Vec<Arm>,
     /// An animal's own ragdoll (bones, kinds, total mass, kg); `None` for skeleton H.
     generic: Option<Generic>,
 }
@@ -103,6 +105,19 @@ fn transform_point(m: &Mat4, p: [f32; 3]) -> Vec3 {
         m[0][2] * p[0] + m[1][2] * p[1] + m[2][2] * p[2] + m[3][2],
     )
 }
+
+/// An arm of skeleton H.
+pub(super) struct Arm {
+    /// Clavicle, upper arm, forearm and hand (bones), and the bone the shoulders hang on.
+    bones: [usize; 4],
+    chest: usize,
+    /// The wrist in the bind pose (model space).
+    wrist: [f32; 3],
+}
+
+/// A hand whose wrist is within this (m) of a held part's axis in the clip pose has a grip
+/// on it (the palm is about 0.08 m beyond the wrist, the stock up to 0.05 m thick).
+const GRIP: f32 = 0.16;
 
 /// A held part lies along another when both ends of its axis are within this (m) of the
 /// other's axis: the ramrod in its pipes is 0.02 m under the barrel, 0.03 m off the
@@ -241,7 +256,22 @@ impl Mapping {
             return if animal_model(model) { Mapping::generic(model) } else { None };
         }
         let bind = model.pose(None, 0.0).iter().map(rows_to_mat).collect();
-        Some(Mapping { slot_bone, bind, bone_slot, parts: held_parts(model), generic: None })
+        let rest = model.globals(None, 0.0);
+        let arms = ["_l", "_r"]
+            .into_iter()
+            .filter_map(|side| {
+                let bone = |n: &str| names.iter().position(|b| b.strip_suffix(side) == Some(n));
+                let bones = [bone("clavicle")?, bone("upperarm")?, bone("forearm")?, bone("hand")?];
+                let chest = names.iter().position(|b| *b == "spine2")?;
+                let wrist = match model.slots[bone_slot[bones[3]]] {
+                    Slot::Joint { node, .. } | Slot::Node(node) => {
+                        [rest[node][3][0], rest[node][3][1], rest[node][3][2]]
+                    }
+                };
+                Some(Arm { bones, chest, wrist })
+            })
+            .collect();
+        Some(Mapping { slot_bone, bind, bone_slot, parts: held_parts(model), arms, generic: None })
     }
 
     /// A skeleton-H man (the gait, the reflexes and the knock-down apply).
@@ -417,7 +447,14 @@ impl Mapping {
             model.type_name.as_deref().unwrap_or("?"),
             desc.len()
         );
-        Some(Mapping { slot_bone, bind, bone_slot, parts: Vec::new(), generic: Some(Generic { desc, kinds, mass }) })
+        Some(Mapping {
+            slot_bone,
+            bind,
+            bone_slot,
+            parts: Vec::new(),
+            arms: Vec::new(),
+            generic: Some(Generic { desc, kinds, mass }),
+        })
     }
 }
 
@@ -536,6 +573,8 @@ struct Actor {
     /// What he carries, where the clip has it relative to its bone ([`carried`]): a
     /// survivor's follows his clip, a dying man's stays as it was when the physics took over.
     carried: Carried,
+    /// A survivor's weapon arms as his clip has them on the chest ([`held_arms`]).
+    arms: Carried,
     /// Physics time the corpse began to relax before it is frozen ([`RELAX_S`]).
     relaxed: Option<f32>,
     /// A skeleton-H man; else an animal (no reflexes, steps or knock-downs).
@@ -1226,6 +1265,7 @@ impl Ragdolls {
                     frozen_palette: None,
                     hidden,
                     carried: held,
+                    arms: Vec::new(),
                     relaxed: None,
                     human,
                     mass,
@@ -1327,6 +1367,7 @@ impl Ragdolls {
             let Some(map) = self.maps.get(&a.model).and_then(Option::as_ref) else { continue };
             let clip_pose = d.data.pose(d.clip, d.time);
             a.carried = carried(map, &clip_pose);
+            a.arms = if a.human && a.down.is_none() { held_arms(map, &clip_pose) } else { Vec::new() };
             let mut skins = animated_skins(map, &clip_pose, &d.transform);
             let back = (t / a.recover).clamp(0.0, 1.0);
             if !a.human {
@@ -1537,6 +1578,9 @@ impl Ragdolls {
             let r = &self.pool[a.slot].0;
             let skins: Vec<[[f32; 4]; 4]> = (0..r.len()).map(|b| r.skin_matrix(&self.physics, b)).collect();
             let mut p = palette_of(map, &skins, &d.transform);
+            if !a.dying {
+                carry(map, &mut p, &a.arms);
+            }
             carry(map, &mut p, &a.carried);
             hide(&mut p, &a.hidden);
             self.poses.insert(d.index, p);
@@ -1608,38 +1652,16 @@ pub(super) fn palette_of(map: &Mapping, skins: &[[[f32; 4]; 4]], transform: &Mat
 /// What the clip pose `clip` has on the body bones: each slot that is not a bone's own, with
 /// the bone that carries it and its matrix relative to that bone's slot. [`palette_of`]
 /// alone puts such a slot where the rest pose has it, which threw the ramrod out of its
-/// pipes in every hit reaction (#512); [`carry`] puts it back. (The musket itself still
-/// swings in a reaction: its socket keeps the rest pose, and the physics' arm leaves the
-/// clip's with the first step.) A held part that lies along a longer one in the clip (the stowed ramrod, keyed
+/// pipes in every hit reaction (#512); [`carry`] puts it back. (The weapon itself is kept
+/// by [`held_arms`].) A held part that lies along a longer one in the clip (the stowed ramrod, keyed
 /// on the left hand's socket, along the musket in the right hand: [`ALONG`]) is carried by
 /// that part's bone, so it stays on it when the arms part.
 pub(super) fn carried(map: &Mapping, clip: &Palette) -> Carried {
-    let point = |s: usize, p: [f32; 3]| transform_point(&rows_to_mat(&clip[s]), p);
-    let axes: Vec<(usize, Vec3, Vec3)> = map.parts.iter().map(|&(s, a, b)| (s, point(s, a), point(s, b))).collect();
-    let off = |p: Vec3, a: Vec3, b: Vec3| {
-        let ab = b - a;
-        let t = ((p - a).dot(ab) / ab.dot(ab).max(1e-12)).clamp(0.0, 1.0);
-        (p - (a + ab * t)).length()
-    };
-    // The bone of the longer part slot `s` lies along, if it is held by another bone.
-    let along = |s: usize| {
-        let &(_, a, b) = axes.iter().find(|p| p.0 == s)?;
-        let len = (b - a).length();
-        axes.iter()
-            .filter(|&&(o, c, d)| {
-                map.slot_bone[o] != map.slot_bone[s]
-                    && len > 1e-3
-                    && (d - c).length() > len
-                    && off(a, c, d) < ALONG
-                    && off(b, c, d) < ALONG
-            })
-            .map(|&(o, ..)| map.slot_bone[o])
-            .next()
-    };
+    let axes = part_axes(map, clip);
     let collapsed = |s: usize| clip[s].iter().all(|r| r[..3].iter().all(|v| v.abs() < 1e-6));
     let rel = |s: usize, own: usize| math::mul(&affine_inverse(&rows_to_mat(&clip[own])), &rows_to_mat(&clip[s]));
     let slots = map.slot_bone.len().min(clip.len());
-    let holder = |s: usize| along(s).unwrap_or(map.slot_bone[s]);
+    let holder = |s: usize| holder(map, &axes, s);
     let others = (0..slots).filter_map(|s| {
         let bone = holder(s);
         let own = *map.bone_slot.get(bone)?;
@@ -1649,6 +1671,73 @@ pub(super) fn carried(map: &Mapping, clip: &Palette) -> Carried {
         Some((s, bone, if collapsed(s) { [[0.0; 4]; 4] } else { rel(s, own) }))
     });
     others.collect()
+}
+
+/// The axis of each held part in the clip pose `clip` (model space), by slot; parts the clip
+/// collapsed (hidden gear) are left out.
+fn part_axes(map: &Mapping, clip: &Palette) -> Vec<(usize, Vec3, Vec3)> {
+    map.parts
+        .iter()
+        .filter(|p| p.0 < clip.len())
+        .map(|&(s, a, b)| {
+            let m = rows_to_mat(&clip[s]);
+            (s, transform_point(&m, a), transform_point(&m, b))
+        })
+        .filter(|&(_, a, b)| (b - a).length() > 1e-3)
+        .collect()
+}
+
+/// How far `p` is from the segment `a`-`b`.
+fn off_axis(p: Vec3, a: Vec3, b: Vec3) -> f32 {
+    let ab = b - a;
+    let t = ((p - a).dot(ab) / ab.dot(ab).max(1e-12)).clamp(0.0, 1.0);
+    (p - (a + ab * t)).length()
+}
+
+/// The bone that carries slot `s`: its own, or for a held part that lies along a longer one
+/// held by another bone ([`ALONG`]) that part's.
+fn holder(map: &Mapping, axes: &[(usize, Vec3, Vec3)], s: usize) -> usize {
+    let own = map.slot_bone[s];
+    let Some(&(_, a, b)) = axes.iter().find(|p| p.0 == s) else { return own };
+    axes.iter()
+        .find(|&&(o, c, d)| {
+            map.slot_bone[o] != own
+                && (d - c).length() > (b - a).length()
+                && off_axis(a, c, d) < ALONG
+                && off_axis(b, c, d) < ALONG
+        })
+        .map_or(own, |&(o, ..)| map.slot_bone[o])
+}
+
+/// A survivor does not let go of his weapon: the arms that hold one in the clip pose
+/// `clip`, as [`carry`] entries that put clavicle, upper arm, forearm and hand where the
+/// clip has them relative to the chest. He rocks with trunk, head and legs (the physics),
+/// and musket, pike or spontoon stay where the drill has them and move with the body. The
+/// physics' arm cannot hold the clip's (the elbow is a hinge, the wrist a cone of 60°, the
+/// grips roll the forearm further): it left it with the first step and swung the weapon
+/// (#512). An arm holds when its hand carries a shown held part, or has its wrist within
+/// [`GRIP`] of the axis of one (the left hand on the stock or shaft). An empty arm stays the
+/// physics'. A blow on the holding arm itself does not free it: the physics' arm does not
+/// give, it snaps to its limits (three of the Frenchman's four wounds in the #512 bench
+/// were in his right arm, and each laid his musket level on his shoulder).
+pub(super) fn held_arms(map: &Mapping, clip: &Palette) -> Carried {
+    let axes = part_axes(map, clip);
+    let mut out = Vec::new();
+    for arm in &map.arms {
+        let slots: Vec<usize> = arm.bones.iter().map(|&b| map.bone_slot[b]).collect();
+        let chest = map.bone_slot[arm.chest];
+        if chest >= clip.len() || slots.iter().any(|&s| s >= clip.len()) {
+            continue;
+        }
+        let hand = arm.bones[3];
+        let wrist = transform_point(&rows_to_mat(&clip[slots[3]]), arm.wrist);
+        let holds = axes.iter().any(|&(s, a, b)| holder(map, &axes, s) == hand || off_axis(wrist, a, b) < GRIP);
+        if holds {
+            let from = affine_inverse(&rows_to_mat(&clip[chest]));
+            out.extend(slots.iter().map(|&s| (s, arm.chest, math::mul(&from, &rows_to_mat(&clip[s])))));
+        }
+    }
+    out
 }
 
 /// Puts the slots of `held` ([`carried`]) into `palette` (of [`palette_of`]) where their
@@ -1813,6 +1902,7 @@ mod tests {
             bind: vec![math::IDENTITY; 2],
             bone_slot: vec![0],
             parts: Vec::new(),
+            arms: Vec::new(),
             generic: None,
         };
         let transform = view3d::model_matrix([100.0, 200.0, 30.0], 0.7, 1.0);
@@ -1850,6 +1940,7 @@ mod tests {
             bind: vec![math::IDENTITY; 2],
             bone_slot: vec![0],
             parts: Vec::new(),
+            arms: Vec::new(),
             generic: None,
         };
         let transform = view3d::model_matrix([100.0, 200.0, 30.0], 0.7, 1.0);
@@ -1889,6 +1980,7 @@ mod tests {
             bind: vec![math::IDENTITY; 4],
             bone_slot: vec![0, 1],
             parts: vec![(2, [0.0, 0.0, 0.0], [0.0, 1.4, 0.0]), (3, [0.0, 0.0, 0.0], [0.0, 0.9, 0.0])],
+            arms: Vec::new(),
             generic: None,
         };
         let transform = view3d::model_matrix([100.0, 200.0, 30.0], 0.7, 1.0);
@@ -1912,6 +2004,54 @@ mod tests {
         // Past the muzzle (ramming): not along it.
         let ramming: Palette = vec![hands[0], hands[1], stowed[2], rows(shifted(0.2, 1.9, 0.0))];
         assert_eq!(carried(&map, &ramming).iter().find(|c| c.0 == 3).map(|c| c.1), Some(1));
+    }
+
+    #[test]
+    fn a_survivors_weapon_arms_keep_the_clip_on_the_chest() {
+        // Bones and their slots: 0 the chest, 1-4 the right arm (clavicle to hand), 5-8 the
+        // left arm. Slot 9: a musket of 1.4 m on the right hand, along +y from it.
+        let arm = |first: usize| Arm { bones: [first, first + 1, first + 2, first + 3], chest: 0, wrist: [0.0; 3] };
+        let map = Mapping {
+            slot_bone: vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 4],
+            bind: vec![math::IDENTITY; 10],
+            bone_slot: (0..9).collect(),
+            parts: vec![(9, [0.0, 0.0, 0.0], [0.0, 1.4, 0.0])],
+            arms: vec![arm(1), arm(5)],
+            generic: None,
+        };
+        let rows = |m: Mat4| math::affine_rows(&m);
+        let pose = |left_hand: Mat4| -> Palette {
+            let mut p: Palette = (0..10).map(|i| rows(shifted(0.1 * i as f32, 1.0, 0.0))).collect();
+            p[9] = p[4];
+            p[8] = rows(left_hand);
+            p
+        };
+        // The left hand hangs 0.5 m from the musket: only the right arm holds.
+        let clip = pose(shifted(-0.1, 1.0, 0.0));
+        let arms = held_arms(&map, &clip);
+        assert_eq!(arms.iter().map(|c| (c.0, c.1)).collect::<Vec<_>>(), vec![(1, 0), (2, 0), (3, 0), (4, 0)]);
+        // The physics: the chest rocks (turned a quarter about z, moved), the arms anywhere.
+        let rock: Mat4 = [[0.0, 1.0, 0.0, 0.0], [-1.0, 0.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0], [0.3, 0.1, 0.0, 1.0]];
+        let wild = rows(shifted(5.0, 5.0, 5.0));
+        let mut p: Palette = vec![wild; 10];
+        p[0] = rows(math::mul(&rock, &rows_to_mat(&clip[0])));
+        carry(&map, &mut p, &arms);
+        carry(&map, &mut p, &carried(&map, &clip));
+        let same = |a: &[[f32; 4]; 3], b: &[[f32; 4]; 3]| {
+            a.iter().flatten().zip(b.iter().flatten()).all(|(x, y)| (x - y).abs() < 1e-4)
+        };
+        for s in [1, 2, 3, 4, 9] {
+            let want = rows(math::mul(&rock, &rows_to_mat(&clip[s])));
+            assert!(same(&p[s], &want), "slot {s} rocks with the chest: {:?} against {want:?}", p[s]);
+        }
+        assert!((5..9).all(|s| same(&p[s], &wild)), "the empty arm is the physics'");
+        // Both hands on the musket (the left wrist 0.05 m off its axis): both arms hold.
+        let both = pose(shifted(0.45, 1.6, 0.0));
+        assert_eq!(held_arms(&map, &both).iter().map(|c| c.0).collect::<Vec<_>>(), (1..9).collect::<Vec<_>>());
+        // A weapon the clip hides (collapsed) is not held.
+        let mut hidden = clip.clone();
+        hidden[9] = [[0.0; 4]; 3];
+        assert!(held_arms(&map, &hidden).is_empty());
     }
 
     #[test]
