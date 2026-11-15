@@ -151,6 +151,77 @@ pub fn strike_distance(t: &crate::catalog::ObjectType, victim_add: i32) -> Optio
     })
 }
 
+/// The strike stance (#511, `docs/melee.md`, The strike stance): the distance (world px,
+/// centre to centre, the true distance) a man on foot strikes a standing enemy from under
+/// the hit-locations rule, unless his type has an entry in [`STANCES`]: 1.67 m, the target
+/// every strike clip of the 3D models is solved for.
+pub const STRIKE_STANCE: i32 = 50;
+/// Stances per type that differ from [`STRIKE_STANCE`]: the type id (`EngPik(EN)`) or the
+/// `.MD` name (`EngPik`, every nation's member of it), any case, and the distance in px.
+pub const STANCES: &[(&str, i32)] = &[];
+/// How near (px) to his stance he must be before the blow starts.
+pub const STRIKE_TOL: i32 = 4;
+/// What a man spends at most on reaching his stance between two blows: a step costs
+/// [`STANCE_STEP_COST`], a decision spent waiting for his opponent to step 1. After that he
+/// strikes from where he is, as the original does.
+pub const STANCE_PATIENCE: u8 = 48;
+pub const STANCE_STEP_COST: u8 = 12;
+
+/// The strike stance of type `t` against a standing victim whose type has `ADDSHOTRADIUS`
+/// `victim_add`: its entry in [`STANCES`] or [`STRIKE_STANCE`], plus `victim_add`; at least
+/// [`STRIKE_TOL`] above the melee index's `ATTACK_RADIUS` min and below its reach (the blow
+/// starts only when `min <= distance < reach`). `None` for a type without a melee attack or
+/// whose min is above the stance: it keeps the original's distances.
+pub fn strike_stance(t: &crate::catalog::ObjectType, victim_add: i32) -> Option<i32> {
+    let sd = strike_distance(t, victim_add)?;
+    let want = STANCES
+        .iter()
+        .find(|(n, _)| n.eq_ignore_ascii_case(&t.id) || n.eq_ignore_ascii_case(&t.md_name))
+        .map_or(STRIKE_STANCE, |e| e.1)
+        + victim_add;
+    (want >= sd.min && sd.reach > sd.min).then(|| want.max(sd.min + STRIKE_TOL).min(sd.reach - 1).max(sd.min))
+}
+
+/// Whether `i` is a man who takes a strike stance at all: on foot, on his feet, no beast,
+/// no building, not standing ground.
+pub fn takes_stance(w: &World, i: usize) -> bool {
+    let u = &w.units[i];
+    w.rules.hit_locations
+        && u.alive
+        && !u.building
+        && !u.stand_ground
+        && !on_ground(&u.body)
+        && !rides(w, i)
+        && crate::body::Beast::of(&w.catalog.get(u.kind).md_name).is_none()
+}
+
+/// Whether `j`, attacked by `i`, is himself stepping to his stance against `i` (he attacks
+/// `i`, takes a stance, has one against `i`'s type and patience left): of two such men the
+/// one with the lower unit index steps and the other waits for him.
+pub fn steps_to_stance(w: &World, j: usize, i: usize) -> bool {
+    let (v, u) = (&w.units[j], &w.units[i]);
+    takes_stance(w, j)
+        && v.body.stance_steps < STANCE_PATIENCE
+        && matches!(v.orders.last(), Some(crate::world::Order::Attack { target, .. }) if *target == u.id)
+        && strike_stance(w.catalog.get(v.kind), w.catalog.get(u.kind).add_shot_radius).is_some()
+        && in_slot_after(w, j, v.pos)
+}
+
+/// Body spacing and formations: whether the brigade member `i` may stand at `to` (1/16 px).
+/// A man within one walking step of his slot does not leave it by more than that step; one
+/// who is already further out (he left the line to fight) and a man without a brigade are
+/// free.
+pub fn in_slot_after(w: &World, i: usize, to: crate::fixed::Pos) -> bool {
+    let u = &w.units[i];
+    let Some(br) = u.brigade.and_then(|b| w.brigades.get(usize::from(b))) else { return true };
+    let Some(m) = br.members.iter().position(|m| *m == Some(u.id)) else { return true };
+    let Some(&(sx, sy)) = br.slots.get(m) else { return true };
+    let slot = crate::fixed::Pos::from_pixels(sx, sy);
+    let step = crate::motion::stride(w.catalog.get(u.kind), 0);
+    let far = |p: crate::fixed::Pos| crate::trig::norma(p.x - slot.x, p.y - slot.y) > step;
+    far(u.pos) || !far(to)
+}
+
 /// A foot soldier closes in to this distance (world pixels, ~0.9 m at 30 px/m) to finish a
 /// man on the ground, instead of striking from his weapon's reach (~2 m): he stands over
 /// him. Riders keep their reach (they strike down from the saddle).

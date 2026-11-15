@@ -78,6 +78,63 @@ A man on the ground is helpless: one blow ends him.
   frame) and strikes; no minimum attack range holds him off (`combat::stands_over`). Both
   sides blocked: the old way, straight in to `melee::FINISH_REACH` (27 px). Riders keep
   their reach. A unit standing ground does not step; he strikes from `FINISH_REACH`.
+- **The strike stance (#511: a standing enemy).** The same idea for an enemy on his feet.
+  The original (`AttackObjLink` 0x51bcaf, step (D)) starts a blow anywhere in the band
+  `ATTACK_RADIUS` min ≤ distance < reach, so the distance depends on where the man came from
+  (EngM18 55–80 px, EngPik 75–100 px), while every strike clip is solved for a man 1.67 m
+  (50 px) off. Under the rule a **man on foot** (no rider, no beast, no building, no gun;
+  `melee::takes_stance`) whose melee index is about to strike a unit that is not on the
+  ground and not a building strikes from his **strike stance** (`combat::attack_link_aim`,
+  step (D), before the original's in-range branch):
+  - **The distance:** `melee::strike_stance(type, victim's ADDSHOTRADIUS)`: the type's entry
+    in the table `melee::STANCES` (type id `EngPik(EN)` or `.MD` name `EngPik`, px), else
+    `STRIKE_STANCE` = 50 px, plus the victim's `ADDSHOTRADIUS`; at least `STRIKE_TOL` above
+    the index's `ATTACK_RADIUS` min and below the reach. The table is empty: everyone has 50
+    px until the pikemen's clips are rebuilt for a longer reach. It is the **true** distance
+    (an integer square root, 1/16 px), not `trig::norma`, which is up to 12 % long between
+    the axes.
+  - **A min above the stance** keeps the original's distances (`strike_stance` is `None`):
+    on the 1.46 data `EngTap`, `EngTapDragon` and `FrnBuk` (`ATTACK_RADIUS 60 80`). Every
+    other type with a melee index has the default (the animal `AnmOlns`, reach 1 px,
+    takes no stance at all).
+  - **The approach:** inside the original's band but more than `STRIKE_TOL` (4 px) off the
+    stance he does not start the blow: he turns to the enemy (by `ROTATE`, as before a
+    blow), then takes one step towards him, or backwards facing him when he is too near,
+    with `motion::step_rate` (the original's single step 0x50e4b2 with `TryToMove`'s rate:
+    the step is scaled to the gap in sixteenths of a walking cycle, at most one cycle; a
+    taken or blocked cell makes him stand instead). At the end of that animation he decides
+    again. Outside the band nothing changes: he walks up or backs off as in the original.
+  - **Bounded** (`Body::stance_steps`, hashed only while not 0): a step costs
+    `STANCE_STEP_COST` (12), a decision spent waiting 1; at `STANCE_PATIENCE` (48: four
+    steps) he strikes from where he is, as long as the original's condition holds. The
+    count returns to 0 when a blow starts and when he walks after an enemy out of reach. So
+    an enemy who keeps moving is struck after at most four steps, from the old band.
+  - **Two men at each other:** only one steps. When the victim is himself coming to his
+    stance against the attacker (`melee::steps_to_stance`: his order is an attack on him, he
+    takes a stance, has patience left), the man with the **lower unit index** steps the
+    whole gap and the other waits, facing him, and strikes when the gap is right (or his
+    patience is used up). Nobody is pushed; with equal stances both end at 50 px. With
+    different stances (a later table entry) the lower index gets his and the other strikes
+    from there after his patience.
+  - **Standing ground:** he does not step; he strikes from where he is (the original's
+    band), as in the finishing rule.
+  - **Formations and body spacing:** a brigade member within one walking cycle of his slot
+    (`Brigade::slots`) takes the step only if it leaves him within one cycle of it
+    (`melee::in_slot_after`); otherwise he strikes from where he is. A member already
+    further out (he left the line to fight) and a man without a brigade are free. The
+    stance (50 px) is far outside the bodies of the body-spacing rule (18 px), so that rule
+    never pushes a man out of it.
+  - The active-frame check (step (A)) is unchanged. No `rando()` beyond those of the steps
+    themselves (`TryToMove`/`TryToStand`), nothing with the rule off.
+  - Tests (`tests/melee.rs`): `a_foot_attacker_strikes_from_his_stance` (7 directions × 6
+    starting distances: 50 px ± 5; without the rule the band),
+    `two_men_at_each_other_both_stand_at_the_stance`,
+    `standing_ground_and_riders_keep_their_distance`,
+    `the_stance_is_deterministic_and_off_without_the_rule`. On the real data
+    (`acr-game`, ignored test `the_first_blow_comes_from_the_stance`, the inspector's scene:
+    a standing FrnM18/EngM18 110 px off at direction 32, first blow, centre to centre):
+    EngPik 85.6 → 52.3 px, EngM18 60.8 → 52.3, EngOf17 60.8 → 52.3, DelPik 70.0 → 53.0,
+    IroTam (melee only) 53.7 → 53.7 (he arrives inside the tolerance).
 - **The body's axis in the sim.** A man on the ground lies along his facing (`Unit::dir`):
   the feet behind his ground point, the hips ~0.4 m and the head ~1.05 m ahead (the crawl
   clips' prone root, `poses.lie_prone`; WRITHE lies the same way on his back). So the sim
@@ -92,7 +149,7 @@ A man on the ground is helpless: one blow ends him.
 - Tests (`tests/melee.rs`): `one_finishing_blow_kills_a_crawler_from_close` (one blow kills a
   crawler with 5000 life, struck from ≤ 30 px), `finishing_vitals_by_kind` (and the lancer
   keeps his reach), `a_standing_duel_is_unchanged` (no finishing flag, struck from the
-  pike's reach), `rule_off_no_strikes_and_crawlers_untouched` and the pinned hashes.
+  strike stance), `rule_off_no_strikes_and_crawlers_untouched` and the pinned hashes.
 
 ## 3. Strike kinds
 
@@ -364,6 +421,12 @@ point); without the variables it does nothing.
   The blow lands at the active frame when the distance is at most `ATTACK_RADIUS` max +
   `ADDRADIUS` (step (A)). A man on the ground is finished from `FINISH_REACH` (27 px, the
   finishing clips' 0.9 m; hit-locations rule, on foot); riders keep their reach.
+  - **With the hit-locations rule a man on foot does not use the band:** he steps to his
+    strike stance (`melee::strike_stance`, 50 px = 1.67 m for every type now, the distance
+    the clips are solved for) and strikes from there within 4 px (2a, "The strike stance").
+    The band above and `melee_distance.json` describe the original rule: riders, men
+    standing ground, the three types whose min is above the stance, and everyone with the
+    rule off.
   - **The table:** `assets/blender/data/melee_distance.json`: type id without the nation →
     `distance` (the middle), `nearest`, `reach` in metres, for the Blender pipeline and the
     clip audit. Generated and checked by the ignored test `the_melee_table_matches`

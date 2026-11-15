@@ -555,6 +555,9 @@ to play. It is the tool for spotting wrong poses, clips and gear. It starts the 
 field on a dark backdrop (`ground` `dark`) with a third view of the editor's window; the switch
 in the title row ("Einheiten") leads to the unit list, the way back is the main menu.
 
+The inspector's game always runs with the hit-locations rule (strike kinds, finishing blows,
+the strike stance: docs/melee.md), whatever the setting says: the clips are made for it.
+
 **The picture.** While the inspector is on, units are drawn as 3D models and the weather is off
 whatever the settings say (`ThreeD::studio`), and the free camera is on (20 degrees down at the
 start). Each scene is fitted once: the zoom at which the unit's height (62 px on foot, 92 px

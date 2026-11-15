@@ -984,4 +984,60 @@ mod tests {
         let committed = std::fs::read_to_string(&path).expect("assets/blender/data/melee_distance.json");
         assert_eq!(committed, table, "regenerate with ACR_MELEE_TABLE=write");
     }
+
+    /// The strike stance (#511) in the inspector's scene on the real data: a man on foot
+    /// against a standing man 110 px off at direction 32. Without the rule the first blow
+    /// comes from the original's band, with `hit_locations` from the stance. Prints the
+    /// distances and the types whose `ATTACK_RADIUS` min is above the stance.
+    #[test]
+    #[ignore = "needs the original game files (ACR_GAME_DIR)"]
+    fn the_first_blow_comes_from_the_stance() {
+        use acr_sim::melee::{STRIKE_TOL, strike_distance, strike_stance};
+        let first = |md: &str, rule: bool| {
+            let mut w = world();
+            w.rules.hit_locations = rule;
+            let id = w.catalog.iter().find(|(_, t)| t.md_name.eq_ignore_ascii_case(md)).map(|(_, t)| t.id.clone());
+            let id = id.unwrap_or_else(|| panic!("no type {md}"));
+            let mut e = Editor::default();
+            e.inspect_show(&mut w, &id, Enemy::Foot, (false, false), 32);
+            let t = e.inspect.target.unwrap().0;
+            // The blade, not a thrown tomahawk.
+            w.units[e.inspect.subject.unwrap().0 as usize].melee_only = true;
+            for _ in 0..1500 {
+                let cmds = e.before_step(&mut w);
+                w.step(&cmds);
+                if let Some(h) = w.hits.iter().find(|h| h.victim == t) {
+                    return (id, (h.dir.0 as f32).hypot(h.dir.1 as f32));
+                }
+            }
+            panic!("{md} never struck");
+        };
+        let w = world();
+        let man = find(&w, FOOT[0]).map_or(0, |k| w.catalog.get(k).add_shot_radius);
+        for md in ["EngPik", "EngM18", "EngOf17", "DelPik", "IroTam"] {
+            let (id, off) = first(md, false);
+            let (_, on) = first(md, true);
+            let k = find(&w, &id).unwrap();
+            let want = strike_stance(w.catalog.get(k), man).expect("a stance");
+            println!("STANCE {id}: first blow from {off:.1} px without the rule, {on:.1} px with it (stance {want})");
+            assert!((on - want as f32).abs() <= STRIKE_TOL as f32 + 1.5, "{id}: {on} px, stance {want}");
+        }
+        let mut above: Vec<String> = Vec::new();
+        for (_, t) in w.catalog.iter().filter(|(_, t)| !t.building) {
+            if let Some(d) = strike_distance(t, man)
+                && strike_stance(t, man).is_none_or(|s| s != acr_sim::melee::STRIKE_STANCE + man)
+            {
+                above.push(format!(
+                    "{} (min {}, reach {}, stance {:?})",
+                    t.md_name,
+                    d.min,
+                    d.reach,
+                    strike_stance(t, man)
+                ));
+            }
+        }
+        above.sort();
+        above.dedup();
+        println!("STANCE not at the default ({}): {}", above.len(), above.join("; "));
+    }
 }

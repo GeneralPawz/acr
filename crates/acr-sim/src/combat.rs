@@ -694,6 +694,58 @@ pub fn attack_link_aim(w: &mut World, i: usize, aim: Aim, prio: u8) {
         // holds him off.
         (reach, min) = if off { (reach.min(close), 0) } else { (reach.max(dst_c + 1), 0) };
     }
+    // Hit-locations rule (#511, not in the original): a man on foot strikes a standing enemy
+    // from his strike stance (`melee::strike_stance`, `docs/melee.md`, The strike stance).
+    // Inside the original's band but off the stance he steps in or back out, facing the
+    // enemy, instead of starting the blow; with his patience used up he strikes as before.
+    if let Aim::Unit(j) = aim
+        && dst >= min
+        && dst_c < reach
+        && a.weapon.is_none()
+        && gun.is_none()
+        && !e_bld
+        && !complex
+        && crate::melee::takes_stance(w, i)
+        && !crate::melee::on_ground(&w.units[j].body)
+        && w.units[i].body.stance_steps < crate::melee::STANCE_PATIENCE
+        && crate::melee::strike_distance(t, e_add).is_some_and(|sd| sd.index == k)
+        && let Some(want) = crate::melee::strike_stance(t, e_add)
+    {
+        let want = want.min(reach - 1).max(min);
+        // The true distance (1/16 px): `norma` is up to 12 % long between the axes.
+        let true16 = (i64::from(dx) * i64::from(dx) + i64::from(dy) * i64::from(dy)).isqrt() as i32;
+        let off = true16 - (want << 4);
+        if off.abs() > crate::melee::STRIKE_TOL << 4 {
+            let back = off < 0;
+            let md = if back { en_dir.wrapping_add(128) } else { en_dir };
+            let stride = crate::motion::stride(t, md).max(1);
+            let rate = ((off.abs() * 16 + stride / 2) / stride).clamp(1, 16);
+            let len = off.abs().min(stride);
+            let u = &w.units[i];
+            let to = Pos::new(u.pos.x + crate::trig::cos(md) * len / 256, u.pos.y + crate::trig::sin(md) * len / 256);
+            if crate::melee::in_slot_after(w, i, to) {
+                let waits = j < i && crate::melee::steps_to_stance(w, j, i);
+                let u = &mut w.units[i];
+                let ddir = en_dir.wrapping_sub(u.dir) as i8;
+                let mrot = t.rotate;
+                if i32::from(ddir).abs() >= (mrot + mrot / 2).min(16) {
+                    let r = mrot as u8;
+                    u.dir = if ddir > 0 { u.dir.wrapping_add(r) } else { u.dir.wrapping_sub(r) };
+                } else if waits {
+                    // Two men at each other: the one with the lower index steps, this one
+                    // waits for him, facing him.
+                    u.dir = en_dir;
+                    u.body.stance_steps += 1;
+                } else {
+                    if u.local_stance == u.stance {
+                        u.body.stance_steps = u.body.stance_steps.saturating_add(crate::melee::STANCE_STEP_COST);
+                    }
+                    crate::motion::step_rate(w, i, en_dir, back, rate);
+                }
+                return;
+            }
+        }
+    }
     let u = &mut w.units[i];
     if dst >= min && dst_c < reach {
         let mut ddir = en_dir.wrapping_sub(u.dir) as i8;
@@ -763,6 +815,8 @@ pub fn attack_link_aim(w: &mut World, i: usize, aim: Aim, prio: u8) {
                     set_anim(u, t, kind);
                     u.frame = 0;
                     u.in_motion = false;
+                    // The strike stance: the next blow has its patience again.
+                    u.body.stance_steps = 0;
                 }
             } else {
                 u.stance = (k + 1) as u8;
@@ -797,6 +851,7 @@ pub fn attack_link_aim(w: &mut World, i: usize, aim: Aim, prio: u8) {
         let m = if t.medium == crate::catalog::Medium::Water { &w.map.water } else { &w.map.land };
         let ecell = Unit::cell_of(e_pos, w.units[i].lx);
         let u = &mut w.units[i];
+        u.body.stance_steps = 0;
         let mover = Mover::of(u, t);
         if let Some((x, y)) = create_path(m, mover, &mut u.path, &mut w.random, ecell.0, ecell.1, t.stop_distance) {
             u.dest = Some(Pos::new(x, y));

@@ -132,6 +132,10 @@ pub struct Body {
     pub seep: u8,
     /// Seconds the fragment wounds still bleed (counted down by `crate::wounds::bleed`).
     pub seep_s: u8,
+    /// The strike stance (`crate::melee::strike_stance`): the patience a man has used up
+    /// stepping to it or waiting for his opponent to, since his last blow
+    /// ([`crate::melee::STANCE_PATIENCE`]); 0 otherwise.
+    pub stance_steps: u8,
 }
 
 impl Hash for Body {
@@ -154,6 +158,9 @@ impl Hash for Body {
             }
             if self.flee != 0 {
                 self.flee.hash(state);
+            }
+            if self.stance_steps != 0 {
+                self.stance_steps.hash(state);
             }
         }
     }

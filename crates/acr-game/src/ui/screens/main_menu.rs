@@ -253,6 +253,8 @@ fn editor_setup(inspector: bool) -> crate::ui::GameSetup {
         }),
         players: vec![player(0, b"Spieler 1"), player(1, b"Spieler 2")],
         local_player: 0,
-        rules: Default::default(),
+        // The inspector always plays with hit locations: the strike kinds, the finishing blows
+        // and the strike stance its clips are made for exist only under that rule.
+        rules: acr_sim::Rules { hit_locations: inspector, ..Default::default() },
     }
 }
