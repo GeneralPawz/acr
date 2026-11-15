@@ -27,8 +27,15 @@ MD = {
 }
 
 
-def spec():
-    return pike.pikeman_spec(MD, palette={"coat": (0.74, 0.72, 0.66), "breeches": (0.20, 0.24, 0.42), "gaiters": (0.55, 0.12, 0.10)}, hat="pike_morion")
+# The buff leather doublet traced from Waugh's Diagram IX, as EngPik (ACR_SOURCES/patterns): the
+# drafted buff coat's long skirts did not close over the full breeches (#523; 155 of 187
+# pairs welded, the breeches through the skirts in the walk).
+COAT_PATTERN = "waugh/buffcoat_1640"
+
+
+def spec(coat_pattern=COAT_PATTERN):
+    return pike.pikeman_spec(MD, palette={"coat": (0.74, 0.72, 0.66), "breeches": (0.20, 0.24, 0.42), "gaiters": (0.55, 0.12, 0.10)}, hat="pike_morion",
+                             coat_pattern=coat_pattern)
 
 
 def make(root, name, build=None):

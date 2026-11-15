@@ -734,9 +734,10 @@ def simulate(obj, settings, sew=(), frames=None):
     return dt, gaps
 
 
-def weld(obj, sew, limit=0.02, limits=None):
+def weld(obj, sew, limit=0.02, limits=None, fixed=()):
     """Merges the sewn vertex pairs that met (within `limit`, or `limits[i]` per pair, the
-    seam's `close`); drops the sewing edges."""
+    seam's `close`); drops the sewing edges. A group with `fixed` (pinned) vertices merges
+    at their mean, so a pinned band's seam stays the level ring it was placed as."""
     parent = {}
 
     def find(x):
@@ -759,7 +760,8 @@ def weld(obj, sew, limit=0.02, limits=None):
     tmap = {}
     for r, vs in groups.items():
         if len(vs) > 1:
-            c = sum((bm.verts[i].co for i in vs), Vector()) / len(vs)
+            at = [i for i in vs if i in fixed] or vs
+            c = sum((bm.verts[i].co for i in at), Vector()) / len(at)
             bm.verts[r].co = c
             for i in vs:
                 if i != r:
@@ -1122,6 +1124,16 @@ def finish(obj, ch, skirt, weights=None, under=(), cloth=None):
     else:
         ws = transfer_weights(obj, ch.flesh, ch.arm, under=under)
         cl = [0.0] * len(ws)
+        side = obj.data.attributes.get("_side")
+        if side is not None:
+            # Full breeches: the inside of one leg lies nearer the other thigh's skin than its
+            # own, and took its weights (spikes between the legs in the walk).
+            for v, w, sd in zip(obj.data.vertices, ws, [d.value for d in side.data]):
+                if sd and abs(v.co.x) > 0.002:
+                    off, own = ("_r", "_l") if sd > 0 else ("_l", "_r")
+                    for b in [b for b in w if b.endswith(off) and b[len(P):-2] in ("thigh", "shin", "foot")]:
+                        w[b[:-2] + own] = w.get(b[:-2] + own, 0.0) + w.pop(b)
+            obj.data.attributes.remove(side)
     groups = {}
     bones = [P + b for b in rig.BODY_BONES] + [P + f"skirt_{c[0]}_0{k}" for c in rig.SKIRT_COLUMNS for k in (1, 2)]
     bones = [b for b in bones if b in ch.arm.data.bones]
@@ -1144,6 +1156,105 @@ def finish(obj, ch, skirt, weights=None, under=(), cloth=None):
     for p in obj.data.polygons:
         p.use_smooth = True
     return am.bind(obj, ch.arm)
+
+
+def pleat(obj, panels, names, spec):
+    """Regular gathers laid into the draped surface (docs/clothing.md "Pleats"): on the
+    panels `spec["panels"]`, between the edges `spec["edges"]` (u at each height), `n` folds
+    per panel fan out from the gathered bottom edge: `band` m deep there (fading over
+    `band_reach` m up the panel), `waist` m under the top edge, `mid` m between as the
+    hanging vertical folds. The folds only stand outwards (nothing sinks into the layer
+    below). The cloth sim at this mesh size gives dents, not gathers."""
+    me = obj.data
+    # Each leg on its own side: without self-collision the full legs sink into each other
+    # between the thighs, and took the other thigh's weights (spikes in the walk).
+    centre = {i for e in me.edges if len({me.attributes["_side"].data[i].value for i in e.vertices}) > 1
+              for i in e.vertices}  # the centre seams join the two sides
+    for v, d in zip(me.vertices, me.attributes["_side"].data):
+        if d.value * v.co.x < 0.003 and d.value and v.index not in centre:
+            v.co.x = 0.003 * d.value
+    me.update()
+    pu = [d.value for d in me.attributes["_pu"].data]
+    pv = [d.value for d in me.attributes["_pv"].data]
+    lay = [d.value for d in me.attributes["panel"].data]
+    e0, e1 = spec["edges"]
+    disp = {}
+    ks = {names.index(nm) for nm in spec["panels"]}
+    # The seams to the bands stay where they were sewn (a level ring at the knee band).
+    held = {i for poly in me.polygons if lay[poly.index] not in ks for i in poly.vertices}
+    for nm in spec["panels"]:
+        pnl = panels[nm]
+        _u0, v0, _u1, v1 = pnl.bounds()
+        k = names.index(nm)
+        for poly in me.polygons:
+            if lay[poly.index] != k:
+                continue
+            for i in poly.vertices:
+                if i in disp or i in held:
+                    continue
+                v = pv[i]
+                a, b = pnl.u_on(e0, v), pnl.u_on(e1, v)
+                f = (pu[i] - a) / (b - a) if abs(b - a) > 1e-6 else 0.0
+                amp = (spec["band"] * math.exp(-max(v - v0, 0.0) / (100.0 * spec["band_reach"]))
+                       + spec["mid"] * min(1.0, max(v1 - v, 0.0) / 30.0)
+                       + spec["waist"] * math.exp(-max(v1 - v, 0.0) / (100.0 * spec["waist_reach"])))
+                # None next to the first edge (the inseam: the legs must not grow into each other).
+                disp[i] = amp * gm.pleat_wave(f, spec["n"]) * min(1.0, max(0.0, f) / 0.2)
+    me.attributes.remove(me.attributes["_pu"])
+    me.attributes.remove(me.attributes["_pv"])
+    nrm = [v.normal.copy() for v in me.vertices]
+    for i, d in disp.items():
+        me.vertices[i].co += nrm[i] * d
+    me.update()
+
+
+def sleeve_shape(obj, ch, spec):
+    """A 17th-century sleeve cut into the draped tube (docs/clothing.md "Sleeves"): the
+    mesh subdivided `cuts` times, fuller round the upper arm (`full` m), a point at the
+    elbow (`elbow` m), crease folds on the inside of the bend (`crease` m deep, `pitch` m
+    apart), and the last `cuff` m before the wrist edge turned back as a ring `turn` m proud."""
+    bm = bmesh.new()
+    bm.from_mesh(obj.data)
+    if spec.get("cuts"):
+        bmesh.ops.subdivide_edges(bm, edges=list(bm.edges), cuts=spec["cuts"], use_grid_fill=True)
+        inner = [v for v in bm.verts if not v.is_boundary]
+        for _ in range(6):  # the coarse drape's facets rounded off
+            bmesh.ops.smooth_vert(bm, verts=inner, factor=0.5, use_axis_x=True, use_axis_y=True, use_axis_z=True)
+    seg = am.segments(ch.arm)
+    front = Vector((0.0, -1.0, 0.0))
+    for side in "lr":
+        sh, el = seg[ch.prefix + f"upperarm_{side}"]
+        _e, wr = seg[ch.prefix + f"forearm_{side}"]
+        au, af = (el - sh).normalized(), (wr - el).normalized()
+        lu = (el - sh).length
+        vs = [v for v in bm.verts if (v.co.x > 0) == (side == "l")]
+        if not vs:
+            continue
+        end = max((v.co - el) @ af for v in vs)  # the sleeve's wrist edge
+        for v in vs:
+            s = (v.co - el) @ af
+            t = (v.co - sh) @ au
+            if s > 0:
+                foot, ax = el + af * s, af
+            else:
+                foot, ax = sh + au * min(max(t, 0.0), lu), au
+            rad = v.co - foot
+            rad -= ax * (rad @ ax)
+            if rad.length < 1e-5:
+                continue
+            rad.normalize()
+            d = 0.0
+            if s <= 0:
+                d += spec["full"] * math.exp(-((t / lu - 0.45) / 0.28) ** 2)
+            inside = max(0.0, rad @ front)
+            d += spec["elbow"] * math.exp(-(s / 0.045) ** 2) * max(0.0, -(rad @ front))
+            d += spec["crease"] * math.exp(-(s / 0.065) ** 2) * inside * (0.5 - 0.5 * math.cos(2 * math.pi * s / spec["pitch"]))
+            if s > end - spec["cuff"]:
+                d += spec["turn"]
+            v.co += rad * d
+    bm.to_mesh(obj.data)
+    bm.free()
+    obj.data.update()
 
 
 def dress(ch, garments=gm.ORDER, report=None, patterns=None, over=(), post_weld=None, weld_limit=None, hem_even=True):
@@ -1206,6 +1317,16 @@ def dress(ch, garments=gm.ORDER, report=None, patterns=None, over=(), post_weld=
             obj.vertex_groups.new(name="acr_pin").add(pins, 1.0, "REPLACE")
         fa = me.attributes.new("panel", "INT", "FACE")
         names = list(panels)
+        cloth_g = gm.CLOTH.get(g, {})
+        if cloth_g.get("pleats"):
+            # Each vertex's place on its panel (cm), for the pleats laid in after the sim.
+            pu, pv = me.attributes.new("_pu", "FLOAT", "POINT"), me.attributes.new("_pv", "FLOAT", "POINT")
+            sd = me.attributes.new("_side", "FLOAT", "POINT")
+            for key, pc in pieces.items():
+                if isinstance(key, tuple):
+                    for i, (u, v) in enumerate(pc.uv):
+                        pu.data[pc.base + i].value, pv.data[pc.base + i].value = u, v
+                        sd.data[pc.base + i].value = (1.0 if key[1] == "L" else -1.0) if pc.panel.mirror else 0.0
         # from_pydata keeps the face order.
         for i, (n, _s) in enumerate(finfo):
             fa.data[i].value = names.index(n)
@@ -1234,7 +1355,7 @@ def dress(ch, garments=gm.ORDER, report=None, patterns=None, over=(), post_weld=
         base = weld_limit if weld_limit is not None else WELD if not g.startswith("shirt") else 0.3
         limits = [getattr(seams[k], "close", None) or base for k in pieces["_sew_id"]]
         welded = sum(1 for (a, b), lim in zip(sew, limits) if (ev.vertices[a].co - ev.vertices[b].co).length < lim)
-        weld(obj, sew, limit=base, limits=limits)
+        weld(obj, sew, limit=base, limits=limits, fixed=set(pins))
         if not g.startswith("shirt") and bare:
             # Cut level inside the shoes: no ragged edge over them.
             zc = max((ch.shoes.matrix_world @ v.co).z for v in ch.shoes.data.vertices) - float(bare_cut)
@@ -1250,6 +1371,8 @@ def dress(ch, garments=gm.ORDER, report=None, patterns=None, over=(), post_weld=
             pin = obj.vertex_groups.get("acr_pin")
             taubin(obj, gm.CLOTH[g]["smooth"],
                    keep=[v.index for v in obj.data.vertices if pin and any(e.group == pin.index for e in v.groups)])
+        if gm.CLOTH.get(g, {}).get("pleats"):
+            pleat(obj, panels, names, gm.CLOTH[g]["pleats"])
         if post_weld is not None:
             post_weld(obj, g)
         unposed = 0.0
@@ -1291,6 +1414,8 @@ def dress(ch, garments=gm.ORDER, report=None, patterns=None, over=(), post_weld=
             bm.to_mesh(part.data)
             bm.free()
             part.data.attributes.remove(part.data.attributes["panel"])
+            if gm.CLOTH.get(g, {}).get("sleeve_shape") and all(panels[names[i]].place["region"] == "arm" for i in idx):
+                sleeve_shape(part, ch, gm.CLOTH[g]["sleeve_shape"])
             label = {("coat", True): "coat_skirts", ("lining", True): "turnbacks"}.get(
                 (key, skirt), f"{key}_skirts" if skirt and key in both else key)
             part.name = part.data.name = f"{ch.name}.{label}"
@@ -2173,12 +2298,13 @@ def _cloth_tree(objs):
     return BVHTree.FromPolygons(vs, fs) if fs else None
 
 
+PLATE_BONE = "spine1"  # the corslet's back and breast are rigid on it (`armour.corslet`)
 BAND_STEP = 0.005  # m between the rays of a radial profile
 BAND_SMOOTH = 3  # smoothing passes round the neck
 BAND_STAND = 0.016  # m: the short stand up the neck inside the band
 
 
-def falling_band(ch, name, width=(0.12, 0.075), key="fallband", n=64, rings=10, lift=0.007):
+def falling_band(ch, name, width=(0.11, 0.055), key="fallband", n=64, rings=10, lift=0.007):
     """The falling band: a plain linen collar cut flat (`garments.band_width`: level round the
     back, two square points in front, split at the centre front, a short stand up the neck)
     and laid over what the man wears at the neck: the coat, and the corslet's neck edge when
@@ -2188,7 +2314,9 @@ def falling_band(ch, name, width=(0.12, 0.075), key="fallband", n=64, rings=10, 
     Skinned like the cloth under it. Added to `ch`'s clothes with key `key`."""
     bpy.context.view_layer.update()
     cloth = [o for o in ch.layers["clothes"] if o.type == "MESH" and ch.keys.get(o.name) not in ("shoes",)]
-    tree = _cloth_tree(cloth + list(getattr(ch, "armour", None) or ()))  # not the skin: rays near the neck found the chin
+    plates = list(getattr(ch, "armour", None) or ())
+    tree = _cloth_tree(cloth + plates)  # not the skin: rays near the neck found the chin
+    plate_tree = _cloth_tree(plates) if plates else None
     seg = am.segments(ch.arm)
     head, tail = seg[ch.prefix + "neck"]
     cx, cy = head.x, head.y + 0.008
@@ -2221,6 +2349,7 @@ def falling_band(ch, name, width=(0.12, 0.075), key="fallband", n=64, rings=10, 
                  for i in range(n + 1)] for A in (R, Z))
     bm = bmesh.new()
     grid = []
+    on_plate = set()  # vertices lying on the corslet: rigid with it, so they cannot cross it
     for i, (t, _row) in enumerate(rows):
         line = []
         for k in range(rings + 1):
@@ -2228,6 +2357,10 @@ def falling_band(ch, name, width=(0.12, 0.075), key="fallband", n=64, rings=10, 
             f = floor_at(x, y)
             z = Z[i][k] if f is None or k == 0 else max(Z[i][k], min(f + lift * 0.6, Z[i][k] + 0.02))
             line.append(bm.verts.new((x, y, z)))
+            if plate_tree is not None and f is not None:
+                hit = plate_tree.ray_cast(Vector((x, y, head.z + 0.05)), down, 0.40)
+                if hit[0] is not None and hit[0].z > f - 0.004:
+                    on_plate.add(line[-1])
         grid.append(line)
     for a, b in zip(grid, grid[1:]):
         for k in range(rings):
@@ -2241,11 +2374,16 @@ def falling_band(ch, name, width=(0.12, 0.075), key="fallband", n=64, rings=10, 
         bm.faces.new((stand[i], stand[i + 1], grid[i + 1][0], grid[i][0]))
         bm.faces.new((grid[i][-1], grid[i + 1][-1], lip[i + 1], lip[i]))
     me = bpy.data.meshes.new(f"{name}.{key}")
+    bm.verts.index_update()
+    on_plate = {v.index for v in on_plate}
     bm.to_mesh(me)
     bm.free()
     obj = bd.link(bpy.data.objects.new(f"{name}.{key}", me))
     under = [o for o in cloth if not o.name.endswith("_skirts")]
-    finish(obj, ch, False, under=under)
+    ws = transfer_weights(obj, ch.flesh, ch.arm, under=under)
+    for i in on_plate:
+        ws[i] = {ch.prefix + PLATE_BONE: 1.0}
+    finish(obj, ch, False, weights=ws)
     obj["acr_garment"] = "modelled:drape.falling_band"
     return ch.add("clothes", obj, key, symmetric=True)
 

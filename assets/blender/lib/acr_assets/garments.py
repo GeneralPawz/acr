@@ -53,14 +53,19 @@ CLOTH = {
     # 17th century: the doublet's wool, the buff coat's thick oiled leather (stiff and heavy:
     # it stands off the body in few broad folds), knitted hose, full slops.
     "doublet": {"thickness": 0.0025, "mass": 0.35, "tension": 18.0, "bending": 1.5, "shrink": 0.02, "margin": 0.005},
-    "buffcoat": {"thickness": 0.0045, "mass": 0.90, "tension": 40.0, "bending": 14.0, "shrink": 0.0, "margin": 0.007},
+    "buffcoat": {"thickness": 0.0045, "mass": 0.90, "tension": 40.0, "bending": 14.0, "shrink": 0.0, "margin": 0.007,
+                 # the cloth sleeves of about 1640 (`drape.sleeve_shape`)
+                 "sleeve_shape": {"cuts": 2, "full": 0.010, "elbow": 0.007, "crease": 0.006, "pitch": 0.036,
+                                  "cuff": 0.05, "turn": 0.005}},
     "hose": {"thickness": 0.0015, "mass": 0.20, "tension": 15.0, "bending": 0.4, "shrink": 0.06, "margin": 0.003},
     "slops": {"thickness": 0.0025, "mass": 0.30, "tension": 12.0, "bending": 1.2, "shrink": 0.0, "margin": 0.004},
     "shirt17": {"thickness": 0.0012, "mass": 0.15, "tension": 10.0, "bending": 0.2, "shrink": 0.0, "margin": 0.002},
     # Full wool breeches: soft enough to fold where the gather pulls them in, no shrink (the
     # fullness must hang); `smooth`: Taubin passes after the sim (`drape.dress`).
-    "breeches17": {"thickness": 0.0020, "mass": 0.30, "tension": 15.0, "bending": 0.6, "shrink": 0.0, "margin": 0.004,
-                   "smooth": 3},
+    "breeches17": {"thickness": 0.0020, "mass": 0.30, "tension": 15.0, "bending": 1.5, "shrink": 0.0, "margin": 0.004,
+                   "smooth": 8,
+                   "pleats": {"panels": ("br_front", "br_back"), "edges": ("inseam", "outseam"), "n": 6,
+                              "band": 0.012, "band_reach": 0.12, "mid": 0.004, "waist": 0.0, "waist_reach": 0.07}},
     # Knitted stockings: `in_shoes` drapes them without the shoes and cuts them level that far (m)
     # below the shoes' top edge, so they run down into them.
     "stockings17": {"thickness": 0.0015, "mass": 0.20, "tension": 15.0, "bending": 0.4, "shrink": 0.06, "margin": 0.003,
@@ -566,9 +571,10 @@ def doublet(m=MEASURE, tabs=True, slashed=False, key="doublet", sleeve_key="dsle
     return panels, seams
 
 
-def buffcoat(m=MEASURE, sleeves="dsleeve", key="buff", drop=None):
+def buffcoat(m=MEASURE, sleeves="dsleeve", key="buff", drop=None, flare=13.0):
     """The buff coat (1640s): thick oiled leather, fitted, hooked shut to the waist, long
-    skirts to above the knee (open at the back vent), sleeves of cloth (`sleeves` = its
+    skirts to above the knee (open at the back vent, `flare` cm wider at the hem per quarter:
+    ease over full breeches), sleeves of cloth (`sleeves` = its
     key), of buff (`sleeves` = `key`) or none (`None`: under a pikeman's armour)."""
     panels, seams = _body17(m, "buffcoat", key, sleeves or key, chest=16.0, waist=12.0, collar=False)
     if sleeves is None:
@@ -578,7 +584,7 @@ def buffcoat(m=MEASURE, sleeves="dsleeve", key="buff", drop=None):
     bw = panels["coat_back"].outline[1][0]
     drop = m["waist_to_knee"] - 10.0 if drop is None else drop
     for nm, w, theta, d, last in (("buff_skirt_front", fw, 0.0, 1, "front"), ("buff_skirt_back", bw, 180.0, -1, "vent")):
-        panels[nm] = Panel(nm, "buffcoat", key, [(0.0, 0.0), (w + 7.0, 0.0), (w, drop), (0.0, drop)],
+        panels[nm] = Panel(nm, "buffcoat", key, [(0.0, 0.0), (w + flare, 0.0), (w, drop), (0.0, drop)],
                            {"hem": (0, 1), "side": (1, 2), "waist": (2, 3), last: (3, 0)},
                            {"region": "torso", "theta": theta, "dir": d, "u0": 0.0, "at": "waist", "lift": -drop,
                             "gap": 3.5}, skirt=True)
@@ -610,7 +616,7 @@ def hose(m=MEASURE, key="hose", top=0.6, tongue=4.0, garment="hose"):
     return P, [Seam([("hose", "start", True)], [("hose", "outer")], garment, close=GAITER_CLOSE)]
 
 
-def breeches17(m=MEASURE, full=20.0, below=3.0, blouse=3.0, band=3.0, key="breeches", garment="breeches17"):
+def breeches17(m=MEASURE, full=20.0, below=3.0, blouse=3.0, band=4.0, key="breeches", garment="breeches17"):
     """Full breeches of about 1640 (Waugh's Diagrams V-VIII, pike and shot): the breeches'
     draft `full` cm wider round the thigh and the leg's bottom edge, the legs running
     straight down to `below` cm under the knee plus `blouse` cm of length that hangs over
@@ -632,7 +638,7 @@ def breeches17(m=MEASURE, full=20.0, below=3.0, blouse=3.0, band=3.0, key="breec
         if sm.a[0][:2] == ("knee_band", "bottom"):
             sm.a = [_link(("knee_band", "top", True))]
             sm.ease = 1.0
-        elif sm.a[0][1] in ("outseam", "inseam"):
+        else:
             sm.close = 0.07  # the full legs' seams end shut down to the pinned band
     return panels, seams
 
@@ -678,6 +684,12 @@ def band_width(t, front=12.0, back=7.5):
     to the two square front points."""
     f = max(0.0, -math.sin(t))
     return back + (front - back) * f * f
+
+
+def pleat_wave(f, n):
+    """Height 0..1 of a gathered edge's folds at fraction `f` across the panel, `n` folds:
+    rounded ridges with narrow valleys between them (where the gathering thread pulls)."""
+    return (0.5 - 0.5 * math.cos(2.0 * math.pi * n * f)) ** 0.6
 
 
 def upper_hull(pts):

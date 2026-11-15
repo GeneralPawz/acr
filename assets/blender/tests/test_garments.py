@@ -171,6 +171,22 @@ class Pikeman1640(unittest.TestCase):
 
         self.assertLess(registry.SPACING["breeches17"], 2.0)  # fine enough for folds
 
+    def test_pleats_are_regular_and_only_stand_outwards(self):
+        n = gm.CLOTH["breeches17"]["pleats"]["n"]
+        ys = [gm.pleat_wave(k / 600.0, n) for k in range(601)]
+        self.assertTrue(all(0.0 <= y <= 1.0 for y in ys))
+        peaks = [k for k in range(1, 600) if ys[k - 1] < ys[k] >= ys[k + 1]]
+        self.assertEqual(len(peaks), n)
+        self.assertEqual({b - a for a, b in zip(peaks, peaks[1:])}, {600 // n})  # evenly spaced
+        self.assertAlmostEqual(gm.pleat_wave(0.0, n), 0.0)  # a valley on each seam
+        self.assertAlmostEqual(gm.pleat_wave(1.0, n), 0.0)
+        # The buff coat's cloth sleeves are shaped (`drape.sleeve_shape`), its skirts flare
+        # over the full breeches.
+        self.assertIn("sleeve_shape", gm.CLOTH["buffcoat"])
+        b, _ = gm.buffcoat(gm.MEASURE)
+        sk = b["buff_skirt_front"]
+        self.assertGreater(sk.outline[1][0] - sk.outline[2][0], 10.0)
+
     def test_stockings_end_level_in_the_shoe_and_under_the_band(self):
         m = gm.MEASURE
         st, seams = gm.GARMENTS["stockings17"](m)
@@ -197,6 +213,8 @@ class Pikeman1640(unittest.TestCase):
         for (r0, z0), (r1, z1), d in zip(pts, pts[1:], (1.0, 1.0, 1.0, 3.0)):
             self.assertGreater(r1, r0)  # never folds back over itself
             self.assertLess(abs(math.hypot(r1 - r0, z1 - z0) - d), 0.05)  # keeps its width
+        # Narrow on the shoulders: a collar, not a cape.
+        self.assertLess(gm.band_width(0.0, 11.0, 5.5), 6.0)
         # `lift` moves it off the surface along the normal.
         up = gm.lay_over([(0.0, 0.0), (1.0, 0.0)], [0.5], lift=0.1)
         self.assertAlmostEqual(up[0][1], 0.1)
