@@ -351,9 +351,36 @@ after `aim`; the test `probe_clips` prints it for `ACR_PROBE_MODELS` (a folder o
 and `ACR_PROBE` (`model:clip:frame:right,fwd,up;...`, metres from the attacker's ground
 point); without the variables it does nothing.
 
-- **Melee distance** (driver logs, `ACR_STRIKE_DEBUG` now logs `victim at`): riders strike a
-  man on the ground at 1.7–2.0 m (centre to centre: PueVsdA 1.9, EngD18 1.7, also when
-  they ride in from 5 m); musketeers fence at 1.67–1.73 m. The victim is straight ahead.
+- **Melee distance** (#511; this replaces the earlier "1.67–2.0 m" from driver logs). It is
+  not one number. The sim's rule (`combat::attack_link_aim`, the original's `AttackObjLink`
+  0x51bcaf, step (D); one home for it: `acr_sim::melee::strike_distance`): at the end of an
+  animation a man starts his blow when the distance to the victim (centre to centre,
+  `trig::norma`: exact along the axes, up to 12 % over between them) is below the melee
+  index's `ATTACK_RADIUS` max plus the victim's `ADDSHOTRADIUS` (0 for a man) and not below
+  `ATTACK_RADIUS` min (closer he backs off, `too_close`, 0x520689); else he walks one cycle
+  (`motion::stride`) towards the victim and decides again. So a man who walks up strikes
+  from his **reach** minus up to one walking cycle: EngM18 55–80 px (1.83–2.67 m), EngPik
+  75–100 px (2.50–3.33 m), MayPik 48–80 px, DelPik 40–80 px, mounted officers 20/33–60 px.
+  The blow lands at the active frame when the distance is at most `ATTACK_RADIUS` max +
+  `ADDRADIUS` (step (A)). A man on the ground is finished from `FINISH_REACH` (27 px, the
+  finishing clips' 0.9 m; hit-locations rule, on foot); riders keep their reach.
+  - **The table:** `assets/blender/data/melee_distance.json`: type id without the nation →
+    `distance` (the middle), `nearest`, `reach` in metres, for the Blender pipeline and the
+    clip audit. Generated and checked by the ignored test `the_melee_table_matches`
+    (`crates/acr-game/src/ingame/editor/inspect.rs`; `ACR_MELEE_TABLE=write` rewrites it,
+    `ACR_MELEE_MEASURED=<csv>` prints the rule against distances measured in the game).
+  - **Checked against the running game** (`ACR-analysis/clip-audit/reach/sim_distance.csv`:
+    the inspector's scene, the enemy 110 px off at direction 32, first blow): the rule's
+    walk-up gives EngPik 85.2 px (measured 85.6), EngM18 60.5 (60.8), MayPik 46.3 (45.3),
+    DelPik 70.4 (70.0), IncPik 78.1 (77.1); 54 of the 97 measured rows within 1.2 px;
+    AtcLut, IncLut, FrnBuk and EngTapDragon 2–5 px off.
+    Off: the native musket men (S15, Vog, Str of Del/Hur/Iro/Pue: measured 53.7, rule
+    74.2: they walk one cycle more, not explained yet), riders (6–27 px further out than
+    the rule: sampled while still moving), and types whose first attack was a throw or a
+    shot (`ATTACK1`), which is no melee blow.
+  - **The strike clips do not reach that far:** they were built for a man at 1.67 m. The
+    clip audit (docs/testing.md) now measures each model at its own distance: EngPik's
+    `ATTACK` alone ends 1.23 m short of a man at 2.90 m.
 - **The rider's rig was off.** The layer's joints are skeleton H's (`Rig::joint`); a rider's
   model is bound elsewhere (seated), so his rig hand lay ~0.3–0.5 m behind and 0.2–0.4 m
   below the real hand socket (musketeer: 0.06 m). The layer corrected that phantom error and

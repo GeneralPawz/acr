@@ -437,8 +437,10 @@ socket in a hand are skipped.
 | `grip_right`, `grip_left` | muskets and pole weapons (1.5 m or longer, on foot): the furthest the hand (the middle of the hand bone) is from the weapon over the clip; judged in the melee strike clips and `PSTAND*`, `info` in all others (carry, shots with their reload, `PATTACK`/`UATTACK`) | 0.12 m (`GRIP_MAX`) |
 | `gear` | every part that is its own node with an unskinned mesh (held weapon, hat, tool), per clip: the most its distance to the node it hangs on differs from the rest pose (rigid: 0); `info` when it is hidden in some frames while that node is shown; the note has how far it moves against its bone (an animated socket: a reload, a carry) | 0.01 m (`GEAR_MAX`) |
 
-Targets (`clip_audit::aim_of`, from `docs/melee.md`): a standing man 1.67 m ahead at his
-body's surface (`target_point`: 1.50 m, at 1.15 / 1.65 / 0.7 m up), a man on the ground 2.0 m
+Targets (`clip_audit::aim_at`, from `docs/melee.md`): a standing man at the model's own melee
+distance (`assets/blender/data/melee_distance.json` by the file name, the `distance` entry;
+the note has the result at `nearest` and `reach` too; 1.67 m and a remark when the model has
+no entry), at his body's surface (`target_point`, at 1.15 / 1.65 / 0.7 m up), a man on the ground 2.0 m
 ahead (`clips.TARGET_DOWN`; a lancer's 1.9 m off 25° right, a sabre rider's near part 1.7 m
 off 75° right or 40° left), the finishing target (`finish.TARGET_FINISH`). Not judged
 (`info`): a plain `ATTACK<n>` (melee, ranged or work is the `.MD`'s choice) and a rider's

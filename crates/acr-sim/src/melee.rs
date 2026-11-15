@@ -100,6 +100,57 @@ pub fn lancer(md_name: &str) -> bool {
     ["lan", "kop", "pik", "spear", "lnc"].iter().any(|k| n.contains(k))
 }
 
+/// Where a melee attacker stands when he strikes a standing man (`strike_distance`), centre
+/// to centre in world pixels (30 to the metre), in the engine's distance (`trig::norma`: the
+/// true distance along the axes, up to 12 % more than it between them).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StrikeDistance {
+    /// The melee attack index (the first usable one without a weapon).
+    pub index: usize,
+    /// He starts the blow when the distance is below this: `ATTACK_RADIUS` max of the index
+    /// plus the victim's `ADDSHOTRADIUS` (`AttackObjLink` (D), `combat::attack_link_aim`).
+    pub reach: i32,
+    /// Closer than this he backs off instead (`ATTACK_RADIUS` min, `combat::too_close`).
+    pub min: i32,
+    /// One walking cycle (`motion::stride`, towards the east): walking up, he decides only
+    /// at the end of each cycle, so he strikes from the first stop below `reach`.
+    pub stride: i32,
+}
+
+impl StrikeDistance {
+    /// The nearest he strikes from when he walks up to a man who stands: one walking cycle
+    /// inside `reach`, not below `min`.
+    pub fn nearest(&self) -> i32 {
+        (self.reach - self.stride).max(self.min)
+    }
+
+    /// The middle of the distances he strikes from when he walks up ([`Self::nearest`] to
+    /// `reach`).
+    pub fn typical(&self) -> i32 {
+        (self.reach + self.nearest()) / 2
+    }
+}
+
+/// The distances at which a unit of type `t` strikes a standing enemy whose type has
+/// `ADDSHOTRADIUS` `victim_add` (0 for a man) with his melee attack; `None` for a type
+/// without one. A reading of `combat::attack_link_aim` (`AttackObjLink`, 0x51bcaf), not
+/// used by it: on level ground, the normal range (no attack on the ground), no gun mode.
+///
+/// - (D) at the end of an animation he strikes when `min <= distance < reach`, backs off
+///   below `min` and else walks a cycle towards the victim's cell;
+/// - (A) at the blow's active frame it lands when `distance - victim_add <=
+///   ATTACK_RADIUS max + ADDRADIUS` (so a victim who stepped back less than `ADDRADIUS` is
+///   still hit).
+pub fn strike_distance(t: &crate::catalog::ObjectType, victim_add: i32) -> Option<StrikeDistance> {
+    let (index, a) = t.adv.attacks.iter().enumerate().find(|(_, a)| a.usable() && a.weapon.is_none())?;
+    Some(StrikeDistance {
+        index,
+        reach: a.radius.1 + victim_add,
+        min: a.radius.0,
+        stride: crate::motion::stride(t, 0) >> 4,
+    })
+}
+
 /// A foot soldier closes in to this distance (world pixels, ~0.9 m at 30 px/m) to finish a
 /// man on the ground, instead of striking from his weapon's reach (~2 m): he stands over
 /// him. Riders keep their reach (they strike down from the saddle).
