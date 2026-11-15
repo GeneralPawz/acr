@@ -374,6 +374,21 @@ nearest the window centre that no ragdoll holds; `ACR_NO_GAIT` turns it off).
   `palette_of` rebuilt them from the rest pose and showed every tool (EngKri, EngMus,
   EngTap). A ragdoll has no clip: the slots its clip had collapsed when the physics took
   over stay collapsed (`hidden_slots`, `hide`).
+- **What a ragdoll carries (#512):** `palette_of` builds every slot from its body bone and
+  the rest pose, which drops the clip's keys on sockets: the ramrod, keyed into its pipes on
+  `socket.hand_l` in every clip, stood out of the left hand for the length of every hit
+  reaction. `ragdoll_view::carried` takes from the clip pose each slot that is not a body
+  bone's own (sockets, held gear, fingers) as a matrix relative to its bone's slot, and
+  `carry` puts it back on the physics' bone: a survivor's follows his clip every frame, a
+  dying man's is frozen when the physics takes over (and in his frozen corpse). A held part
+  (an unskinned mesh on a node, `held_parts`: its long axis) that lies along a longer one
+  held by another bone in the clip pose, both ends within `ALONG` = 0.06 m of its axis, is
+  carried by that part's bone: the stowed ramrod goes with the musket's hand; drawn or past
+  the muzzle it is the left hand's. Open: the weapon itself still swings in a reaction (a
+  musket at the shoulder drops level, a pike slopes): its socket keeps the rest pose on the
+  hand in every clip, and the physics' arm leaves the clip's arm with the first step
+  (taking the hand from the forearm without its roll and wrist did not cure it; the
+  elbow hinge, the shoulder or the limp region are the next suspects).
 - **Limp** (`Body::leg` < 100 on both legs): the loop's samples on the bad leg take
   `1 − 0.6 · severity` of their time (a short, quick step); in its swing the bad leg is held
   straighter and the hip hikes; the trunk leans over the good leg. The hand on the side of a

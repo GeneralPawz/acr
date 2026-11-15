@@ -84,8 +84,58 @@ pub(super) struct Mapping {
     slot_bone: Vec<usize>,
     bind: Vec<Mat4>,
     bone_slot: Vec<usize>,
+    /// The held parts: per slot of an unskinned mesh on a node (a musket, its ramrod, a hat)
+    /// the two ends of its long axis in the node's space ([`held_parts`]).
+    parts: Vec<(usize, [f32; 3], [f32; 3])>,
     /// An animal's own ragdoll (bones, kinds, total mass, kg); `None` for skeleton H.
     generic: Option<Generic>,
+}
+
+/// A slot that is not a body bone's own (a socket, held gear, a finger) in a clip pose: the
+/// slot, the body bone that carries it, and its matrix relative to that bone's slot
+/// ([`carried`], put back by [`carry`]).
+pub(super) type Carried = Vec<(usize, usize, Mat4)>;
+
+fn transform_point(m: &Mat4, p: [f32; 3]) -> Vec3 {
+    Vec3::new(
+        m[0][0] * p[0] + m[1][0] * p[1] + m[2][0] * p[2] + m[3][0],
+        m[0][1] * p[0] + m[1][1] * p[1] + m[2][1] * p[2] + m[3][1],
+        m[0][2] * p[0] + m[1][2] * p[1] + m[2][2] * p[2] + m[3][2],
+    )
+}
+
+/// A held part lies along another when both ends of its axis are within this (m) of the
+/// other's axis: the ramrod in its pipes is 0.02 m under the barrel, 0.03 m off the
+/// musket's middle line.
+const ALONG: f32 = 0.06;
+
+/// The long axis (the two ends of the bounding box's middle line along its longest side,
+/// node space) of each unskinned mesh on a node, by slot.
+fn held_parts(model: &ModelData) -> Vec<(usize, [f32; 3], [f32; 3])> {
+    let mut boxes: HashMap<usize, ([f32; 3], [f32; 3])> = HashMap::new();
+    for prim in &model.primitives {
+        for v in &prim.vertices {
+            let s = v.joints[0] as usize;
+            if !matches!(model.slots.get(s), Some(Slot::Node(_))) || v.weights[0] < 0.99 {
+                continue;
+            }
+            let b = boxes.entry(s).or_insert((v.position, v.position));
+            for k in 0..3 {
+                b.0[k] = b.0[k].min(v.position[k]);
+                b.1[k] = b.1[k].max(v.position[k]);
+            }
+        }
+    }
+    let mut parts: Vec<_> = boxes
+        .into_iter()
+        .map(|(s, (lo, hi))| {
+            let k = (0..3).max_by(|&a, &b| (hi[a] - lo[a]).total_cmp(&(hi[b] - lo[b]))).unwrap_or(0);
+            let end = |e: [f32; 3]| std::array::from_fn(|i| if i == k { e[i] } else { (lo[i] + hi[i]) / 2.0 });
+            (s, end(lo), end(hi))
+        })
+        .collect();
+    parts.sort_by_key(|p| p.0);
+    parts
 }
 
 /// The ragdoll of an animal rig ([`acr_physics::skeleton_generic`]).
@@ -191,7 +241,7 @@ impl Mapping {
             return if animal_model(model) { Mapping::generic(model) } else { None };
         }
         let bind = model.pose(None, 0.0).iter().map(rows_to_mat).collect();
-        Some(Mapping { slot_bone, bind, bone_slot, generic: None })
+        Some(Mapping { slot_bone, bind, bone_slot, parts: held_parts(model), generic: None })
     }
 
     /// A skeleton-H man (the gait, the reflexes and the knock-down apply).
@@ -367,7 +417,7 @@ impl Mapping {
             model.type_name.as_deref().unwrap_or("?"),
             desc.len()
         );
-        Some(Mapping { slot_bone, bind, bone_slot, generic: Some(Generic { desc, kinds, mass }) })
+        Some(Mapping { slot_bone, bind, bone_slot, parts: Vec::new(), generic: Some(Generic { desc, kinds, mass }) })
     }
 }
 
@@ -483,6 +533,9 @@ struct Actor {
     /// Palette slots the clip had hidden (a socket keyed to scale 0) when the physics took
     /// over: they stay hidden ([`hidden_slots`]).
     hidden: Vec<usize>,
+    /// What he carries, where the clip has it relative to its bone ([`carried`]): a
+    /// survivor's follows his clip, a dying man's stays as it was when the physics took over.
+    carried: Carried,
     /// Physics time the corpse began to relax before it is frozen ([`RELAX_S`]).
     relaxed: Option<f32>,
     /// A skeleton-H man; else an animal (no reflexes, steps or knock-downs).
@@ -1114,6 +1167,7 @@ impl Ragdolls {
             let Some(map) = self.maps.get(&d.model).and_then(Option::as_ref) else { return };
             let clip_pose = d.data.pose(d.clip, d.time);
             let hidden = hidden_slots(&clip_pose);
+            let held = carried(map, &clip_pose);
             let skins = animated_skins(map, &clip_pose, &d.transform);
             let vel = self.ground_velocity(v, now);
             let r = &self.pool[slot].0;
@@ -1171,6 +1225,7 @@ impl Ragdolls {
                     frozen: None,
                     frozen_palette: None,
                     hidden,
+                    carried: held,
                     relaxed: None,
                     human,
                     mass,
@@ -1270,7 +1325,9 @@ impl Ragdolls {
             let Some(&i) = by_unit.get(v) else { continue };
             let d = &drawn[i];
             let Some(map) = self.maps.get(&a.model).and_then(Option::as_ref) else { continue };
-            let mut skins = animated_skins(map, &d.data.pose(d.clip, d.time), &d.transform);
+            let clip_pose = d.data.pose(d.clip, d.time);
+            a.carried = carried(map, &clip_pose);
+            let mut skins = animated_skins(map, &clip_pose, &d.transform);
             let back = (t / a.recover).clamp(0.0, 1.0);
             if !a.human {
                 // An animal staggers on its legs: the struck region limp for a moment, the
@@ -1465,6 +1522,7 @@ impl Ragdolls {
                 let fresh = a.frozen_palette.as_ref().is_some_and(|(t, _)| *t == d.transform);
                 if !fresh {
                     let mut p = palette_of(map, f, &d.transform);
+                    carry(map, &mut p, &a.carried);
                     hide(&mut p, &a.hidden);
                     a.frozen_palette = Some((d.transform, p));
                 }
@@ -1479,6 +1537,7 @@ impl Ragdolls {
             let r = &self.pool[a.slot].0;
             let skins: Vec<[[f32; 4]; 4]> = (0..r.len()).map(|b| r.skin_matrix(&self.physics, b)).collect();
             let mut p = palette_of(map, &skins, &d.transform);
+            carry(map, &mut p, &a.carried);
             hide(&mut p, &a.hidden);
             self.poses.insert(d.index, p);
         }
@@ -1544,6 +1603,63 @@ pub(super) fn palette_of(map: &Mapping, skins: &[[[f32; 4]; 4]], transform: &Mat
     let lead = math::mul(&affine_inverse(transform), &world_of_physics());
     let per_bone: Vec<Mat4> = skins.iter().map(|s| math::mul(&lead, &math::mul(s, &GLTF_TO_SKELETON))).collect();
     map.slot_bone.iter().zip(&map.bind).map(|(&b, bind)| math::affine_rows(&math::mul(&per_bone[b], bind))).collect()
+}
+
+/// What the clip pose `clip` has on the body bones: each slot that is not a bone's own, with
+/// the bone that carries it and its matrix relative to that bone's slot. [`palette_of`]
+/// alone puts such a slot where the rest pose has it, which threw the ramrod out of its
+/// pipes in every hit reaction (#512); [`carry`] puts it back. (The musket itself still
+/// swings in a reaction: its socket keeps the rest pose, and the physics' arm leaves the
+/// clip's with the first step.) A held part that lies along a longer one in the clip (the stowed ramrod, keyed
+/// on the left hand's socket, along the musket in the right hand: [`ALONG`]) is carried by
+/// that part's bone, so it stays on it when the arms part.
+pub(super) fn carried(map: &Mapping, clip: &Palette) -> Carried {
+    let point = |s: usize, p: [f32; 3]| transform_point(&rows_to_mat(&clip[s]), p);
+    let axes: Vec<(usize, Vec3, Vec3)> = map.parts.iter().map(|&(s, a, b)| (s, point(s, a), point(s, b))).collect();
+    let off = |p: Vec3, a: Vec3, b: Vec3| {
+        let ab = b - a;
+        let t = ((p - a).dot(ab) / ab.dot(ab).max(1e-12)).clamp(0.0, 1.0);
+        (p - (a + ab * t)).length()
+    };
+    // The bone of the longer part slot `s` lies along, if it is held by another bone.
+    let along = |s: usize| {
+        let &(_, a, b) = axes.iter().find(|p| p.0 == s)?;
+        let len = (b - a).length();
+        axes.iter()
+            .filter(|&&(o, c, d)| {
+                map.slot_bone[o] != map.slot_bone[s]
+                    && len > 1e-3
+                    && (d - c).length() > len
+                    && off(a, c, d) < ALONG
+                    && off(b, c, d) < ALONG
+            })
+            .map(|&(o, ..)| map.slot_bone[o])
+            .next()
+    };
+    let collapsed = |s: usize| clip[s].iter().all(|r| r[..3].iter().all(|v| v.abs() < 1e-6));
+    let rel = |s: usize, own: usize| math::mul(&affine_inverse(&rows_to_mat(&clip[own])), &rows_to_mat(&clip[s]));
+    let slots = map.slot_bone.len().min(clip.len());
+    let holder = |s: usize| along(s).unwrap_or(map.slot_bone[s]);
+    let others = (0..slots).filter_map(|s| {
+        let bone = holder(s);
+        let own = *map.bone_slot.get(bone)?;
+        if own == s || own >= clip.len() {
+            return None;
+        }
+        Some((s, bone, if collapsed(s) { [[0.0; 4]; 4] } else { rel(s, own) }))
+    });
+    others.collect()
+}
+
+/// Puts the slots of `held` ([`carried`]) into `palette` (of [`palette_of`]) where their
+/// clip had them on their bones.
+pub(super) fn carry(map: &Mapping, palette: &mut Palette, held: &[(usize, usize, Mat4)]) {
+    for &(s, bone, rel) in held {
+        let own = map.bone_slot[bone];
+        if s < palette.len() && own < palette.len() {
+            palette[s] = math::affine_rows(&math::mul(&rows_to_mat(&palette[own]), &rel));
+        }
+    }
 }
 
 /// `palette` with each slot moved as its bone moved from `before` to `after` (skins of
@@ -1692,7 +1808,13 @@ mod tests {
     fn gear_a_clip_hides_stays_hidden_when_the_body_is_posed() {
         // Slot 0: the hand (a body bone); slot 1: a tool on a socket the clip keys to scale 0
         // (EngKri's axe while walking). The gait and the ragdolls move the bones.
-        let map = Mapping { slot_bone: vec![0, 0], bind: vec![math::IDENTITY; 2], bone_slot: vec![0], generic: None };
+        let map = Mapping {
+            slot_bone: vec![0, 0],
+            bind: vec![math::IDENTITY; 2],
+            bone_slot: vec![0],
+            parts: Vec::new(),
+            generic: None,
+        };
         let transform = view3d::model_matrix([100.0, 200.0, 30.0], 0.7, 1.0);
         let hand = math::affine_rows(&math::IDENTITY);
         let clip: Palette = vec![hand, [[0.0; 4]; 3]];
@@ -1704,12 +1826,92 @@ mod tests {
         let walked = repose(&map, &clip, &before, &after, &transform);
         assert!(!collapsed(&walked[0]) && walked[0] != clip[0], "the hand moves: {:?}", walked[0]);
         assert!(collapsed(&walked[1]), "the hidden tool stays a point: {:?}", walked[1]);
-        // The ragdoll: built from the rest pose, so the clip's hidden slots are put back.
+        // The ragdoll: built from the rest pose, so the clip's hidden slots are put back
+        // (and stay hidden with `carry`: `a_carried_slot_keeps_its_clip_offset...`).
         assert_eq!(hidden_slots(&clip), vec![1]);
         let mut fallen = palette_of(&map, &after, &transform);
         assert!(!collapsed(&fallen[1]), "the rest pose shows every tool");
         hide(&mut fallen, &hidden_slots(&clip));
         assert!(collapsed(&fallen[1]) && !collapsed(&fallen[0]));
+    }
+
+    fn shifted(x: f32, y: f32, z: f32) -> Mat4 {
+        let mut m = math::IDENTITY;
+        m[3] = [x, y, z, 1.0];
+        m
+    }
+
+    #[test]
+    fn a_carried_slot_keeps_its_clip_offset_when_the_ragdoll_moves_its_bone() {
+        // Slot 0: the hand; slot 1: a musket on its socket, which the clip keys 0.3 m off
+        // where the rest pose has it (the rest pose: on the hand).
+        let map = Mapping {
+            slot_bone: vec![0, 0],
+            bind: vec![math::IDENTITY; 2],
+            bone_slot: vec![0],
+            parts: Vec::new(),
+            generic: None,
+        };
+        let transform = view3d::model_matrix([100.0, 200.0, 30.0], 0.7, 1.0);
+        let clip: Palette =
+            vec![math::affine_rows(&shifted(0.1, 1.0, 0.0)), math::affine_rows(&shifted(0.1, 1.3, 0.0))];
+        let held = carried(&map, &clip);
+        assert_eq!(held.len(), 1);
+        // The physics has the bone where the clip had it: the palette is the clip's.
+        let skins = animated_skins(&map, &clip, &transform);
+        let mut same = palette_of(&map, &skins, &transform);
+        assert!((same[1][1][3] - 1.0).abs() < 1e-4, "the rest pose alone puts it on the hand: {:?}", same[1]);
+        carry(&map, &mut same, &held);
+        for (a, b) in same.iter().flatten().flatten().zip(clip.iter().flatten().flatten()) {
+            assert!((a - b).abs() < 1e-4, "{same:?} against {clip:?}");
+        }
+        // The bone moves 0.2 m (physics x): the musket goes with it, 0.3 m from the hand.
+        let mut moved = skins.clone();
+        moved[0][3][0] += 0.2;
+        let mut p = palette_of(&map, &moved, &transform);
+        carry(&map, &mut p, &held);
+        let at = |rows: &[[f32; 4]; 3]| Vec3::new(rows[0][3], rows[1][3], rows[2][3]);
+        assert!((at(&p[0]) - at(&clip[0])).length() > 0.19, "the hand moved");
+        assert!(((at(&p[1]) - at(&p[0])) - Vec3::new(0.0, 0.3, 0.0)).length() < 1e-4, "{:?}", at(&p[1]) - at(&p[0]));
+        // A slot the clip collapsed stays a point.
+        let hidden: Palette = vec![clip[0], [[0.0; 4]; 3]];
+        let mut p = palette_of(&map, &moved, &transform);
+        carry(&map, &mut p, &carried(&map, &hidden));
+        assert_eq!(hidden_slots(&p), vec![1]);
+    }
+
+    #[test]
+    fn a_part_lying_along_another_held_part_goes_with_it() {
+        // Bones: right hand (slot 0), left hand (slot 1). Slot 2: a musket of 1.4 m on the
+        // right hand; slot 3: a rod of 0.9 m on the left hand's socket.
+        let map = Mapping {
+            slot_bone: vec![0, 1, 0, 1],
+            bind: vec![math::IDENTITY; 4],
+            bone_slot: vec![0, 1],
+            parts: vec![(2, [0.0, 0.0, 0.0], [0.0, 1.4, 0.0]), (3, [0.0, 0.0, 0.0], [0.0, 0.9, 0.0])],
+            generic: None,
+        };
+        let transform = view3d::model_matrix([100.0, 200.0, 30.0], 0.7, 1.0);
+        let rows = |m: Mat4| math::affine_rows(&m);
+        let hands = [rows(shifted(0.2, 1.0, 0.0)), rows(shifted(-0.2, 1.0, 0.0))];
+        // Stowed: the clip has the rod 0.02 m beside the musket, inside its length.
+        let stowed: Palette = vec![hands[0], hands[1], rows(shifted(0.2, 1.0, 0.0)), rows(shifted(0.22, 1.4, 0.0))];
+        let held = carried(&map, &stowed);
+        assert_eq!(held.iter().find(|c| c.0 == 3).map(|c| c.1), Some(0), "the rod goes with the musket's hand");
+        // The arms part: the left hand moves 0.5 m, the right stays. The rod stays on the musket.
+        let mut skins = animated_skins(&map, &stowed, &transform);
+        skins[1][3][0] += 0.5;
+        let mut p = palette_of(&map, &skins, &transform);
+        carry(&map, &mut p, &held);
+        assert!(p[3].iter().flatten().zip(stowed[3].iter().flatten()).all(|(a, b)| (a - b).abs() < 1e-4), "{:?}", p[3]);
+        assert!(p[1] != stowed[1], "the left hand moved");
+        // Drawn: the rod 0.3 m off the musket is the left hand's.
+        let drawn: Palette = vec![hands[0], hands[1], stowed[2], rows(shifted(-0.2, 1.0, 0.0))];
+        let held = carried(&map, &drawn);
+        assert_eq!(held.iter().find(|c| c.0 == 3).map(|c| c.1), Some(1));
+        // Past the muzzle (ramming): not along it.
+        let ramming: Palette = vec![hands[0], hands[1], stowed[2], rows(shifted(0.2, 1.9, 0.0))];
+        assert_eq!(carried(&map, &ramming).iter().find(|c| c.0 == 3).map(|c| c.1), Some(1));
     }
 
     #[test]
