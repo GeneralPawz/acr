@@ -398,6 +398,19 @@ fn stands_over(w: &World, i: usize, aim: Aim, ranged: bool) -> bool {
         && !crate::melee::rides(w, i)
 }
 
+/// Hit-locations rule (#511): the extended reach (`melee::long_reach`) of the man on foot
+/// `i` whose melee index `k` strikes a unit on its feet (no building) with `ADDSHOTRADIUS`
+/// `e_add`; `None` for everyone else and without the rule.
+fn long_reach(w: &World, i: usize, aim: Aim, k: usize, e_add: i32, e_bld: bool) -> Option<i32> {
+    let Aim::Unit(j) = aim else { return None };
+    if !w.rules.hit_locations || e_bld || !crate::melee::foot_man(w, i) || crate::melee::on_ground(&w.units[j].body) {
+        return None;
+    }
+    let t = w.catalog.get(w.units[i].kind);
+    let far = crate::melee::long_reach(t, e_add)?;
+    crate::melee::strike_distance(t, e_add).is_some_and(|sd| sd.index == k).then_some(far)
+}
+
 /// `AttackObjLink` (0x51bcaf), once per tick for a unit with an attack order.
 pub fn attack_link(w: &mut World, i: usize, target: EntityId, prio: u8) {
     attack_link_aim(w, i, Aim::Unit(target.0 as usize), prio);
@@ -506,7 +519,12 @@ pub fn attack_link_aim(w: &mut World, i: usize, aim: Aim, prio: u8) {
                 if high_ns {
                     dst1 -= 2 * (my_z - en_z);
                 }
-                let dr2 = (a.radius.1 + a.add_radius) * add_range / 100;
+                let mut dr2 = (a.radius.1 + a.add_radius) * add_range / 100;
+                // Hit-locations rule (#511): a type with a strike stance beyond its reach
+                // (the pikemen) lands its blow from there.
+                if let Some(far) = long_reach(w, i, aim, ns - 1, e_add, e_bld) {
+                    dr2 = dr2.max(far - e_add + a.add_radius);
+                }
                 let min = match gun {
                     _ if stands_over(w, i, aim, a.weapon.is_some()) => 0,
                     Some((_, k, m)) if k == ns - 1 => m,
@@ -694,6 +712,10 @@ pub fn attack_link_aim(w: &mut World, i: usize, aim: Aim, prio: u8) {
         // holds him off.
         (reach, min) = if off { (reach.min(close), 0) } else { (reach.max(dst_c + 1), 0) };
     }
+    // Hit-locations rule (#511): a strike stance beyond the `.MD` reach extends it.
+    if let Some(far) = long_reach(w, i, aim, k, e_add, e_bld) {
+        reach = reach.max(far);
+    }
     // Hit-locations rule (#511, not in the original): a man on foot strikes a standing enemy
     // from his strike stance (`melee::strike_stance`, `docs/melee.md`, The strike stance).
     // Inside the original's band but off the stance he steps in or back out, facing the
@@ -715,7 +737,13 @@ pub fn attack_link_aim(w: &mut World, i: usize, aim: Aim, prio: u8) {
         // The true distance (1/16 px): `norma` is up to 12 % long between the axes.
         let true16 = (i64::from(dx) * i64::from(dx) + i64::from(dy) * i64::from(dy)).isqrt() as i32;
         let off = true16 - (want << 4);
-        if off.abs() > crate::melee::STRIKE_TOL << 4 {
+        // Two men at each other: his stance against this one.
+        let his = crate::melee::stance_against(w, j, i);
+        // The longer weapon holds its distance: he never steps towards or away from a man
+        // who has to come in to his own, shorter stance. Too far, he waits for him; with
+        // the man inside his stance he strikes from where he is.
+        let holds = his.is_some_and(|h| h < want);
+        if off.abs() > crate::melee::STRIKE_TOL << 4 && !(holds && off < 0) {
             let back = off < 0;
             let md = if back { en_dir.wrapping_add(128) } else { en_dir };
             let stride = crate::motion::stride(t, md).max(1);
@@ -724,7 +752,8 @@ pub fn attack_link_aim(w: &mut World, i: usize, aim: Aim, prio: u8) {
             let u = &w.units[i];
             let to = Pos::new(u.pos.x + crate::trig::cos(md) * len / 256, u.pos.y + crate::trig::sin(md) * len / 256);
             if crate::melee::in_slot_after(w, i, to) {
-                let waits = j < i && crate::melee::steps_to_stance(w, j, i);
+                // Equal stances: the one with the lower index steps, the other waits.
+                let waits = holds || j < i && his == Some(want) && crate::melee::steps_to_stance(w, j, i);
                 let u = &mut w.units[i];
                 let ddir = en_dir.wrapping_sub(u.dir) as i8;
                 let mrot = t.rotate;
@@ -732,10 +761,13 @@ pub fn attack_link_aim(w: &mut World, i: usize, aim: Aim, prio: u8) {
                     let r = mrot as u8;
                     u.dir = if ddir > 0 { u.dir.wrapping_add(r) } else { u.dir.wrapping_sub(r) };
                 } else if waits {
-                    // Two men at each other: the one with the lower index steps, this one
-                    // waits for him, facing him.
+                    // He waits for the other man to step, facing him, his weapon ready.
                     u.dir = en_dir;
-                    u.body.stance_steps += 1;
+                    if usize::from(u.local_stance) == k + 1 {
+                        u.body.stance_steps += 1;
+                    } else {
+                        u.stance = (k + 1) as u8;
+                    }
                 } else {
                     if u.local_stance == u.stance {
                         u.body.stance_steps = u.body.stance_steps.saturating_add(crate::melee::STANCE_STEP_COST);
@@ -746,6 +778,10 @@ pub fn attack_link_aim(w: &mut World, i: usize, aim: Aim, prio: u8) {
             }
         }
     }
+    let holds_off = matches!(aim, Aim::Unit(j) if long_reach(w, i, aim, k, e_add, e_bld).is_some()
+        && !complex
+        && crate::melee::strike_stance(t, e_add)
+            .is_some_and(|want| crate::melee::stance_against(w, j, i).is_some_and(|h| h < want)));
     let u = &mut w.units[i];
     if dst >= min && dst_c < reach {
         let mut ddir = en_dir.wrapping_sub(u.dir) as i8;
@@ -836,6 +872,20 @@ pub fn attack_link_aim(w: &mut World, i: usize, aim: Aim, prio: u8) {
         let need = min - dst;
         too_close(w, i, e_pos, need);
     } else {
+        // Hit-locations rule (#511): the longer weapon does not walk in on a man who is
+        // coming at him to reach his own, shorter stance; he waits, facing him, weapon ready.
+        if holds_off {
+            let ddir = en_dir.wrapping_sub(u.dir) as i8;
+            let mrot = t.rotate;
+            if i32::from(ddir).abs() >= (mrot + mrot / 2).min(16) {
+                let r = mrot as u8;
+                u.dir = if ddir > 0 { u.dir.wrapping_add(r) } else { u.dir.wrapping_sub(r) };
+            } else {
+                u.dir = en_dir;
+                u.stance = (k + 1) as u8;
+            }
+            return;
+        }
         // Walk in the index's walking stance if the type has one (`#MOTION_Lk`), otherwise
         // in the ground stance; then SetDestUnit (0x51b6c0): path to the target's cell.
         if amove {
