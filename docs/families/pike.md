@@ -27,7 +27,10 @@ with the `#STAND` sprites (`line`'s `mix`); belts, armour, match and scabbard fi
   the coat colour); pikemen `PIKEMAN_DRAPE` (`stockings17`, then `breeches17`: full breeches
   of about 1640 gathered into a band below the knee over stockings that run into the shoe
   (#523, docs/clothing.md "17th century"); a **buff coat** with cloth sleeves in the coat
-  colour, skirts to above the knee, under the corselet). All wear the **falling band**
+  colour, skirts to above the knee, under the corselet: on EngPik and FrnPik the buff
+  leather doublet traced from Waugh's Diagram IX (`COAT_PATTERN = "waugh/buffcoat_1640"`,
+  read from `ACR_SOURCES/patterns`; `None` gives the drafted `garments.buffcoat`), its
+  one-piece sleeves shaped by `drape.sleeve_shape`). All wear the **falling band**
   (`falling_band` gear, laid over the doublet or buff coat; on pikemen it is built after
   the corselet and lies over its neck edge). Musketeers, drummers and standard bearers
   still wear the 18th-century `breeches` and `gaiters` drafts: they can take

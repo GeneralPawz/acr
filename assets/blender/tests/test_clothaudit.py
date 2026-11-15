@@ -179,6 +179,36 @@ class Geometry(unittest.TestCase):
         # One narrow strip alone: its two sides are joined by edges, no seam.
         self.assertEqual(ca.open_seams(a[:22], ca.boundary_loops(ta[:20]), ta[:20])[0], 0.0)
 
+    def test_band_is_the_inner_ring_under_the_bag(self):
+        # Full breeches: a bag (r 10 cm) hanging over a knee band (r 6 cm) that ends 7 cm
+        # below the knee, on a stocking (r 5.5 cm) down to the ankle.
+        from types import SimpleNamespace
+
+        def ring(r, z, n=48):
+            t = np.linspace(0, 2 * np.pi, n, endpoint=False)
+            return np.stack([0.1 + r * np.cos(t), np.full(n, z), r * np.sin(t)], axis=1)
+
+        def world(y):
+            w = np.eye(4)
+            w[:3, 3] = (0.1, y, 0.0)
+            return w
+
+        m = SimpleNamespace(nodes=[{"name": "thigh_l"}, {"name": "shin_l"}, {"name": "foot_l"}])
+        wm = [world(0.95), world(0.5), world(0.08)]
+        br = np.concatenate([ring(0.10, z) for z in np.arange(0.44, 0.95, 0.01)]
+                            + [ring(0.06, z) for z in np.arange(0.43, 0.471, 0.01)])
+        hose = np.concatenate([ring(0.055, z) for z in np.arange(0.10, 0.55, 0.01)])
+        skin = np.concatenate([ring(0.05, z) for z in np.arange(0.08, 0.95, 0.01)])
+        parts = [{"role": "garment", "rank": 2, "key": "breeches", "stand": br,
+                  "bones": ["thigh_l" if p[1] > 0.5 else "shin_l" for p in br]},
+                 {"role": "garment", "rank": 1, "key": "hose", "stand": hose, "bones": ["shin_l"] * len(hose)},
+                 {"role": "skin", "rank": 0, "key": "flesh", "stand": skin,
+                  "bones": ["thigh_l" if p[1] > 0.5 else "shin_l" for p in skin]}]
+        sh = ca.leg_shape(m, parts, wm)
+        self.assertAlmostEqual(sh["band_cm"], 100 * 2 * np.pi * 0.06, delta=1.0)  # not the bag's 62.8
+        self.assertGreater(sh["fullness"], 1.5)
+        self.assertLess(sh["closure"], 1.3)
+
     def test_girths(self):
         self.assertAlmostEqual(ca.hull_girth([(0, 0), (1, 0), (1, 1), (0, 1), (0.5, 0.5)]), 4.0)
         # A tube that narrows from r = 0.10 to r = 0.05 along z.

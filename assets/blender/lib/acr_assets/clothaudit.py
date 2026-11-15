@@ -644,7 +644,7 @@ def leg_shape(m, parts, world, pose="stand", side="l"):
         return None
     hip, knee, ankle = (world[idx[n]][:3, 3] for n in names)
     leg_bones = set(names[:2])
-    cloth, skin, worn = [], [], []
+    cloth, skin, worn, ends = [], [], [], []
     for p in parts:
         if not p["bones"]:
             continue
@@ -654,6 +654,8 @@ def leg_shape(m, parts, world, pose="stand", side="l"):
         elif p["role"] == "garment" and p["rank"] in LEGWEAR_RANKS and p["key"] != "footwear" and on.any():
             cloth.append(p[pose][on])
             worn.append(p["key"])
+            if np.array([b == names[1] for b in p["bones"]]).any():
+                ends.append(p[pose][on])
     if not cloth or not skin:
         return None
     cloth, skin = np.concatenate(cloth), np.concatenate(skin)
@@ -663,11 +665,29 @@ def leg_shape(m, parts, world, pose="stand", side="l"):
     above = [g for s, g in up.items() if 0.04 <= s <= 0.16]
     mid = [g for s, g in up.items() if abs(s - 0.5 * float(np.linalg.norm(knee - hip))) < 0.03]
     band = [(g, s) for s, g in down.items() if 0.01 <= s <= 0.07]
+    # A garment that ends 1-12 cm below the knee (breeches into a knee band): the band is its
+    # inner ring there (the nearest cloth to the bone per angle round the leg), not the
+    # narrowest hull: the fullness hangs over the band as a bag.
+    kax = (ankle - knee) / np.linalg.norm(ankle - knee)
+    for pts in ends:
+        t = (pts - knee) @ kax
+        sel = t > max(0.0, t.max() - 0.04)
+        if 0.01 <= t.max() <= 0.12 and sel.sum() >= 24:
+            rel = pts[sel] - knee
+            u = np.cross(kax, [1.0, 0.0, 0.0])
+            u /= np.linalg.norm(u)
+            x, y = rel @ u, rel @ np.cross(kax, u)
+            x, y = x - x.mean(), y - y.mean()
+            k = ((np.arctan2(y, x) + np.pi) / (2 * np.pi) * 24).astype(int) % 24
+            r = np.hypot(x, y)
+            ring = np.array([r[k == i].min() for i in range(24) if (k == i).any()])
+            if len(ring) >= 18:
+                band = [(float(2 * np.pi * ring.mean()), round(float(t.max()), 3))]
     if not above or not band:
         return {"legwear": "+".join(sorted(set(worn))), "thigh_cm": 0, "above_knee_cm": 0, "band_cm": 0, "calf_cm": 0,
                 "fullness": 0, "closure": 0, "band_gap_cm": 99.0}
     bg, bs = min(band)
-    sk = sdown.get(bs) or min(sdown.values(), default=bg)
+    sk = sdown.get(bs) or min(sdown.items(), key=lambda kv: abs(kv[0] - bs), default=(0, bg))[1]
     sk = sk if sk > 0.05 else bg  # a degenerate skin slab: no closure number
     calf = [g for s, g in down.items() if s > bs]
     # Bare stretch along the leg: sorted distances of the legwear vertices along hip -> ankle.

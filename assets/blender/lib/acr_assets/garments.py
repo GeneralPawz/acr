@@ -54,18 +54,29 @@ CLOTH = {
     # it stands off the body in few broad folds), knitted hose, full slops.
     "doublet": {"thickness": 0.0025, "mass": 0.35, "tension": 18.0, "bending": 1.5, "shrink": 0.02, "margin": 0.005},
     "buffcoat": {"thickness": 0.0045, "mass": 0.90, "tension": 40.0, "bending": 14.0, "shrink": 0.0, "margin": 0.007,
+                 "close": 0.13,  # m: no seam pair is left open (`drape.dress`)
                  # the cloth sleeves of about 1640 (`drape.sleeve_shape`)
-                 "sleeve_shape": {"cuts": 2, "full": 0.010, "elbow": 0.007, "crease": 0.006, "pitch": 0.036,
-                                  "cuff": 0.05, "turn": 0.005}},
+                 "sleeve_shape": {"cuts": 2, "full": 0.022, "elbow": 0.012, "crease": 0.007, "pitch": 0.036,
+                                  "taper": 0.10, "cuff": 0.012, "turn": 0.002, "show": 0.015, "reach": 0.08,
+                                  "skin": 0.005, "wing": (0.035, 0.012)}},
     "hose": {"thickness": 0.0015, "mass": 0.20, "tension": 15.0, "bending": 0.4, "shrink": 0.06, "margin": 0.003},
     "slops": {"thickness": 0.0025, "mass": 0.30, "tension": 12.0, "bending": 1.2, "shrink": 0.0, "margin": 0.004},
     "shirt17": {"thickness": 0.0012, "mass": 0.15, "tension": 10.0, "bending": 0.2, "shrink": 0.0, "margin": 0.002},
     # Full wool breeches: soft enough to fold where the gather pulls them in, no shrink (the
     # fullness must hang); `smooth`: Taubin passes after the sim (`drape.dress`).
     "breeches17": {"thickness": 0.0020, "mass": 0.30, "tension": 15.0, "bending": 1.5, "shrink": 0.0, "margin": 0.004,
-                   "smooth": 8,
+                   "smooth": 12, "weight_smooth": 10,
                    "pleats": {"panels": ("br_front", "br_back"), "edges": ("inseam", "outseam"), "n": 6,
-                              "band": 0.012, "band_reach": 0.12, "mid": 0.004, "waist": 0.0, "waist_reach": 0.07}},
+                              "band": 0.012, "band_reach": 0.12, "mid": 0.004, "waist": 0.0, "waist_reach": 0.07,
+                              # no folds in the top 22 cm (under the coat's skirts)
+                              "under": 22.0,
+                              # the knee band closed on the stocking
+                              "close": {"panel": "knee_band", "off": 0.004},
+                              # the sim's wrinkles low-passed out of the legs (`drape.calm`)
+                              "calm": {"cells": 32, "step": 1.5, "round": 8, "along": 3, "puff": 0.003, "top": 0.0,
+                                       "blend": 0.08, "skin": 0.006, "smooth": 4},
+                              # the top kept close under the fitted coat (`drape.cover`)
+                              "cover": {"drop": 0.14, "off": 0.010, "slope": 0.3}}},
     # Knitted stockings: `in_shoes` drapes them without the shoes and cuts them level that far (m)
     # below the shoes' top edge, so they run down into them.
     "stockings17": {"thickness": 0.0015, "mass": 0.20, "tension": 15.0, "bending": 0.4, "shrink": 0.06, "margin": 0.003,

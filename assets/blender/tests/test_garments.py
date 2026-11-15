@@ -183,6 +183,17 @@ class Pikeman1640(unittest.TestCase):
         # The buff coat's cloth sleeves are shaped (`drape.sleeve_shape`), its skirts flare
         # over the full breeches.
         self.assertIn("sleeve_shape", gm.CLOTH["buffcoat"])
+        sl = gm.CLOTH["buffcoat"]["sleeve_shape"]
+        self.assertGreaterEqual(sl["full"], 0.015)  # a fuller upper arm
+        self.assertTrue(0.01 <= sl["show"] <= 0.02)  # the shirt cuff shows 1-2 cm beyond the hem
+        self.assertIn("wing", sl)
+        # The breeches: calm legs, the top kept under the coat, no folds there, the band closed.
+        pl = gm.CLOTH["breeches17"]["pleats"]
+        self.assertGreater(pl["calm"]["round"], pl["calm"]["along"])  # even round the leg first
+        self.assertLessEqual(pl["cover"]["off"], 0.01)
+        self.assertGreater(pl["under"], 15.0)
+        self.assertEqual(pl["close"]["panel"], "knee_band")
+        self.assertIn("knee_band", gm.breeches17(gm.MEASURE)[0])
         b, _ = gm.buffcoat(gm.MEASURE)
         sk = b["buff_skirt_front"]
         self.assertGreater(sk.outline[1][0] - sk.outline[2][0], 10.0)
