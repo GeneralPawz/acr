@@ -560,6 +560,13 @@ impl Writer {
                 self.u(8);
                 self.u(u64::from(ai[0]) | u64::from(ai[1]) << 1);
             }
+            EditorInput::Inspect { kind, enemy, far, fatal, dir } => {
+                self.u(10);
+                self.bytes(kind.as_bytes());
+                self.u(u64::from(enemy.code()));
+                self.u(u64::from(*far) | u64::from(*fatal) << 1);
+                self.u(u64::from(*dir));
+            }
             EditorInput::Plan { side, plan } => {
                 self.u(9);
                 self.u(u64::from(*side));
@@ -796,6 +803,15 @@ impl<'a> Reader<'a> {
                 let plan = crate::tactics::Plan::from_code(self.u8()?).ok_or_else(|| err("plan"))?;
                 EditorInput::Plan { side, plan }
             }
+            10 => {
+                let kind = self.str()?;
+                let enemy = crate::ingame::InspectEnemy::from_code(self.u8()?).ok_or_else(|| err("inspector enemy"))?;
+                let bits = self.u8()?;
+                if bits > 3 {
+                    return Err(err("inspector switches"));
+                }
+                EditorInput::Inspect { kind, enemy, far: bits & 1 != 0, fatal: bits & 2 != 0, dir: self.u8()? }
+            }
             6 => EditorInput::Nature {
                 group: SpriteGroup::from_code([self.u8()?, self.u8()?]),
                 index: u16::try_from(self.u()?).map_err(|_| err("sprite index"))?,
@@ -861,6 +877,7 @@ impl<'a> Reader<'a> {
                     3 => Ground::White,
                     4 => Ground::Greenscreen,
                     5 => Ground::Sea,
+                    6 => Ground::Dark,
                     _ => return Err(err("ground")),
                 };
                 let mut parts = [None; 3];
@@ -879,6 +896,7 @@ impl<'a> Reader<'a> {
                     patches: Vec::new(),
                     rough: 0,
                     editor: false,
+                    inspector: false,
                 })
             }
             3 => {
@@ -1176,6 +1194,16 @@ mod tests {
             (904, EditorInput::Fight { ai: [false, false] }),
             (905, EditorInput::Plan { side: 0, plan: crate::tactics::Plan::Storm }),
             (906, EditorInput::Plan { side: 1, plan: crate::tactics::Plan::Hold }),
+            (
+                907,
+                EditorInput::Inspect {
+                    kind: "EngM18(EN)".into(),
+                    enemy: crate::ingame::InspectEnemy::RiderFights,
+                    far: true,
+                    fatal: true,
+                    dir: 224,
+                },
+            ),
         ]
     }
 
@@ -1186,6 +1214,7 @@ mod tests {
             rough: 40,
             patches: vec![(100, -200, 300, 71), (5, 6, 7, 0)],
             editor: true,
+            inspector: false,
             ..Default::default()
         });
         let save = SaveGame {
@@ -1320,6 +1349,7 @@ mod tests {
             patches: Vec::new(),
             rough: 0,
             editor: false,
+            inspector: false,
         });
         assert_eq!(SaveGame::decode(&save.encode()).unwrap(), save);
     }

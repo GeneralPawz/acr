@@ -117,12 +117,35 @@
   }
 </script>
 
+{#snippet controls()}
+    <div class="controls">
+      {#each view.controls as c, i (i)}
+        {#if c.t === 'stepper'}
+          <div class="stepper">
+            <button class="step" aria-label="less" data-acr-id={c.less} onclick={() => tap(c.less)}>‹</button>
+            <span>{c.text}</span>
+            <button class="step" aria-label="more" data-acr-id={c.more} onclick={() => tap(c.more)}>›</button>
+          </div>
+        {:else if c.t === 'button'}
+          {@render entry({ id: c.id, text: c.text, on: c.on })}
+        {:else if c.t === 'icon'}
+          <button class="cell icon" class:on={c.on} aria-label={c.text} data-acr-id={c.id} onclick={() => tap(c.id)}>
+            <Sprite parts={c.parts} size={c.size} scale={(CELL - 4) / c.size[0]} />
+          </button>
+        {:else}
+          <p class="line">{c.text}</p>
+        {/if}
+      {/each}
+    </div>
+{/snippet}
+
 {#snippet entry(b: EditorButton)}
   <button class="entry" class:on={b.on} data-acr-id={b.id} onclick={() => tap(b.id)}>{b.text}</button>
 {/snippet}
 
 <aside
   class="drawer"
+  class:inspector={view.inspector}
   aria-label="editor"
   data-acr-hit
   data-acr-touch="editor"
@@ -142,6 +165,9 @@
   </header>
 
   <div class="scroll" data-acr-scroll>
+    {#if view.inspector}
+      {@render controls()}
+    {/if}
     {#if !view.battle}
       <div class="swatches" role="group" aria-label="colours">
         {#each view.swatches as s (s.id)}
@@ -195,25 +221,9 @@
       {/each}
     {/if}
 
-    <div class="controls">
-      {#each view.controls as c, i (i)}
-        {#if c.t === 'stepper'}
-          <div class="stepper">
-            <button class="step" aria-label="less" data-acr-id={c.less} onclick={() => tap(c.less)}>‹</button>
-            <span>{c.text}</span>
-            <button class="step" aria-label="more" data-acr-id={c.more} onclick={() => tap(c.more)}>›</button>
-          </div>
-        {:else if c.t === 'button'}
-          {@render entry({ id: c.id, text: c.text, on: c.on })}
-        {:else if c.t === 'icon'}
-          <button class="cell icon" class:on={c.on} aria-label={c.text} data-acr-id={c.id} onclick={() => tap(c.id)}>
-            <Sprite parts={c.parts} size={c.size} scale={(CELL - 4) / c.size[0]} />
-          </button>
-        {:else}
-          <p class="line">{c.text}</p>
-        {/if}
-      {/each}
-    </div>
+    {#if !view.inspector}
+      {@render controls()}
+    {/if}
     {#if hint}
       <p class="line hint" role="status">{hint}</p>
     {/if}
@@ -438,5 +448,18 @@
   }
   .list .entry {
     width: 100%;
+  }
+
+  /* The unit inspector in an upright window: the drawer lies along the bottom, the model above it. */
+  @media (orientation: portrait) {
+    .drawer.inspector {
+      top: auto;
+      left: 0;
+      width: 100%;
+      height: 46vh;
+      padding: 0 env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+      border-left: none;
+      border-image: none;
+    }
   }
 </style>

@@ -546,3 +546,72 @@ The driver lists `Schlacht`, `Seite 1 Nation -`/`+`, `Seite 1 Jahrhundert -`/`+`
 `Seite 1 Steuerung`, `Seite 2 Steuerung`, `Aufstellen`, `Kampf` and `Befehl Angriff`, `Befehl Sturm`,
 `Befehl Feuergefecht`, `Befehl Halten`; the touch drawer's ids are `editor/battle/plan/attack`,
 `storm`, `fire` and `hold`.
+
+### Inspector (Inspektor)
+
+The main menu's seventh entry, "Inspektor" (below "Editor"; not in the original, #499), is a
+viewer for the units' 3D models: one unit at a time, close up, turned by hand, with its moves
+to play. It is the tool for spotting wrong poses, clips and gear. It starts the editor's blank
+field on a dark backdrop (`ground` `dark`) with a third view of the editor's window; the switch
+in the title row ("Einheiten") leads to the unit list, the way back is the main menu.
+
+**The picture.** While the inspector is on, units are drawn as 3D models and the weather is off
+whatever the settings say (`ThreeD::studio`), and the free camera is on (20 degrees down at the
+start). Each scene is fitted once: the zoom at which the unit's height (62 px on foot, 92 px
+for a rider or a gun) fills 62 % of the free picture's height, or the scene's width 90 % of its
+width, between 1 and 16 (`inspect::zoom_for`); the wheel or a pinch zooms from there. The free
+picture is the part the panel leaves: left of the classic window's edge, the left 56 % of a
+sideways touch window, the top 52 % of an upright one. Every frame the camera is put back so
+the middle of the scene, 27 px above the ground, stands in the middle of the free picture
+(`InGame::editor_inspect`, `View3d::pan`), so the unit stays put while the camera turns. **A
+drag on the picture turns and tilts the camera round the unit** (the modern controls' orbit,
+started by the left button or one finger, also by the right button: a finger that rested
+before it moved; also while the game is paused, so the ▶ gesture is off here); "Ansicht drehen"
+turns it by eighths. **Two fingers (or the middle button) move the picture**: the scene's
+middle follows them on the screen, at most 42 % of the free picture off its middle
+(`Inspector::offset`, `inspect::PAN`), and the camera still turns round the scene from there; a
+new scene stands in the middle again. With an enemy the middle of the scene is the point half
+way between the two where they stand now (`Inspector::middle`), so both stay in the picture
+when they close in. The wheel and the pinch zoom up to 16 here
+(`controls::INSPECT_ZOOM`; 2 elsewhere), under either control scheme. The touch skin leaves
+out the stock, its fold and the minimap while the inspector is on.
+
+| Line | |
+| --- | --- |
+| Nation `<` `>` | the 12 playable nations (the touch drawer: its nation list) |
+| Einheit `<` `>` | the nation's foot, riders and artillery in the order of the editor's list ("6/26 Füsilier (EngM18(EN))"); the touch drawer also shows them as icon cells under Infanterie, Kavallerie, Artillerie, the current one lit |
+| Bewegung `<` `>` | the next or previous clip of the model, with "wie die Simulation" between the last and the first |
+| Ansicht drehen `<` `>` | the camera an eighth of a turn round the unit |
+| Gegner `<` `>` | who stands in front of the unit: keiner; zu Fuss, steht; zu Fuss, kaempft; Reiter, steht; Reiter, kaempft; am Boden (a man who lost a leg at the knee: he crawls). The enemy is England's line musketeer `EngM18` or dragoon `EngD18` (France's `FrnM18`, `FrnD18` against an English unit), player 2's, with 20000 life so the fight lasts; one who "steht" does not look for victims (`Unit::no_search_victim`), against one who "kaempft" the unit gets 20000 life too |
+| Abstand | nah (110 px to a man on foot, 140 to a rider, 70 to a man on the ground) or fern (480 px: musket and bow range) |
+| Kampf | endlos (the 20000 life above) or toedlich: both keep their own life, so the fight ends with a death and its animation. Nobody is captured in the inspector (`World::capture_rule` 3), and a fight that came to a rest goes on: every 16 ticks a unit standing without orders attacks its enemy again (`Editor::inspect_keep_fighting`) |
+| Blut und Wunden | an or aus: the 3D view's gore over the setting (`ThreeD::set_gore`, render only), from the next frame |
+| Neu aufstellen | the same scene again: the fight starts over |
+| Bewegungen des Modells | the clips of the unit's 3D model, as the model file names them. A click loops that clip on the unit whatever the simulation does; "wie die Simulation" ends it. The classic window pages the list by eight, the touch drawer shows it whole |
+
+In the touch skin the drawer opens by itself with the inspector, shows these controls above the
+unit cells, and in an upright window lies along the bottom (46 % of the height) instead of the
+right (`EditorView::inspector`).
+
+Every change of the scene is one editor input (`Inspect { kind, enemy, far, fatal, dir }`, savegame tag
+10): what the inspector placed before is removed, the unit stands in the middle of the map
+facing south-east and, with an enemy, Kampf goes on and the unit is ordered to attack him
+(`combat::attack_obj`), so blow, reach and contact are the simulation's. The camera then looks
+between the two and fits both. 
+
+The clip list is render only (`ThreeD::set_inspect`, `inspect_clips`): it needs the unit's
+model file; without one the view says so and only the fights work. A looped clip plays on the
+model's own frames at one frame per tick; the strike layer and the other pose layers still
+apply when the simulation's state calls for them.
+
+The driver starts it with `{"cmd": "start", "blank": {"inspector": true, "ground": "dark"}}`;
+`state.inspector` has `unit` and `enemy` (`id`, `type`, `life`, `alive`, `anim`), `clip`, `clips`
+and `models`. The classic window's items are `Inspektor Nation -`/`+`, `Inspektor Einheit -`/`+`,
+`Inspektor Bewegung -`/`+`, `Inspektor Drehen -`/`+`, `Inspektor Gegner -`/`+`, `Inspektor Abstand`, `Inspektor Kampf`, `Inspektor Blut`,
+`Inspektor Neu`, `Inspektor Simulation`, `Bewegung <clip>` and `Inspektor Seite -`/`+`; the
+drawer's ids are `editor/inspect/nation/<n>`, `pick/<n>`, `unit/+`, `clipstep/+`, `turn/+`,
+`enemy/+`, `range`, `fatal`, `gore`, `again`, `sim` and `clip/<n>`, and `editor/inspect` for the switch.
+Scenarios: `tests/e2e/inspector.json` (from the main menu, classic) and `touch_inspector.json`;
+the phone layouts are checked in a browser by `tools/browser/touch_inspector.py`
+(`run_touch_inspector.sh`, docs/testing.md "Browser"). The code is
+`crates/acr-game/src/ingame/editor/inspect.rs`.

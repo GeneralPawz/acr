@@ -329,6 +329,12 @@ pub struct ThreeD {
     wounds: super::living_wounds::LivingWounds,
     /// Charring forced by the driver's `burn` (#207), by unit id; over `fire`'s.
     pub(crate) burns: super::gore::Burns,
+    /// The unit inspector's unit (`editor/inspect.rs`): the clip it plays instead of the
+    /// simulation's, with the tick it began, and the clips of its model as last drawn.
+    inspect: Option<(u32, Option<(String, u64)>)>,
+    inspect_clips: Vec<String>,
+    /// The world's tick at the last update, for the start of an inspector clip.
+    inspect_tick: u64,
     /// The last tick drops were added for (frames redraw a tick several times).
     trail_tick: u64,
     /// The tick of the last update: going back means another game, the debris is dropped.
@@ -594,6 +600,9 @@ impl Default for ThreeD {
             trail: super::trail::Trails::default(),
             wounds: Default::default(),
             burns: Default::default(),
+            inspect: None,
+            inspect_clips: Vec::new(),
+            inspect_tick: 0,
             trail_tick: u64::MAX,
             debris_tick: 0,
             marks_keep: false,
@@ -1192,6 +1201,7 @@ impl ThreeD {
         // Ships and guns drawn (`acr_machine`): their hits splash no blood.
         let mut machines: std::collections::HashSet<u32> = std::collections::HashSet::new();
         let now = world.tick.0;
+        self.inspect_tick = now;
         self.crews.begin(now);
         if self.debris_tick > now {
             // A loaded game or a restart: the debris belongs to another battle.
@@ -1504,6 +1514,22 @@ impl ThreeD {
                 inst.time = super::strike_view::strike_time(u.frame, u.anim_frames, &model.clips[c], model.fps);
             } else if let Some(c) = stone_clip(model, world, u) {
                 inst.clip = Some(c);
+            }
+            // The unit inspector: its model's clips are listed, and the chosen one loops on it.
+            if let Some((id, forced)) = &self.inspect
+                && *id == u.id.0
+                && u.alive
+            {
+                if self.inspect_clips.len() != model.clips.len() {
+                    self.inspect_clips = model.clips.iter().map(|c| c.name.clone()).collect();
+                }
+                if let Some((name, since)) = forced
+                    && let Some(c) = model.clip(name)
+                {
+                    let length = model.clips[c].duration.max(1.0 / model.fps);
+                    inst.clip = Some(c);
+                    inst.time = (now.saturating_sub(*since) as f32 / model.fps) % length;
+                }
             }
             if u.alive && u.death == 0 && !model.states.is_empty() && !u.body.crawling() {
                 self.tool_clips.insert(u.id.0, inst.clip);
@@ -2666,6 +2692,54 @@ impl ThreeD {
 }
 
 impl ThreeD {
+    /// The unit the inspector looks at and the clip it loops on it (`None`: the simulation's
+    /// animation). The clip starts over when it changes.
+    pub fn set_inspect(&mut self, unit: Option<u32>, clip: Option<&str>) {
+        let Some(unit) = unit else {
+            self.inspect = None;
+            self.inspect_clips.clear();
+            return;
+        };
+        let was = self.inspect.as_ref().filter(|(u, _)| *u == unit).and_then(|(_, c)| c.clone());
+        if self.inspect.as_ref().is_none_or(|(u, _)| *u != unit) {
+            self.inspect_clips.clear();
+        }
+        let clip = clip.map(|name| match was {
+            Some((n, since)) if n == name => (n, since),
+            _ => (name.to_owned(), self.inspect_tick),
+        });
+        self.inspect = Some((unit, clip));
+    }
+
+    /// The clips of the inspected unit's model: empty until it is loaded and drawn.
+    pub fn inspect_clips(&self) -> &[String] {
+        &self.inspect_clips
+    }
+
+    /// The unit inspector's studio: units are drawn as 3D models and the weather is off,
+    /// whatever the settings say.
+    pub fn studio(&mut self) {
+        if self.models == Models::Off {
+            self.models = Models::Units;
+        }
+        self.weather_override = Some(Weather::Off);
+    }
+
+    /// Blood, wounds and torn bodies on or off, over the setting (the unit inspector's switch).
+    pub fn set_gore(&mut self, on: bool) {
+        self.gore = if on { Gore::Full } else { Gore::Off };
+    }
+
+    /// Whether any gore is drawn (the setting `gore` is not `off`).
+    pub fn gore_on(&self) -> bool {
+        self.gore != Gore::Off
+    }
+
+    /// Whether units are drawn as 3D models (the setting `models`).
+    pub fn models_on(&self) -> bool {
+        self.models != Models::Off
+    }
+
     /// How charred unit `index` is (0..1): grows while he burns, stays on the corpse of the
     /// burned (`fire_view.rs`). For the model's burn tint (#207).
     #[allow(dead_code)]

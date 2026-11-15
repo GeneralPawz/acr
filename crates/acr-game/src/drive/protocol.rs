@@ -386,6 +386,7 @@ pub(super) fn blank(b: &Value) -> Result<Start, String> {
         "white" => Ground::White,
         "greenscreen" | "green" => Ground::Greenscreen,
         "sea" => Ground::Sea,
+        "dark" | "studio" => Ground::Dark,
         other => {
             return Err(format!("blank: unknown ground {other:?}: grass, dirt, snow, white, greenscreen or sea"));
         }
@@ -439,7 +440,8 @@ pub(super) fn blank(b: &Value) -> Result<Start, String> {
             water,
             patches,
             rough: num(b, "rough", 0).clamp(0, 100),
-            editor: b.get("editor").and_then(Value::as_bool).unwrap_or(false),
+            editor: ["editor", "inspector"].iter().any(|k| b.get(*k).and_then(Value::as_bool) == Some(true)),
+            inspector: b.get("inspector").and_then(Value::as_bool).unwrap_or(false),
         },
         players: uint(b, "players").unwrap_or(2).clamp(1, 2) as usize,
         nation: uint(b, "nation").unwrap_or(0) as usize,

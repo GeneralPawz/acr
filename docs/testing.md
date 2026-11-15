@@ -259,7 +259,7 @@ every texture 0, no sprites, no units, an empty `SEA2`; `acr-game/src/blank_map.
 | Key | Values |
 | --- | --- |
 | `size` | `normal` (default), `large`, `huge` |
-| `ground` | `grass` (texture 0, the editor's green, default), `dirt` (71), `snow` (103); `white` and `greenscreen` (or `green`): a flat colour, see below; `sea`: open water to the map's edge (deep everywhere), for ship fights: `spawn` ships of both owners (#408) |
+| `ground` | `grass` (texture 0, the editor's green, default), `dirt` (71), `snow` (103); `white`, `greenscreen` (or `green`) and `dark` (the unit inspector's backdrop): a flat colour, see below; `sea`: open water to the map's edge (deep everywhere), for ship fights: `spawn` ships of both owners (#408) |
 | `slope` | degrees (a ramp rising eastwards from `centre.x − 750` to `centre.x + 750`, flat beyond) or `{"deg": 5, "x0": 7000, "x1": 8000}` |
 | `hill` | `true` (radius 600, height 100 px at the centre) or `{"x", "y", "radius", "height"}`: a round cosine hill |
 | `water` | `true` (2000 × 1200 px east of the centre) or `{"x", "y", "w", "h"}`: a rectangle of `SEA2` depth, shallow at its edge and deep (200; ships float above 130, land units stop above 128) from 160 px in; the terrain stays at its height (water is drawn flat). With models the 3D path draws the water surface (docs/water.md) under both cameras; `ACR_WATER=original` keeps the original tint |
@@ -275,6 +275,7 @@ every texture 0, no sprites, no units, an empty `SEA2`; `acr-game/src/blank_map.
 | `dart_fire` | the optional dart-fire rule: under `hit_locations` a blowpipe dart (`VAFLIA`, flag `F`) sets a man on fire and a dart burst leaves a ground fire (simulation.md "Shell fires"); default `false` |
 | `ball_terrain` | the optional ball-terrain rule: under `hit_locations` balls fell trees and knock stones (simulation.md "Balls against trees and stones"); put them there with `{"cmd": "map_object", "group": "tree"\|"stone", "index": 0, "at": [[x, y]], "rock": false}` (`"struck": "felled"|"splintered"|"chipped", "dir": d` puts them there already struck, for close-ups and the frame-time bench; `"source": k` also makes each a gathering source of `ResType` k (2 stone, 3 field food), and group `"source"` places the source alone, so peasants work stone and fields on the blank field); default `false` |
 | `editor` | `true`: the test editor's field (the placing window shown, fighting off at the start; docs/controls.md) |
+| `inspector` | `true`: the editor's field on the unit inspector, its first unit placed, 3D models and the free camera on; with `ground` `dark` on the viewer's dark backdrop (docs/controls.md "Inspector"); `state.inspector` reports it |
 | `hud` | `false` hides the interface from the start, like `{"cmd": "hud", "on": false}` |
 | `corpse_decay` | `full` or `half`: overrides the setting ([rendering-3d.md](rendering-3d.md)) |
 | `decay_stain` | `on` or `off`: overrides the setting (the ground stains under decaying corpses, [rendering-3d.md](rendering-3d.md#decay-stains)) |
@@ -572,6 +573,12 @@ a swipe left from the right edge opens the editor drawer (width at most `min(88v
 button 44 CSS pixels), a cell is armed, a swipe right closes it, a tap on the free map places the units, and the bar button
 opens and closes it. Screenshots `touch332-<viewport>-<step>.png` go to `--shots`.
 Run it with `~/browser/venv/bin/python tools/browser/touch_skin.py --url 'http://127.0.0.1:8090/?game=/game/'`.
+
+**The unit inspector** (`tools/browser/touch_inspector.py`, #499): the same kind of run at 844x390 and 390x844. It starts
+the blank field on the inspector and checks that the drawer opened by itself, lies right of a sideways window and along
+the bottom of an upright one, shows the controls above the unit cells, that a tap on a cell places that unit, that the clip
+stepper names a clip of the model and that a drag on the free picture turns the camera. `tools/browser/run_touch_inspector.sh`
+stages the game folder, builds the bundle, serves the web build and runs it; screenshots `inspector-<viewport>-<step>.png`.
 
 ## Scenario files
 

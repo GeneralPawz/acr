@@ -1,0 +1,38 @@
+{
+  "name": "inspector",
+  "description": "The unit inspector (#499): the main menu's Inspektor entry starts the blank field on the inspector's view with England's first unit placed alone in the middle. The unit arrows step through the nation's units (the fifth step is the line musketeer EngM18), the enemy arrow puts a French musketeer who stands still in front of him and he is attacked: after 400 ticks the enemy has lost life and the unit none. 'am Boden' replaces him with a man on the ground; the switch leads to the unit list.",
+  "touch": false,
+  "steps": [
+    {"cmd": "wait", "until": {"screen": "MainMenu"}},
+    {"cmd": "click", "label": "Inspektor", "exact": true},
+    {"cmd": "wait", "until": {"in_game": true}},
+    {"cmd": "wait", "ticks": 3},
+    {"cmd": "state", "expect": [
+      {"path": "state.inspector.unit.type", "contains": "(EN)"},
+      {"path": "state.inspector.enemy", "eq": null},
+      {"path": "state.counts.0.units", "len_eq": 1}]},
+    {"cmd": "click", "label": "Inspektor Einheit +", "exact": true},
+    {"cmd": "click", "label": "Inspektor Einheit +", "exact": true},
+    {"cmd": "click", "label": "Inspektor Einheit +", "exact": true},
+    {"cmd": "click", "label": "Inspektor Einheit +", "exact": true},
+    {"cmd": "click", "label": "Inspektor Einheit +", "exact": true},
+    {"cmd": "wait", "ticks": 2},
+    {"cmd": "state", "expect": [
+      {"path": "state.inspector.unit.type", "eq": "EngM18(EN)"},
+      {"path": "state.counts.0.units.EngM18(EN)", "eq": 1},
+      {"path": "state.counts.0.units", "len_eq": 1}]},
+    {"cmd": "click", "label": "Inspektor Gegner +", "exact": true},
+    {"cmd": "wait", "ticks": 400},
+    {"cmd": "state", "expect": [
+      {"path": "state.inspector.enemy.type", "eq": "FrnM18(FR)"},
+      {"path": "state.inspector.enemy.life", "lt": 20000},
+      {"path": "state.inspector.enemy.alive", "eq": true},
+      {"path": "state.inspector.unit.alive", "eq": true}]},
+    {"cmd": "click", "label": "Inspektor Gegner -", "exact": true},
+    {"cmd": "click", "label": "Inspektor Gegner -", "exact": true},
+    {"cmd": "wait", "ticks": 2},
+    {"cmd": "state", "expect": {"path": "state.counts.1.units.FrnM18(FR)", "eq": 1}},
+    {"cmd": "click", "label": "Einheiten", "exact": true},
+    {"cmd": "state", "expect": {"path": "state.inspector", "exists": false}}
+  ]
+}

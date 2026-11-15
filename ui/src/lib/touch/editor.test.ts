@@ -20,6 +20,7 @@ const view = (over: Partial<EditorView> = {}): EditorView => ({
   title: 'Einheit waehlen',
   toggle: button('editor/battle', 'Schlacht'),
   battle: false,
+  inspector: false,
   status: '',
   armed: null,
   swatches: [0, 1, 2, 3, 4, 5, 6, 7].map((p) => ({ id: `editor/owner/${p}`, label: `Spieler ${p + 1}`, colour: [p * 30, 40, 80] as [number, number, number], team: p === 3 ? 2 : null, on: p === 0, teams: p === 3 })),

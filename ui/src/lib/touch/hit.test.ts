@@ -47,7 +47,7 @@ describe('touch skin hit regions', () => {
   it('marks the editor strip, the placing chip and the drawer', async () => {
     const model = new UiState(bridge);
     const view = {
-      title: 'Editor', toggle: { id: 'editor/battle', text: 'Schlacht', on: false }, battle: false, status: '', armed: 'Typ: x',
+      title: 'Editor', toggle: { id: 'editor/battle', text: 'Schlacht', on: false }, battle: false, inspector: false, status: '', armed: 'Typ: x',
       swatches: [], entries: [], army: [], groups: [], levels: [], controls: [],
     };
     model.receive({ t: 'view', rev: 1, mode: 'game', touch: { resources: [], icons: [], army: [], paused: false, minimap: false, speed: 50, speed_text: ['', ''] }, editor: view } as never);

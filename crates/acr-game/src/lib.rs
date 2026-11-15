@@ -1256,7 +1256,8 @@ impl Game {
         if let Some(window) = &self.window {
             self.touches.set_scale(window.scale_factor() * self.input_factor());
         }
-        let paused = matches!(&self.mode, Mode::InGame(g) if g.paused());
+        // (The unit inspector turns its camera with one finger, paused or not: no ▶ there.)
+        let paused = matches!(&self.mode, Mode::InGame(g) if g.paused() && !g.inspecting());
         let now = self.touch_now();
         let gestures = self.touches.event(id, phase, at, now, paused);
         self.gestures(gestures, event_loop);
@@ -1283,7 +1284,8 @@ impl Game {
             self.touch_time = Some(std::time::Duration::from_millis(ms));
         }
         let now = self.touch_now();
-        let paused = matches!(&self.mode, Mode::InGame(g) if g.paused());
+        // (The unit inspector turns its camera with one finger, paused or not: no ▶ there.)
+        let paused = matches!(&self.mode, Mode::InGame(g) if g.paused() && !g.inspecting());
         let mut gestures = match phase {
             Some(phase) => self.touches.event(id, phase, [f64::from(pos[0]), f64::from(pos[1])], now, paused),
             None => Vec::new(),

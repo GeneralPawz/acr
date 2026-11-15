@@ -39,6 +39,13 @@
   $effect(() => {
     if (!editor) editorOpen = false;
   });
+  // The unit inspector is its drawer: it opens with it, once (the player may still close it).
+  let inspecting = false;
+  $effect(() => {
+    const now = editor?.inspector === true;
+    if (now && !inspecting) editorOpen = true;
+    inspecting = now;
+  });
 
   // A finger that starts in the edge strip and travels left opens the drawer; any other touch there does nothing.
   let edge: { id: number; x: number; y: number } | null = null;
@@ -58,7 +65,9 @@
 
   // The resource panel's fold, like the minimap's (transient: per session, the page's own state).
   let resourcesOpen = $state(true);
-  const hasResources = $derived((touch?.resources.length ?? 0) > 0);
+  // The unit inspector is a model viewer: no stock and no map (docs/controls.md "Inspector").
+  const viewer = $derived(model.editor?.inspector === true);
+  const hasResources = $derived(!viewer && (touch?.resources.length ?? 0) > 0);
 
   /** The number the game drew for a resource (a lot of money has its own word). */
   function numberOf(r: ResourceView): string {
@@ -249,7 +258,7 @@
         <button class="bar" aria-label="menu" data-acr-id="bar/menu" onclick={() => tapBar('bar/menu')}>
           <span class="bar-glyph"><Glyph name="menu" /></span>
         </button>
-        {#if touch.minimap && mapImage}
+        {#if touch.minimap && mapImage && !viewer}
           <button class="bar" aria-label="minimap" aria-expanded={mapOpen} data-acr-id="bar/minimap" onclick={() => (mapOpen = !mapOpen)}>
             <span class="bar-glyph"><Glyph name={mapOpen ? 'map-open' : 'map-closed'} /></span>
           </button>
@@ -277,7 +286,7 @@
         </div>
       {/if}
     </header>
-    {#if resourcesOpen}
+    {#if resourcesOpen && !viewer}
       <ul class="resources" data-acr-hit data-acr-touch="resources">
         {#each touch.resources as r (r.key)}
           {@const icon = iconOf(r)}
@@ -296,7 +305,7 @@
       </div>
     {/if}
 
-    {#if touch.minimap && mapImage}
+    {#if touch.minimap && mapImage && !viewer}
       <div class="minimap" data-acr-touch="minimap" data-acr-hit>
         {#if mapOpen}
           <div

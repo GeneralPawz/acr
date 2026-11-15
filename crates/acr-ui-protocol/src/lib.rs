@@ -420,6 +420,9 @@ pub struct EditorView {
     pub toggle: EditorButton,
     /// The battle view is shown (`entries`, `swatches` and `groups` are empty then).
     pub battle: bool,
+    /// The unit inspector (docs/controls.md "Inspector"): the drawer opens by itself, shows
+    /// `controls` above the unit list and lies along the bottom of an upright window.
+    pub inspector: bool,
     pub status: String,
     /// What a tap on the map places (`Typ: ..`, `Armee ..`), if anything.
     pub armed: Option<String>,
