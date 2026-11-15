@@ -171,7 +171,7 @@ impl Editor {
             controls: Vec::new(),
         };
         if battle {
-            out.controls = self.battle_touch(ctx);
+            out.controls = self.battle_touch(ctx, local);
             return Some(out);
         }
         let teams = self.sides == sides::Mode::Teams;
@@ -593,7 +593,7 @@ mod tests {
         assert_eq!(no(&e, "editor/nation/3", false), Reject::Hidden);
         assert_eq!(no(&e, "editor/battle/nation/2/+", false), Reject::NoWidget);
         assert_eq!(e.intent(&w, "editor/battle", false), Ok(Target::Act(Act::Battle(battle::Act::Toggle))));
-        e.battle_act(battle::Act::Nation(0, 6));
+        e.battle_act(battle::Act::Nation(0, 6), 0);
         assert!(presets::eras(8).len() < 2);
         assert_eq!(no(&e, "editor/battle/era/0/+", false), Reject::Hidden);
         assert!(e.intent(&w, "editor/battle/era/1/+", false).is_ok());

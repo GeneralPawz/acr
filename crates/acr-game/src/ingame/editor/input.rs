@@ -39,6 +39,9 @@ pub enum Input {
     /// the battle controller starts (or changes who commands a side). `ai` is per side
     /// whether the controller commands all of it, otherwise only its guns.
     Fight { ai: [bool; 2] },
+    /// A ready command of the battle view: the controller commands `side` (0 or 1) under
+    /// `plan`, and the fight starts if it does not run yet.
+    Plan { side: u8, plan: crate::tactics::Plan },
     /// A tree or stone of the Natur list: type `index` of the group's sprite list at `at`.
     Nature { group: SpriteGroup, index: u16, at: (i32, i32) },
     /// One stamp of the terrain brush ([`acr_mapgen::edit`]); a stroke is a run of them.
@@ -87,6 +90,7 @@ pub fn apply(world: &mut World, map: &mut M3dMap, editor: &mut Editor, input: &I
         }
         Input::Battle { nation, era, size, fight } => editor.go_to_battle(world, *nation, *era, *size, *fight),
         Input::Fight { ai } => editor.start_fight(world, *ai),
+        Input::Plan { side, plan } => editor.order(world, usize::from(*side & 1), *plan),
         Input::Nature { group, index, at } => {
             let (status, added) = nature(world, map, *group, *index, *at);
             objects = added;

@@ -1,0 +1,35 @@
+{
+  "name": "editor_battle_orders",
+  "description": "The battle view's ready commands on the real data: England against Frankreich, Mittel, Seite 1 the player's and Seite 2 on KI. Without armies a command says 'Erst aufstellen' and starts nothing. After Aufstellen, 'Befehl Halten' starts the fight with Seite 1 holding: its line infantry stands where it was placed while the KI attacks. 'Befehl Sturm' then sends it to the charge at once (phase Assault, charges), and after 1500 ticks both sides' line infantry has casualties.",
+  "touch": false,
+  "steps": [
+    {"cmd": "start", "blank": {"editor": true}},
+    {"cmd": "wait", "ticks": 5},
+    {"cmd": "click", "label": "Schlacht", "exact": true},
+    {"cmd": "click", "label": "Befehl Angriff", "exact": true, "note": "nothing placed yet"},
+    {"cmd": "wait", "ticks": 2},
+    {"cmd": "state", "expect": {"path": "state.battle", "exists": false}},
+    {"cmd": "click", "label": "Aufstellen", "exact": true},
+    {"cmd": "wait", "ticks": 2},
+    {"cmd": "state", "expect": [
+      {"path": "state.counts.0.units.EngM18(EN)", "eq": 360},
+      {"path": "state.counts.1.units.FrnM18(FR)", "eq": 360}]},
+    {"cmd": "click", "label": "Befehl Halten", "exact": true},
+    {"cmd": "wait", "ticks": 400},
+    {"cmd": "state", "expect": [
+      {"path": "state.battle.sides.0.plan", "eq": "hold"},
+      {"path": "state.battle.sides.1.plan", "eq": "attack"},
+      {"path": "state.battle.sides.0.charges", "eq": 0},
+      {"path": "state.battle.sides.0.halts", "ge": 1}]},
+    {"cmd": "click", "label": "Befehl Sturm", "exact": true},
+    {"cmd": "wait", "ticks": 60},
+    {"cmd": "state", "expect": [
+      {"path": "state.battle.sides.0.plan", "eq": "storm"},
+      {"path": "state.battle.sides.0.phase", "eq": "Assault"},
+      {"path": "state.battle.sides.0.charges", "ge": 1}]},
+    {"cmd": "wait", "ticks": 1500},
+    {"cmd": "state", "expect": [
+      {"path": "state.counts.0.units.EngM18(EN)", "lt": 360},
+      {"path": "state.counts.1.units.FrnM18(FR)", "lt": 360}]}
+  ]
+}

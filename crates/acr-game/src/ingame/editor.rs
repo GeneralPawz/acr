@@ -713,7 +713,7 @@ impl Editor {
             Look::Text,
         ));
         if self.battle.on {
-            out.extend(self.battle_items());
+            out.extend(self.battle_items(local));
             out.push(corner);
             return out;
         }
@@ -1142,7 +1142,7 @@ impl Editor {
                 }
             }
             Act::Army(a) => self.army_act(a),
-            Act::Battle(a) => out.input = self.battle_act(a),
+            Act::Battle(a) => out.input = self.battle_act(a, local),
             Act::Pick(p) => {
                 self.pick = if self.pick == Some(p) { None } else { Some(p) };
                 self.level = 0;

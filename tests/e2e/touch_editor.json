@@ -1,6 +1,6 @@
 {
   "name": "touch_editor",
-  "description": "The test editor in the touch skin (#494, docs/webui.md 'Test editor'): the view names the nation list, the colours and the cells, every control is an editor/ intent that does what the classic window's click does (a nation, a colour, a unit; a right click on a unit opens its levels, a level picks it; stop ends placing and is refused when nothing is armed), the map takes taps where the classic window stood, and the battle view places and fights. Unknown ids and a nation out of range are refused.",
+  "description": "The test editor in the touch skin (#494, docs/webui.md 'Test editor'): the view names the nation list, the colours and the cells, every control is an editor/ intent that does what the classic window's click does (a nation, a colour, a unit; a right click on a unit opens its levels, a level picks it; stop ends placing and is refused when nothing is armed), the map takes taps where the classic window stood, and the battle view places, fights and takes a ready command (Sturm). Unknown ids and a nation out of range are refused.",
   "args": ["--ui", "touch"],
   "steps": [
     {"cmd": "start", "blank": {"editor": true}},
@@ -26,6 +26,10 @@
     {"cmd": "ui_send", "msg": {"t": "intent", "seq": 12, "id": "editor/battle/go", "action": {"t": "click", "button": "left"}}},
     {"cmd": "wait", "ticks": 2},
     {"cmd": "state", "expect": {"path": "state.counts.0.units.EngM18(EN)", "eq": 360}},
-    {"cmd": "ui_send", "msg": {"t": "intent", "seq": 13, "id": "editor/battle/fight", "action": {"t": "click", "button": "left"}}}
+    {"cmd": "ui_send", "msg": {"t": "intent", "seq": 13, "id": "editor/battle/fight", "action": {"t": "click", "button": "left"}}},
+    {"cmd": "ui_send", "msg": {"t": "intent", "seq": 14, "id": "editor/battle/plan/storm", "action": {"t": "click", "button": "left"}}},
+    {"cmd": "wait", "ticks": 25},
+    {"cmd": "state", "expect": [{"path": "state.battle.sides.0.plan", "eq": "storm"}, {"path": "state.battle.sides.0.charges", "ge": 1}]},
+    {"cmd": "ui_send", "msg": {"t": "intent", "seq": 15, "id": "editor/battle/plan/retreat", "action": {"t": "click", "button": "left"}}, "expect": {"ok": false}}
   ]
 }

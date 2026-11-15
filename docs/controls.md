@@ -395,7 +395,8 @@ shift the nation indices the rest of the editor counts by) switches the window t
 view and back ("Einheiten"). Not in the original. It offers, for Seite 1 (player 1) and Seite 2
 (player 2), a nation (arrows, the 12 playable ones; England against Frankreich to start) and
 a century where the nation has several, then the size (Klein, Mittel, Gross), a switch per side
-("Seite 1: Spieler", "Seite 2: KI"), "Aufstellen" and the swords button.
+("Seite 1: Spieler", "Seite 2: KI"), "Aufstellen", the swords button and the four ready
+commands beside it (Angriff, Sturm, Feuergefecht, Halten).
 
 "Aufstellen" places both armies (the army presets above) facing each other across the middle
 of the map: Seite 1 facing east on the west half, Seite 2 facing west on the east half, each
@@ -417,10 +418,30 @@ army is the controller's. The switches also work while the fight runs, and KI ag
 there to watch. The controller is not in the original, whose AI cannot drive editor armies
 (only its role names and cadence are reused); it lives in `acr-game`, not in the simulation.
 
+*Ready commands (Befehle).* Four text buttons beside the swords command the army the player
+is in: the side of the player he controls ("Ich steuere"; player 2 commands Seite 2, every
+other player Seite 1; the touch drawer names it, "Befehle an Seite 1:"). A command hands that
+side to the controller under a plan (`tactics::Plan`; its switch then reads KI) and starts the
+fight if it does not run yet, so "Aufstellen" and "Angriff" are a battle. They work while
+the fight runs, any number of times, and the one the controller follows is lit. The switch
+back to Spieler takes the army out of the controller's hands again. Without placed armies the
+status line says "Erst aufstellen" and nothing changes.
+
+| Befehl | What the side does |
+| --- | --- |
+| Angriff | the controller's whole battle as described below: cannonade, advance in bounds, fire, second bound, charge; the wings ride round the flanks. A side on KI does this unless told otherwise |
+| Sturm | no cannonade and no firefight: line and melee foot charge at once (`AttackMove` at the nearest enemy foot), the wings ride at once |
+| Feuergefecht | the advance to 9/10 of the muskets' reach, then fire from there for good: no second bound, and a charge only by melee foot at an enemy within its rush distance. The wings flank as in the attack |
+| Halten | the foot stands ground where it is and fires; melee foot charges only what comes within its rush distance; the wings stay home (they still intercept enemy riders). Given during a march or a charge, every body is stopped and re-formed 32 px on (a formation drops a move of under 16 px, `formation::send`), and wings on a flank route or in a charge ride home and re-form |
+
+The guns, the squares against cavalry, the skirmishers, the reserve and the native doctrines'
+rules are the same under every command. A command is an editor input (`Plan { side, plan }`,
+savegame tag 9) like the swords, so a savegame replays it at its tick.
+
 *The controller.* Pure and integer only: from the world and its own small state it produces
 `Command`s, every 20 ticks per side (side 2 offset by 10, the original's brigade orders run on
 the owner's city tick, 0x434486), and never changes the world. Its orders are not in the
-savegame: it is built again from the logged editor inputs (`Battle`, `Fight`) and gives the same
+savegame: it is built again from the logged editor inputs (`Battle`, `Fight`, `Plan`) and gives the same
 orders on the replay, at the same point of the tick as live play (after the player's and the
 mission's, before the step). Each army is a list of bodies with a duty (`Guns`, `Line`,
 `Melee`, `Screen`, `Missile`, `Cavalry`, `Reserve`) from the roster's roles; the first
@@ -515,10 +536,13 @@ outermost warrior group on each side (with at least 3 groups) rides round the fl
 wing, 600 px outside the box. Riders: the lancer wedges hold until the mounted archers have
 shot for 200 ticks from their halt, then charge from wherever they stand; the wings flank.
 
-*Guns* (`guns.rs`): see above. *Driver:* `state.battle.sides[0..1]` has `phase`, `alive`,
+*Guns* (`guns.rs`): see above. *Driver:* `state.battle.sides[0..1]` has `phase`, `plan` (`attack`, `storm`, `fire`, `hold`), `alive`,
 `guns_drift_max`, `gun_orders`, `halts`, `karrees`, `charges`, `rallies` and `reserves` while
 the controller runs. `tests/e2e/editor_battle_tactics.json` plays England against Frankreich
-(Mittel, both KI) for 2500 ticks on the real data. The code is
+(Mittel, both KI) for 2500 ticks on the real data; `editor_battle_orders.json` gives Seite 1
+the ready commands in turn. The code is
 `crates/acr-game/src/ingame/editor/battle.rs` (`origins`, `gap_of`, `deploy`, `armies`).
 The driver lists `Schlacht`, `Seite 1 Nation -`/`+`, `Seite 1 Jahrhundert -`/`+`, `Groesse -`/`+`,
-`Seite 1 Steuerung`, `Seite 2 Steuerung`, `Aufstellen` and `Kampf`.
+`Seite 1 Steuerung`, `Seite 2 Steuerung`, `Aufstellen`, `Kampf` and `Befehl Angriff`, `Befehl Sturm`,
+`Befehl Feuergefecht`, `Befehl Halten`; the touch drawer's ids are `editor/battle/plan/attack`,
+`storm`, `fire` and `hold`.

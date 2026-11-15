@@ -123,6 +123,8 @@ pub(super) struct Wings {
     wings: Vec<Wing>,
     /// The distance of each enemy body to the own foot at the last decision.
     seen: Vec<Option<i32>>,
+    /// The side was told to hold: the wings on a flank route or in a charge ride home.
+    recalled: bool,
 }
 
 /// Whether the enemy body is a square (the group `KARE`).
@@ -213,6 +215,11 @@ impl Wings {
         !self.wings.get(i).is_some_and(|w| w.gave_up)
     }
 
+    /// Calls the wings home at the next decision ([`super::Plan::Hold`]).
+    pub(super) fn recall(&mut self) {
+        self.recalled = true;
+    }
+
     /// One decision of the wings of `v.me` and of the foot bodies `flank` that flank like wings;
     /// they hold until the tick `release`.
     pub(super) fn decide(
@@ -237,12 +244,16 @@ impl Wings {
         }
         let sent = self.intercept(v);
         let mut ctx = Ctx { world, v, release, out, report };
-        for i in sent {
+        for &i in &sent {
             self.wings[i].melee(&mut ctx, i, true);
             ctx.report.charges += 1;
         }
+        let recalled = std::mem::take(&mut self.recalled);
         for i in (0..n).filter(|&i| is_wing(i) && v.mine[i].alive > 0) {
-            if !self.wings[i].gave_up {
+            let away = matches!(self.wings[i].state, State::Flank { .. } | State::Charge { aim: Aim::Best { .. }, .. });
+            if recalled && away && !sent.contains(&i) {
+                self.wings[i].rally(&mut ctx, i);
+            } else if !self.wings[i].gave_up {
                 self.wings[i].step(&mut ctx, i);
             }
         }
