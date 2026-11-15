@@ -252,6 +252,10 @@ def command(stand, weapon_rot=(62, 0, -6), point=(-0.24, -0.50, 1.50)):
     return p
 
 
+SHOWN = {"socket.hand_r": 1}
+HIDDEN = {"socket.hand_r": 0}
+
+
 def officer_clips(s):
     """{clip: [(frame, pose)]} for the officer of SPEC `s` from its `.MD` lines."""
     md = s["md"]
@@ -289,6 +293,13 @@ def officer_clips(s):
             if key in md:
                 m = cl.md_frames(md[key])
                 out[key] = cl.frames(m, rig.clip_keys(m, keys))
+    if melee == "spear":
+        # The spontoon is hidden in the crawl (`build`), so every other clip keys it shown.
+        shown = {}
+        for key, clip in out.items():
+            for i, (f, p) in enumerate(clip):
+                # (the original is kept alive beside its copy: a freed dict's id is reused)
+                clip[i] = (f, shown.setdefault(id(p), (p, dict(p, show=SHOWN)))[1])
     return out
 
 
@@ -299,10 +310,19 @@ def build(ctx, s):
     ch.morphs(extra_deflate=ch.layers["gear"])
     ch.masks()
     clips = officer_clips(s)
+    # A pole weapon: every frame keyed, so both hands stay on the shaft between the keys
+    # (`clips.solved`), and dropped for the crawl as the pikeman's pike (in the crawling
+    # hand it swept through trunk and leg, clip audit #509).
+    spear = MELEE[s["weapon"]] == "spear"
     for clip, keys in clips.items():
-        cl.apply(ch.arm, clip, keys)
+        cl.apply(ch.arm, clip, keys, dense=spear)
     for clip, keys in crawl.clips().items():
-        am.add_clip(ch.arm, clip, keys)
+        if spear:
+            k = list(keys)
+            k[0] = (k[0][0], dict(k[0][1], show=HIDDEN))
+            cl.apply(ch.arm, clip, k)
+        else:
+            am.add_clip(ch.arm, clip, keys)
     am.set_clip(ch.arm, "STAND")
     report = {}
     colours = ch.colours(ctx.ref, s["palette"], report=report, mix=s["mix"], fixed=s["fixed"])
@@ -310,6 +330,9 @@ def build(ctx, s):
     heads.finish(ch)
     ch.arm.animation_data.action = None
     am.pose(ch.arm, cl.solve(ch.arm, clips["STAND"][0][1]))
+    # Scales back to 1 before export: a zero socket scale would be baked into the item's node.
+    for pb in ch.arm.pose.bones:
+        pb.scale = (1.0, 1.0, 1.0)
     tris = ch.triangles()
     prepare_export(ch.all_meshes(), ctx.root, acr_triangles=sum(tris.values()),
                    acr_clips=list(clips) + list(crawl.CLIPS), acr_limb_radius=ch.limb_radius,

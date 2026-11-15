@@ -212,5 +212,31 @@ class Masks(unittest.TestCase):
             registry.mask("hat_lace", lambda *a, **k: None)
 
 
+class PoleBesideBody(unittest.TestCase):
+    """#510: a two-handed pole weapon passes beside the holder, its point still on the target."""
+
+    def test_beside_keeps_the_point_and_moves_the_grip_out(self):
+        for target, pitch, tip in ((clips.TARGET_MID, 88, 1.52), (clips.TARGET_DOWN, 130, 1.52), (clips.TARGET_MID, 92, 1.81)):
+            grip, r = clips.beside(target, pitch, tip, 0.30)
+            point = clips.add(grip, clips.axis(r), tip)
+            for a, b in zip(point, target):
+                self.assertAlmostEqual(a, b, places=6)
+            self.assertAlmostEqual(grip[0], target[0] - 0.30, places=4)
+
+    def test_spear_strikes_hold_the_shaft_right_of_the_body(self):
+        strikes = clips.spear_strikes(21)
+        for name in ("ATTACK_THRUST_MID", "ATTACK_THRUST_DOWN", "ATTACK_FINISH"):
+            for _, pose in strikes[name]:
+                grip = pose["reach"]["r"][0]
+                self.assertLessEqual(grip[0], -0.27, name)
+                self.assertIn("l", pose["reach"], name)  # both hands on the shaft
+                # The left hand's goal lies on the weapon's axis.
+                ax = clips.axis(pose["world"]["socket.hand_r"])
+                d = [a - b for a, b in zip(pose["reach"]["l"][0], grip)]
+                along = sum(a * b for a, b in zip(d, ax))
+                off = sum((a - along * b) ** 2 for a, b in zip(d, ax)) ** 0.5
+                self.assertLess(off, 1e-3, name)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -569,7 +569,9 @@ carry a finishing clip per weapon (`assets/blender/lib/acr_assets/finish.py`):
   back to the stand by 30 % of the clip and kept: no lunge, nothing held.
   - sword / sabre / hanger (`sword`): standing over him, the point stabbed down
     one-handed, 30° off vertical (`SWORD_DOWN` 150°);
-  - spear / pike / halberd / spontoon (`spear`): both hands, the point driven down (156°);
+  - spear / pike / halberd / spontoon (`spear`): both hands, the point driven down (156°),
+    the shaft 0.30 m right of the body (`clips.beside`, #510; in the centre plane it ran up
+    through the holder's face), then ported in both hands (`finish.PORT`);
   - axe / tomahawk / war club / macuahuitl / stone club (`club`, `tomahawk`, meso's
     macuahuitl): from overhead, a chop down (128°, the striking face's point vector);
   - knife (`knife`, no unit uses it yet): down on the right knee, a stab;

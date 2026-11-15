@@ -54,6 +54,9 @@ CLUB_DOWN = (128, 0, 0)
 KNIFE_DOWN = (160, 0, 0)
 MUSKET_DOWN = (155, 0, 0)
 KNIFE_TIP = 0.20
+# A pole weapon ported after the blow: the right hand at the hip, the shaft up across the body.
+PORT_GRIP = (-0.28, -0.05, 1.10)
+PORT = (50, 0, 20)
 
 
 def finish_keys(n, windup, hit, stand):
@@ -81,11 +84,12 @@ def _poses(kind, tip):
         up = cl._blow(dict(cl.STAND_FREE, **RAISE), (-0.14, 0.06, 1.90), (-50, 0, 0))
         return up, hit
     if kind == "spear":
-        r = SPEAR_DOWN
-        grip = cl.grip_for(TARGET_FINISH, r, tip)
-        hit = cl._blow(dict(cl.STAND_FREE, **OVER), grip, r, l_point=cl.add(grip, cl.axis(r), 0.45))
-        up_grip = cl.add(grip, (0, 0.10, 0.30))
-        up = cl._blow(dict(cl.STAND_FREE, **RAISE), up_grip, (148, 0, 0), l_point=cl.add(up_grip, cl.axis((148, 0, 0)), 0.45))
+        # Beside the body (`clips.beside`): in the centre plane the shaft ran up through the
+        # holder's face and hat (clip audit #509).
+        grip, r = cl.beside(TARGET_FINISH, SPEAR_DOWN[0], tip)
+        hit = cl._blow(dict(cl.STAND_FREE, **OVER), grip, r, l_point=cl.add(grip, cl.axis(r), 0.40))
+        up_grip, up_r = cl.add(grip, (0, 0.10, 0.30)), (148, 0, r[2])
+        up = cl._blow(dict(cl.STAND_FREE, **RAISE), up_grip, up_r, l_point=cl.add(up_grip, cl.axis(up_r), 0.40))
         return up, hit
     if kind == "knife":
         hit = cl._blow(dict(cl.STAND_FREE, **KNEEL), cl.grip_for(TARGET_FINISH, KNIFE_DOWN, tip), KNIFE_DOWN,
@@ -111,6 +115,8 @@ def finish_clips(n, kind, tip):
 
     up, hit = _poses(kind, tip)
     stand = cl._blow(cl.STAND_FREE, (-0.22, -0.22, 1.10), (30, 0, 0))
+    if kind == "spear":  # ported in both hands, the point up and forward
+        stand = cl._blow(cl.STAND_FREE, PORT_GRIP, PORT, l_point=cl.add(PORT_GRIP, cl.axis(PORT), 0.35))
     clip = _clip(n, up, hit, stand)
     out = {"ATTACK_FINISH": clip}
     for k in KINDS.get(kind, ("THRUST",)):
