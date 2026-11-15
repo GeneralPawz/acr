@@ -55,3 +55,8 @@ and edits no shared module; it borrows meso's sandals, quilting painter, `_fan` 
   Larco).
 
 No images were copied; shapes and patterns are modelled from the descriptions.
+
+**Pole weapons beside the body (#510, slice 2).** `inca.spear_down` and the shared `clips.spear_strikes` and finishing blow put the shaft right of the body (`clips.beside`), both hands on it. Every frame of a spear unit's clips is
+keyed (`clips.apply(..., dense=True)`), the weapon is hidden in the crawl clips
+(`clips.apply_crawl`; every other clip keys it shown, `clips.keep_shown`). Clip audit (#509,
+`ACR-analysis/clip-audit/pole2` against `2026-11-15`): IncPik and IncVog through the body 8 -> 0, `grip_left` fails 2 -> 0 (worst 0.716 -> 0.077 m), reach 6 of 6 pass.

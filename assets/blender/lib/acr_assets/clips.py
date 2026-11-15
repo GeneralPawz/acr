@@ -597,8 +597,9 @@ def spear_strikes(n, tip=SPEAR_TIP, left_along=0.40, off=POLE_SIDE):
     hit_down = two(dict(STAND_FREE, root_loc=(0, -0.55, -0.20), thigh_l=(-60, -3, 0), shin_l=(62, 0, 0), foot_l=(4, 0, 0),
                         thigh_r=(34, 3, 0), shin_r=(16, 0, 0), foot_r=(-24, 0, 0), spine=(24, 0, -14),
                         spine1=(10, 0, -10), spine2=(4, 0, -6), neck=(0, 0, 10), head=(10, 0, 14)), grip, down_r)
-    up_down = two(dict(STAND_FREE, **POLE_TWIST, root_loc=(0, -0.25, -0.08), thigh_l=(-36, -3, 0), shin_l=(36, 0, 0),
-                       thigh_r=(18, 3, 0), shin_r=(10, 0, 0)), add(grip, (0, 0.32, 0.20)), (122, 0, down_r[2]))
+    up_down = two(dict(STAND_FREE, **dict(POLE_TWIST, spine=(14, 0, -14), spine1=(6, 0, -12)), root_loc=(0, -0.36, -0.10),
+                       thigh_l=(-40, -3, 0), shin_l=(40, 0, 0), thigh_r=(20, 3, 0), shin_r=(12, 0, 0)),
+                  add(grip, (0, 0.30, 0.18)), (122, 0, down_r[2]))
     return {
         "ATTACK_THRUST_MID": _strike(n, back, hit_mid, back),
         "ATTACK_THRUST_DOWN": _strike(n, up_down, hit_down, up_down),
@@ -806,6 +807,35 @@ def apply(arm_obj, name, clip, dense=False):
             pb.scale = (1.0, 1.0, 1.0)
         arm_obj.animation_data.action = None
     return act
+
+
+SHOWN = {"socket.hand_r": 1}
+HIDDEN = {"socket.hand_r": 0}
+
+
+def keep_shown(clips, show=SHOWN):
+    """Every pose of `clips` ({name: [(frame, pose)]}, changed in place) keys `show` (a pose's
+    own "show" wins): needed once any clip hides the socket (`apply_crawl`), since a clip
+    that does not key a socket's scale inherits the last one played."""
+    memo = {}
+    for clip in clips.values():
+        for i, (f, p) in enumerate(clip):
+            # (the original is kept alive beside its copy: a freed dict's id is reused)
+            clip[i] = (f, memo.setdefault(id(p), (p, dict(p, show=dict(show, **(p.get("show") or {})))))[1])
+    return clips
+
+
+def apply_crawl(arm_obj, hide=HIDDEN):
+    """Keys the crawl clips with the sockets of `hide` hidden: a pole weapon is dropped with
+    the fall (in the crawling hand it swept through trunk and legs, clip audit #509). The
+    other clips must key it shown (`keep_shown`) and the build reset the scales before
+    export."""
+    from . import crawl
+
+    for clip, keys in crawl.clips().items():
+        k = list(keys)
+        k[0] = (k[0][0], dict(k[0][1], show=dict(hide)))
+        apply(arm_obj, clip, k)
 
 
 # -- finishing blows (docs/melee.md, `finish.py`): the melee builders above also return the

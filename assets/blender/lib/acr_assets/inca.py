@@ -338,16 +338,16 @@ def club_down(n, tip, at=DOWN_AT):
     return cl._strike(n, over, hit, over)
 
 
-def spear_down(n, tip, at=DOWN_AT, left_along=0.45):
+def spear_down(n, tip, at=DOWN_AT, left_along=0.40):
     """`ATTACK_THRUST_DOWN` (= `ATTACK_DOWN`): both hands drive the point down, leaning in."""
-    down_r = (122, 0, 0)
-
     def two(base, r_point, r):
         return cl._blow(base, r_point, r, l_point=cl.add(r_point, cl.axis(r), left_along))
 
-    target = (0.0, -at, 0.20)
-    hit = two(dict(cl.STAND_FREE, **LEAN_DOWN), cl.grip_for(target, down_r, tip), down_r)
-    up = two(dict(cl.STAND_FREE, spine=(8, 0, 0)), cl.add(hit["reach"]["r"][0], (0, 0.30, 0.22)), (112, 0, 0))
+    # Beside the body (`clips.beside`, #510: in the centre plane the shaft ran through the trunk).
+    grip, down_r = cl.beside((0.0, -at, 0.20), 122, tip, cl.POLE_SIDE + 0.06)
+    twist = {"spine1": (6, 0, -10), "spine2": (0, 0, -6), "neck": (0, 0, 10), "head": (6, 0, 14)}
+    hit = two(dict(cl.STAND_FREE, **dict(LEAN_DOWN, spine=(22, 0, -12), **twist)), grip, down_r)
+    up = two(dict(cl.STAND_FREE, **dict(cl.POLE_TWIST, spine=(8, 0, -12))), cl.add(grip, (0, 0.30, 0.22)), (112, 0, down_r[2]))
     return cl._strike(n, up, hit, up)
 
 
@@ -645,10 +645,18 @@ def build(ctx, s):
     ch.masks()
     made, extra = unit_clips(s)
     probe = _probe(ch, s, made)
+    # A spear fought with both hands (#510): every frame keyed so the hands stay on the shaft
+    # (`clips.solved`), and the spear dropped for the crawl.
+    pole = s["melee"] == "spear"
+    if pole:
+        cl.keep_shown(made)
     for clip, keys in made.items():
-        cl.apply(ch.arm, clip, keys)
-    for clip, keys in crawl.clips().items():
-        am.add_clip(ch.arm, clip, keys)
+        cl.apply(ch.arm, clip, keys, dense=pole)
+    if pole:
+        cl.apply_crawl(ch.arm)
+    else:
+        for clip, keys in crawl.clips().items():
+            am.add_clip(ch.arm, clip, keys)
     am.set_clip(ch.arm, "STAND")
     ch.arm.animation_data.action = None
     am.pose(ch.arm, cl.solve(ch.arm, stance(s)))

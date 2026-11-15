@@ -252,10 +252,6 @@ def command(stand, weapon_rot=(62, 0, -6), point=(-0.24, -0.50, 1.50)):
     return p
 
 
-SHOWN = {"socket.hand_r": 1}
-HIDDEN = {"socket.hand_r": 0}
-
-
 def officer_clips(s):
     """{clip: [(frame, pose)]} for the officer of SPEC `s` from its `.MD` lines."""
     md = s["md"]
@@ -295,11 +291,7 @@ def officer_clips(s):
                 out[key] = cl.frames(m, rig.clip_keys(m, keys))
     if melee == "spear":
         # The spontoon is hidden in the crawl (`build`), so every other clip keys it shown.
-        shown = {}
-        for key, clip in out.items():
-            for i, (f, p) in enumerate(clip):
-                # (the original is kept alive beside its copy: a freed dict's id is reused)
-                clip[i] = (f, shown.setdefault(id(p), (p, dict(p, show=SHOWN)))[1])
+        cl.keep_shown(out)
     return out
 
 
@@ -316,12 +308,10 @@ def build(ctx, s):
     spear = MELEE[s["weapon"]] == "spear"
     for clip, keys in clips.items():
         cl.apply(ch.arm, clip, keys, dense=spear)
-    for clip, keys in crawl.clips().items():
-        if spear:
-            k = list(keys)
-            k[0] = (k[0][0], dict(k[0][1], show=HIDDEN))
-            cl.apply(ch.arm, clip, k)
-        else:
+    if spear:
+        cl.apply_crawl(ch.arm)
+    else:
+        for clip, keys in crawl.clips().items():
             am.add_clip(ch.arm, clip, keys)
     am.set_clip(ch.arm, "STAND")
     report = {}

@@ -155,3 +155,8 @@ at 0 and never shown).
 
 Slice 1's open points (dark skin, paint on the trunk, stubble, lumpy flaps, the archers'
 melee with the arrow hand, the big quiver) are fixed in slice 2 (above).
+
+**Pole weapons beside the body (#510, slice 2).** DelPik fights with the shared `clips.spear_strikes` (the shaft right of the body, `clips.beside`, both hands on it). Every frame of a spear unit's clips is
+keyed (`clips.apply(..., dense=True)`), the weapon is hidden in the crawl clips
+(`clips.apply_crawl`; every other clip keys it shown, `clips.keep_shown`). Clip audit (#509,
+`ACR-analysis/clip-audit/pole2` against `2026-11-15`): DelPik through the body 6 -> 0, touching 2 -> 0, `grip_left` fails 4 -> 0 (worst 0.689 -> 0.087 m), reach 6 of 6 pass.

@@ -571,7 +571,9 @@ carry a finishing clip per weapon (`assets/blender/lib/acr_assets/finish.py`):
     one-handed, 30° off vertical (`SWORD_DOWN` 150°);
   - spear / pike / halberd / spontoon (`spear`): both hands, the point driven down (156°),
     the shaft 0.30 m right of the body (`clips.beside`, #510; in the centre plane it ran up
-    through the holder's face), then ported in both hands (`finish.PORT`);
+    through the holder's face), then ported in both hands (`finish.PORT`); the wind-up raises the right
+    hand 0.30 m but no higher than 1.84 m, and the left hand sits 0.40 m down the shaft (0.29 of
+    the grip-to-point length on a short dart);
   - axe / tomahawk / war club / macuahuitl / stone club (`club`, `tomahawk`, meso's
     macuahuitl): from overhead, a chop down (128°, the striking face's point vector);
   - knife (`knife`, no unit uses it yet): down on the right knee, a stab;

@@ -87,9 +87,13 @@ def _poses(kind, tip):
         # Beside the body (`clips.beside`): in the centre plane the shaft ran up through the
         # holder's face and hat (clip audit #509).
         grip, r = cl.beside(TARGET_FINISH, SPEAR_DOWN[0], tip)
-        hit = cl._blow(dict(cl.STAND_FREE, **OVER), grip, r, l_point=cl.add(grip, cl.axis(r), 0.40))
-        up_grip, up_r = cl.add(grip, (0, 0.10, 0.30)), (148, 0, r[2])
-        up = cl._blow(dict(cl.STAND_FREE, **RAISE), up_grip, up_r, l_point=cl.add(up_grip, cl.axis(up_r), 0.40))
+        along = min(0.40, 0.29 * (tip if isinstance(tip, (int, float)) else tip[2]))  # nearer on a short dart
+        hit = cl._blow(dict(cl.STAND_FREE, **OVER), grip, r, l_point=cl.add(grip, cl.axis(r), along))
+        # Raised 0.30 m, but the right hand no higher than 1.84 m: above that the left hand
+        # cannot follow on a long spear (audit: 0.123 m off the shaft on the Inca's 1.60 m).
+        up_grip, up_r = cl.add(grip, (0, 0.10, max(min(0.30, 1.84 - grip[2]), 0.10))), (148, 0, r[2])
+        up = cl._blow(dict(cl.STAND_FREE, **dict(RAISE, spine=(2, 0, -12), spine1=(0, 0, -10))), up_grip, up_r,
+                      l_point=cl.add(up_grip, cl.axis(up_r), along))
         return up, hit
     if kind == "knife":
         hit = cl._blow(dict(cl.STAND_FREE, **KNEEL), cl.grip_for(TARGET_FINISH, KNIFE_DOWN, tip), KNIFE_DOWN,

@@ -104,7 +104,8 @@ puts the point into the man on the ground.
 
 ## Not yet
 
-- The spontoon's stab down (EngOf17) uses the shared `spear_strikes` at 1.6 m.
+- ~~The spontoon's stab down (EngOf17) uses the shared `spear_strikes` at 1.6 m~~ (#510): the shared
+  `spear_strikes` now lunges to the man on the ground at 2.0 m (`clips.TARGET_DOWN`; clip alone 0.01 m short).
 - ~~17th-century officers wear the 18th-century line cut~~ (m2-c17): `officers.spec17`
   (EngOf17, FrnOf17, SpnOf17) drapes `DRAPE17` (breeches, long hose, linen cuffs, a buff
   coat with cloth sleeves in the coat colour) and adds `KIT17`: modelled bucket-top boots
