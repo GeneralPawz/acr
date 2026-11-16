@@ -67,6 +67,24 @@ class Patterns(unittest.TestCase):
         self.assertAlmostEqual(r[-1][1], 4.0)
         self.assertAlmostEqual(gm.polyline_length(r), 7.0, places=6)
 
+    def test_half_score_prefers_the_hanging_half(self):
+        # `drape.mirror_half`: a skirt drawn up 14 cm loses against a few more folds.
+        self.assertLess(gm.half_score(30, 40, 0.0), gm.half_score(10, 5, 14.0))
+        self.assertLess(gm.half_score(3, 2, 0.0), gm.half_score(30, 40, 0.0))
+        self.assertEqual(gm.half_score(1, 2, -3.0), 3)
+        self.assertTrue(gm.CLOTH["coat"]["mirror"])
+
+    def test_coat_body_long_enough_for_the_shoulder(self):
+        # The body is `COAT_RISE` longer than the back length + 2 below the armhole line
+        # and starts half of that below the waist line; the armhole keeps its depth.
+        p = gm.coat()[0]
+        top = gm.MEASURE["nape_to_waist"] + 2.0 + gm.COAT_RISE
+        self.assertAlmostEqual(p["coat_back"].bounds()[3], top, places=6)
+        ah = gm.MEASURE["nape_to_waist"] * 0.5 + gm.SCYE_DROP
+        self.assertAlmostEqual(p["coat_front"].outline[2][1], top - ah, places=6)
+        for n in ("coat_front", "coat_back"):
+            self.assertAlmostEqual(p[n].place["lift"], -gm.COAT_RISE / 2)
+
     def test_drafted_to_measure(self):
         big = dict(gm.MEASURE, chest=gm.MEASURE["chest"] + 12.0)
         a = gm.coat()[0]["coat_front"].bounds()[2]
@@ -85,6 +103,90 @@ def _inside(pt, poly):
         if (y0 > y) != (y1 > y) and x < x0 + (y - y0) * (x1 - x0) / (y1 - y0):
             c = not c
     return c
+
+
+class TailoredTrim(unittest.TestCase):
+    """`garments.TRIM_PANELS`: dropped after the drape and rebuilt as bands (`drape.tailored`)."""
+
+    def test_trim_panels_can_be_dropped(self):
+        panels, seams = gm.coat()
+        for n in gm.TRIM_PANELS:
+            self.assertIn(n, panels)
+            self.assertFalse(panels[n].skirt)
+            if panels[n].tack:
+                # An inlay stays as cloth of its base panel, which is kept (`drape.dress`).
+                self.assertNotIn(panels[n].tack, gm.TRIM_PANELS)
+                continue
+            # Each is sewn to a kept panel: that seam is what the band is fitted to.
+            self.assertTrue(any({l[0] for l in s.a} == {n} and not {l[0] for l in s.b} & set(gm.TRIM_PANELS)
+                                for s in seams), n)
+        self.assertFalse([p.name for p in panels.values() if p.tack in gm.TRIM_PANELS])
+
+
+class TailoredPanels(unittest.TestCase):
+    """Synthetic data: the authored lapel's edges and the flat strap (#523)."""
+
+    def test_lapel_edges_are_straight_through_a_ragged_trace(self):
+        pts = []
+        for j in range(41):
+            z = 1.0 + 0.4 * j / 40
+            jag = 0.004 * (-1) ** j
+            pts += [(0.02 + 0.05 * (z - 1.0) + max(jag, 0.0), -0.1, z), (0.09 + 0.10 * (z - 1.0) - max(jag, 0.0), -0.1, z)]
+        z0, z1, inner, outer = gm.lapel_edges(pts)
+        self.assertAlmostEqual(z0, 1.0)
+        self.assertAlmostEqual(z1, 1.4)
+        self.assertAlmostEqual(inner[0], 0.02, delta=0.004)
+        self.assertAlmostEqual(inner[1], 0.04, delta=0.004)
+        self.assertAlmostEqual(outer[0], 0.09, delta=0.004)
+        # 9 cm wide at the top: held to the widest lapel
+        self.assertAlmostEqual(outer[1] - inner[1], 0.085)
+
+    def test_ease_closed_shuts_a_seam_and_stretches_the_cloth_round_it(self):
+        # Two strips of 6 vertices, 9 cm apart at their sewn ends.
+        pts = [(float(i), 0.0, 0.0) for i in range(6)] + [(14.0 + i, 0.0, 0.0) for i in range(6)]
+        edges = [(i, i + 1) for i in range(5)] + [(6 + i, 7 + i) for i in range(5)]
+        out = gm.ease_closed(pts, edges, [[5, 6]], passes=3)
+        self.assertEqual(out[5], out[6])
+        self.assertAlmostEqual(out[5][0], 9.5)
+        xs = [p[0] for p in out]
+        self.assertEqual(xs[:6], sorted(xs[:6]))  # no fold
+        self.assertGreater(xs[4], 4.0)
+        self.assertGreater(xs[3], 3.0)
+        self.assertEqual(out[1], pts[1])  # past the rings: untouched
+        held = gm.ease_closed(pts, edges, [[5, 6]], passes=3, fixed=(4,))
+        self.assertEqual(held[4], pts[4])
+
+    def test_trim_line_follows_the_lapel_edge(self):
+        self.assertAlmostEqual(gm.trim_line(1.3, 1.1, 1.5, (0.10, 0.0)), 0.05)
+        self.assertAlmostEqual(gm.trim_line(1.6, 1.1, 1.5, (0.10, 0.0), floor=0.006), 0.006)
+
+    def test_strap_rows_bridge_folds_and_cover_every_hit(self):
+        hits = [[-0.10, -0.10, -0.10, -0.10, -0.10] for _ in range(9)]
+        hits[4] = [-0.10, -0.10, -0.13, -0.10, -0.10]  # a fold standing out in front
+        hits[7] = [None, None, None, None, -0.10]
+        rows = gm.strap_rows(hits, 0.004, -1)
+        self.assertIsNone(rows[7])
+        for row, r in zip(hits, rows):
+            if r is not None:
+                for k, y in enumerate(row):
+                    self.assertLessEqual(r[0] + (r[1] - r[0]) * k / 4, y - 0.004 + 1e-9)
+        self.assertAlmostEqual(rows[4][0], -0.134)
+        self.assertLess(rows[3][0], -0.104)  # eased in along the run
+        back = gm.strap_rows([[0.10, 0.12, 0.14]], 0.004, 1)
+        self.assertAlmostEqual(back[0][0], 0.104)
+        self.assertAlmostEqual(back[0][1], 0.144)
+
+    def test_taut_strap_bridges_the_waist(self):
+        # chest out, waist in, hip out: the taut belt runs straight from chest to hip
+        depth = [-0.10, -0.14, -0.10, -0.08, -0.10, -0.13]
+        rows = gm.strap_rows([[y] * 3 for y in depth], 0.0, -1, passes=0, taut=True)
+        self.assertAlmostEqual(rows[1][0], -0.14)
+        self.assertAlmostEqual(rows[5][0], -0.13)
+        self.assertAlmostEqual(rows[3][0], -0.135)
+        for r, y in zip(rows, depth):
+            self.assertLessEqual(r[0], y + 1e-9)
+        back = gm.strap_rows([[y] * 3 for y in (0.10, 0.06, 0.10)], 0.0, 1, passes=0, taut=True)
+        self.assertAlmostEqual(back[1][1], 0.10)
 
 
 class Period17(unittest.TestCase):
@@ -345,6 +447,36 @@ def synthetic_pattern():
                   {"a": [["back", "cb"]], "b": [["back", "cb", False, "R"]]},
                   {"a": [["sleeve", "seam_f"]], "b": [["sleeve", "seam_b", True]], "close": 0.05}],
     }
+
+
+class SeatWeights(unittest.TestCase):
+    """`seat_weights`: a rider's skirt on the chains of its own side (synthetic weights)."""
+
+    W = {"rider.hips": 0.2, "rider.skirt_fl_01": 0.3, "rider.skirt_bl_01": 0.2, "rider.skirt_br_02": 0.1, "rider.thigh_l": 0.2}
+
+    def test_front_stays_on_the_front_chain_of_its_side(self):
+        w = gm.seat_weights(self.W, 0.1, -0.10, "rider.")
+        self.assertAlmostEqual(sum(w.values()), 1.0)
+        self.assertEqual({b for b in w if "skirt" in b}, {"rider.skirt_fl_01", "rider.skirt_fl_02"})
+        self.assertAlmostEqual(w["rider.thigh_l"], 0.2)
+
+    def test_back_splits_at_the_vent_and_drops_the_thigh(self):
+        for x, side in ((0.01, "l"), (-0.01, "r")):
+            w = gm.seat_weights(self.W, x, 0.12, "rider.")
+            self.assertAlmostEqual(sum(w.values()), 1.0)
+            self.assertEqual(set(w), {"rider.hips", f"rider.skirt_b{side}_01", f"rider.skirt_b{side}_02"})
+            self.assertAlmostEqual(w[f"rider.skirt_b{side}_01"], 0.7)
+
+    def test_side_seam_blends_and_keeps_four(self):
+        w = gm.seat_weights(self.W, 0.2, 0.01, "rider.")
+        self.assertLessEqual(len(w), 4)
+        self.assertAlmostEqual(sum(w.values()), 1.0)
+        self.assertIn("rider.skirt_fl_01", w)
+        self.assertIn("rider.skirt_bl_01", w)
+
+    def test_waist_seam_vertices_are_left_alone(self):
+        w = {"rider.hips": 0.6, "rider.spine": 0.4}
+        self.assertEqual(gm.seat_weights(w, 0.1, 0.1, "rider."), w)
 
 
 class Traced(unittest.TestCase):

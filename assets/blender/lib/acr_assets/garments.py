@@ -45,7 +45,20 @@ EASE = {"waistcoat": 8.0, "coat": 20.0, "breeches": 0.5, "gaiters": 1.0, "shirt"
 
 # Wool broadcloth, linen and canvas: thickness (m) of the solidified cloth, sim settings.
 CLOTH = {
-    "coat": {"thickness": 0.0030, "mass": 0.45, "tension": 18.0, "bending": 2.0, "shrink": 0.0, "margin": 0.006},
+    # Broadcloth at 1.5 cm (`registry.SPACING`, #523): stiff, every seam shut (`close`), the sim's
+    # triangle-sized crumple smoothed away (`smooth`: Taubin passes, `drape.dress`).
+    "coat": {"thickness": 0.0030, "mass": 0.45, "tension": 18.0, "bending": 2.0, "shrink": 0.0, "margin": 0.006,
+             "close": 0.13, "smooth": 10,
+             # the sewing springs stay strong while the cloth settles, and what the sim leaves
+             # open is closed over `ease` rings of cloth before the weld (`ease_closed`, #523)
+             "sew_hold": True, "ease": 16,
+             # the better half of the draped coat mirrored onto the other (`drape.mirror_half`)
+             "mirror": True,
+             # gravity from frame 12 of the sewing phase: the skirts hang while the seams close
+             # (weightless they were flung up and one stayed folded at mid-thigh, `simulate`)
+             "weightless": 12,
+             # the skirts' top takes the body's weights at the waist seam (`drape.finish`)
+             "skirt_follow": True},
     "waistcoat": {"thickness": 0.0020, "mass": 0.30, "tension": 15.0, "bending": 0.8, "shrink": 0.05, "margin": 0.004},
     "breeches": {"thickness": 0.0020, "mass": 0.30, "tension": 15.0, "bending": 0.6, "shrink": 0.08, "margin": 0.003},
     "gaiters": {"thickness": 0.0020, "mass": 0.30, "tension": 20.0, "bending": 1.0, "shrink": 0.04, "margin": 0.003},
@@ -231,6 +244,22 @@ def _circle(cx, cy, r, a0, a1, n):
              cy + r * math.sin(math.radians(a0 + (a1 - a0) * k / n))) for k in range(n + 1)]
 
 
+SCYE_DROP = 3.0  # cm
+# cm the coat's body is longer than the back length + 2, below the armhole line: its path up
+# the chest, over the gap and the slope of the shoulder. Without it the body jumped 10 cm up
+# as the shoulder seams closed (waist seam at z 1.15, not 1.04; #523). Half of it is below
+# the waist line at the start (`place["lift"]`), so the neck point starts on the shoulder.
+COAT_RISE = 10.0
+MIRROR_HEM = 20.0  # `half_score`: one cm of skirt drawn up counts as this many bad edges
+
+
+def half_score(stretched, folds, hem_up_cm):
+    """Badness of one half of a draped garment (`drape.mirror_half`): edges stretched past 1.5
+    times the lattice spacing, folded edges, and the cm its skirt's lowest point is above
+    the other half's. The lower score is kept and mirrored."""
+    return stretched + folds + MIRROR_HEM * max(0.0, hem_up_cm)
+
+
 def coat(m=MEASURE):
     """The regimental coat (1768 pattern): fronts with lapels, backs, skirts (front and
     back per side) with turnbacks, two-piece sleeves with round cuffs, a stand collar."""
@@ -238,10 +267,13 @@ def coat(m=MEASURE):
     q_chest = (m["chest"] + e) / 4.0
     q_waist = (m["waist"] + e) / 4.0
     back_len = m["nape_to_waist"]
-    ah = back_len * 0.5  # armhole depth below the shoulder line
+    # Armhole depth below the shoulder line: 3 cm under the half back length, so the side seam
+    # ends under the armpit and closes there (#523: at half the back length its top stood
+    # either side of the arm, 99 mm apart).
+    ah = back_len * 0.5 + SCYE_DROP
     fw_c, bw_c = q_chest + 3.5, q_chest - 3.5  # side seams set to the back
     fw_w, bw_w = q_waist + 4.0, q_waist - 6.0  # the backs narrow into the side pleats
-    top = back_len + 2.0  # neck point above the waist (over the shoulder)
+    top = back_len + 2.0 + COAT_RISE  # neck point above the waist (over the shoulder)
     sh = m["shoulder"]
     neck_r = m["neck"] / (2 * math.pi) + 0.6
     P = {}
@@ -256,7 +288,8 @@ def coat(m=MEASURE):
     P["coat_front"] = Panel("coat_front", "coat", "coat", front,
                             {"waist": (0, 1), "side": (1, 2), "armhole": (2, 5), "shoulder": (5, 6),
                              "neck": (6, 8), "cf": (8, 0), "hook": (8, 9)},
-                            {"region": "torso", "theta": 0.0, "dir": 1, "u0": 0.0, "at": "waist", "gap": 2.5})
+                            {"region": "torso", "theta": 0.0, "dir": 1, "u0": 0.0, "at": "waist", "gap": 2.5,
+                             "lift": -COAT_RISE / 2})
     # Lapel (facing colour): sewn along the CF edge, lying back on the chest, wider at the
     # top (the 1768 lapel ran to the waist, 7.5 cm wide at the top).
     lp = [(0.0, 0.0), (6.0, 0.0), (8.0, top - neck_r * 1.3 - 4.0), (7.0, top - neck_r * 1.3),
@@ -270,7 +303,8 @@ def coat(m=MEASURE):
     P["coat_back"] = Panel("coat_back", "coat", "coat", back,
                            {"waist": (0, 1), "side": (1, 2), "armhole": (2, 4), "shoulder": (4, 5),
                             "neck": (5, 6), "cb": (6, 0)},
-                           {"region": "torso", "theta": 180.0, "dir": -1, "u0": 0.0, "at": "waist", "gap": 2.5})
+                           {"region": "torso", "theta": 180.0, "dir": -1, "u0": 0.0, "at": "waist", "gap": 2.5,
+                            "lift": -COAT_RISE / 2})
     # Skirts: waist seam to the knee, flared (the pleats at the side are let out as flare).
     drop = m["waist_to_knee"] + 2.0
     # The front edge curves away below the waist (cutaway); v rises from the hem.
@@ -348,6 +382,118 @@ def coat(m=MEASURE):
     return P, seams
 
 
+# Coat panels sewn and draped with the coat, then replaced by closed bands
+# (`drape.tailored`, #523): nothing may be tacked onto them. The lapel, an inlay of the
+# front, stays there as coat cloth under the authored lapel.
+TRIM_PANELS = ("collar", "cuff", "lapel")
+
+
+def lapel_edges(pts, width=(0.050, 0.085), bins=10):
+    """The straight edges of a lapel from its draped place `pts` [(x, y, z)] (one side, x > 0):
+    least-squares lines x(z) through the innermost and the outermost point of each of `bins`
+    height bands, the width kept within `width` (m). Returns (z0, z1, inner, outer), `inner`
+    and `outer` as (x at z0, x at z1)."""
+    z0, z1 = min(p[2] for p in pts), max(p[2] for p in pts)
+    h = (z1 - z0) or 1.0
+    lo, hi = {}, {}
+    for x, _y, z in pts:
+        b = min(bins - 1, int((z - z0) / h * bins))
+        lo[b], hi[b] = min(lo.get(b, x), x), max(hi.get(b, x), x)
+
+    def line(d):
+        ks = sorted(d)
+        t = [(k + 0.5) / bins for k in ks]
+        mt, mx = sum(t) / len(t), sum(d[k] for k in ks) / len(ks)
+        den = sum((a - mt) ** 2 for a in t)
+        sl = sum((a - mt) * (d[k] - mx) for a, k in zip(t, ks)) / den if den else 0.0
+        return mx - sl * mt, mx + sl * (1.0 - mt)
+
+    inner, outer = line(lo), line(hi)
+    outer = tuple(i + min(max(o - i, width[0]), width[1]) for i, o in zip(inner, outer))
+    return z0, z1, inner, outer
+
+
+def ease_closed(points, edges, groups, passes=16, fixed=()):
+    """`points` [(x, y, z)] with every group of sewn vertices `groups` [[index]] brought to
+    its mean, and that move handed on to the cloth round it: `passes` Jacobi rounds over
+    `edges` [(a, b)] (each vertex takes the mean move of its neighbours; the seam vertices
+    keep theirs, `fixed` ones stay), so a seam the sim left open closes by stretching
+    `passes` rings of cloth instead of folding the row next to it (#523). Returns the points."""
+    move = {}
+    for g in groups:
+        c = [sum(points[i][k] for i in g) / len(g) for k in range(3)]
+        for i in g:
+            move[i] = tuple(c[k] - points[i][k] for k in range(3))
+    for i in fixed:
+        move[i] = (0.0, 0.0, 0.0)
+    nb = {}
+    for a, b in edges:
+        nb.setdefault(a, []).append(b)
+        nb.setdefault(b, []).append(a)
+    cur = dict(move)
+    for _ in range(passes):
+        nxt = dict(move)
+        todo = {n for i in cur for n in nb.get(i, ())} - set(move)
+        for i in sorted(todo):
+            ns = nb[i]
+            nxt[i] = tuple(sum(cur.get(n, (0.0, 0.0, 0.0))[k] for n in ns) / len(ns) for k in range(3))
+        cur = nxt
+    return [tuple(p[k] + cur[i][k] for k in range(3)) if i in cur else tuple(p) for i, p in enumerate(points)]
+
+
+def trim_line(z, z0, z1, inner, floor=0.0):
+    """x of a lapel's inner edge at height `z` (`lapel_edges`: `inner` = x at z0 and z1),
+    carried on straight past both ends and never under `floor`."""
+    f = (z - z0) / ((z1 - z0) or 1.0)
+    return max(floor, inner[0] + (inner[1] - inner[0]) * f)
+
+
+def strap_rows(hits, offset, sign, passes=4, taut=False):
+    """Edge depths (y) of a flat strap from the surface depths `hits` (rows along the run,
+    each the y of the rays across the width, None where a ray missed): per row the straight
+    line through the hits, lifted until no hit stands out of it; then both edges low-passed
+    along the run (`passes`) without ever sinking under that line. `sign`: -1 the front (out
+    is -y), 1 the back. `taut`: each edge is then drawn tight along the run (the upper hull of
+    its depths over the row number), so the belt bridges from chest to hip instead of
+    following the waist in. Returns [(y at the first ray, y at the last ray) or None] per row."""
+    rows = []
+    for row in hits:
+        pts = [(k, y) for k, y in enumerate(row) if y is not None]
+        if len(pts) < 2:
+            rows.append(None)
+            continue
+        n, m = len(row) - 1, len(pts)
+        mk, my = sum(k for k, _ in pts) / m, sum(y for _, y in pts) / m
+        den = sum((k - mk) ** 2 for k, _ in pts)
+        slope = sum((k - mk) * (y - my) for k, y in pts) / den if den else 0.0
+        lift = max(sign * (y - (my + slope * (k - mk))) for k, y in pts)
+        y0, y1 = (my + slope * (e - mk) + sign * (lift + offset) for e in (0, n))
+        rows.append((y0, y1))
+    for e in (0, 1):
+        idx = [i for i, r in enumerate(rows) if r is not None]
+        raw = [rows[i][e] for i in idx]
+        cur = list(raw)
+        for _ in range(passes):
+            blur = [(cur[max(i - 1, 0)] + 2.0 * cur[i] + cur[min(i + 1, len(cur) - 1)]) / 4.0 for i in range(len(cur))]
+            cur = [sign * max(sign * b, sign * r) for b, r in zip(blur, raw)]
+        if taut and len(cur) > 2:
+            hull = []  # upper hull of (row, depth outwards)
+            for p in ((i, sign * y) for i, y in zip(idx, cur)):
+                while len(hull) > 1 and ((hull[-1][0] - hull[-2][0]) * (p[1] - hull[-2][1])
+                                         >= (hull[-1][1] - hull[-2][1]) * (p[0] - hull[-2][0])):
+                    hull.pop()
+                hull.append(p)
+            k = 0
+            for j, i in enumerate(idx):
+                while hull[k + 1][0] < i:
+                    k += 1
+                (i0, o0), (i1, o1) = hull[k], hull[k + 1]
+                cur[j] = sign * (o0 + (o1 - o0) * (i - i0) / (i1 - i0))
+        for i, y in zip(idx, cur):
+            rows[i] = (y, rows[i][1]) if e == 0 else (rows[i][0], y)
+    return rows
+
+
 def waistcoat(m=MEASURE):
     """Sleeveless waistcoat (1768: to just below the waist, buttoned down the front)."""
     e = EASE["waistcoat"]
@@ -355,13 +501,13 @@ def waistcoat(m=MEASURE):
     q_waist = (m["waist"] + e) / 4.0
     back_len = m["nape_to_waist"]
     top = back_len + 1.0
-    below = 14.0  # below the waist
+    below = 17.0  # below the waist: over the breeches' waistband (no skin at the belly, #523)
     ah = back_len * 0.48
     neck_r = m["neck"] / (2 * math.pi) + 0.3
     sh = m["shoulder"] - 2.0
     P = {}
     fr = [(0.0, -below + 4.0), (6.0, -below), (q_waist + 2.0, -below + 2.0), (q_chest + 1.5, top - ah),
-          (q_chest - 4.0, top - ah + 9.0), (neck_r + sh, top - 2.0), (neck_r, top), (0.0, top - 16.0)]
+          (q_chest - 4.0, top - ah + 9.0), (neck_r + sh, top - 2.0), (neck_r, top), (0.0, top - 11.0)]  # buttoned to the pit of the throat (no skin under the stock, #523)
     P["wc_front"] = Panel("wc_front", "waistcoat", "waistcoat", fr,
                           {"side": (2, 3), "armhole": (3, 5), "shoulder": (5, 6), "cf": (7, 0)},
                           {"region": "torso", "theta": 0.0, "dir": 1, "u0": 0.0, "at": "waist", "gap": 1.2})
@@ -1156,3 +1302,33 @@ def pattern_path(rel):
     if not root:
         raise RuntimeError(f"traced pattern {rel!r}: ACR_SOURCES is not set (the patterns are local sources)")
     return os.path.join(root, "patterns", rel + ".json")
+
+
+def seat_weights(w, x, y, prefix="", seam_y=-0.03, blend=0.08):
+    """A skirt vertex's weights for the seat (pure): its share on the skirt bones goes to the
+    chains of its own side only (no blend across the front opening or the back vent), front
+    chain before the side seam, back chain behind it, blended over `blend` m from `seam_y`;
+    behind the seam the thigh's share goes to the back chain too (the thigh turns forward
+    under the seated man, the back skirt stays behind it). At most 4 bones, summed to 1.
+    `x`, `y`: the vertex in the rider's frame. Vertices without a skirt share are returned
+    unchanged (the waist seam stays shut)."""
+    sk = {b: v for b, v in w.items() if b[len(prefix):].startswith("skirt_")}
+    if sum(sk.values()) < 1e-4:
+        return dict(w)
+    t = min(max((y - seam_y) / blend, 0.0), 1.0)
+    fb = t * t * (3.0 - 2.0 * t)
+    side = "l" if x > 0 else "r"
+    out = {b: v for b, v in w.items() if b not in sk}
+    seg = {k: sum(v for b, v in sk.items() if b.endswith(k)) for k in ("_01", "_02")}
+    for b in [b for b in out if b[len(prefix):].startswith("thigh_")]:
+        seg["_01"] += out[b] * fb
+        out[b] *= 1.0 - fb
+    for k, v in seg.items():
+        for col, share in (("f", 1.0 - fb), ("b", fb)):
+            if v * share > 0.005:
+                out[f"{prefix}skirt_{col}{side}{k}"] = v * share
+    out = {b: v for b, v in out.items() if v > 1e-4}
+    for b in sorted(out, key=out.get)[:-4]:
+        del out[b]
+    tot = sum(out.values())
+    return {b: v / tot for b, v in out.items()}

@@ -710,8 +710,15 @@ def simulate(obj, settings, sew=(), frames=None):
     mod.point_cache.frame_end = frames
     base = 'modifiers["acr_cloth"].settings.'
     s1 = SEW_FRAMES
-    _key(obj, base + "effector_weights.gravity", [(1, 0.0), (s1, 0.0), (s1 + 8, 1.0)])
-    _key(obj, base + "sewing_force_max", [(1, 5.0), (s1 // 3, SEW_FORCE), (s1, SEW_FORCE), (s1 + 8, 15.0)])
+    # `weightless`: frames without gravity (default the whole sewing phase). The coat's body
+    # jumps about 10 cm up as its shoulder and armhole seams close (10 frames); weightless
+    # for all 45, its skirts flew on up to the horizontal and one fell back folded (#523).
+    g0 = min(settings.get("weightless", s1), s1)
+    _key(obj, base + "effector_weights.gravity", [(1, 0.0), (g0, 0.0), (g0 + 8, 1.0)])
+    # `sew_hold`: the seams stay pulled shut while the cloth settles (a fitted coat's side and
+    # armhole seams opened again under gravity at the weaker force).
+    _key(obj, base + "sewing_force_max", [(1, 5.0), (s1 // 3, SEW_FORCE), (s1, SEW_FORCE),
+                                          (s1 + 8, SEW_FORCE if settings.get("sew_hold") else 15.0)])
     _key(obj, base + "shrink_min", [(1, 0.0), (s1, 0.0), (s1 + 8, settings["shrink"])])
     old = sc.frame_current
     t0 = time.time()
@@ -772,6 +779,223 @@ def weld(obj, sew, limit=0.02, limits=None, fixed=()):
     bm.to_mesh(obj.data)
     bm.free()
     obj.data.update()
+
+
+def ease_seams(obj, sew, limits, passes, fixed=()):
+    """Before the weld: every group of sewn pairs within its limit is brought together and
+    the cloth round it follows (`garments.ease_closed`), so the weld merges coincident
+    points. Returns the widest remaining gap of those pairs (m)."""
+    V = obj.data.vertices
+    parent = {}
+
+    def find(x):
+        while parent.get(x, x) != x:
+            x = parent[x]
+        return x
+
+    for (a, b), lim in zip(sew, limits):
+        if (V[a].co - V[b].co).length < lim:
+            ra, rb = find(a), find(b)
+            if ra != rb:
+                parent[max(ra, rb)] = min(ra, rb)
+    groups = {}
+    for v in sorted({x for pr in sew for x in pr}):
+        groups.setdefault(find(v), []).append(v)
+    groups = [g for g in groups.values() if len(g) > 1]
+    edges = sorted({tuple(sorted(k)) for p in obj.data.polygons for k in p.edge_keys})
+    pts = gm.ease_closed([tuple(v.co) for v in V], edges, groups, passes, fixed)
+    for v, p in zip(V, pts):
+        v.co = p
+    obj.data.update()
+    return max(((V[a].co - V[b].co).length for (a, b), lim in zip(sew, limits) if find(a) == find(b)), default=0.0)
+
+
+def resolve(obj, layers, gap, keep=(), rounds=4, relax=6, reach=0.06, fold=-0.2):
+    """After `ease_seams` and the smoothing (which move cloth without collision): every vertex
+    of `obj` nearer than `gap` m to the layers beneath (`layers`: the skin first; or under
+    them) is put `gap` off along the surface normal (turned to agree with the skin's), its
+    unmoved neighbours follow half the mean move; then the vertices of every folded edge (the
+    two faces' normals more than about 100 degrees apart: the dark nicks at an eased seam,
+    #523) are relaxed to the mean of their neighbours (`relax` passes; cut edges and `keep`
+    stay) and pushed off again, `rounds` times. Returns (vertices pushed off in the first
+    round, folded edges before, folded edges left)."""
+    skin = _cloth_tree(layers[:1])
+    tree = _cloth_tree(layers)
+    bm = bmesh.new()
+    bm.from_mesh(obj.data)
+    bm.verts.ensure_lookup_table()
+    keep = set(keep)
+    nb = [[e.other_vert(v).index for e in v.link_edges if e.link_faces] for v in bm.verts]
+    edge = [v.is_boundary for v in bm.verts]
+
+    def push():
+        moves = {}
+        for v in bm.verts:
+            if v.index in keep or not v.link_faces:
+                continue
+            loc, nrm, _k, _d = tree.find_nearest(v.co, reach)
+            if loc is None:
+                continue
+            s = skin.find_nearest(loc, 0.10)
+            if s[0] is not None and nrm @ s[1] < 0.0:
+                nrm = -nrm
+            d = (v.co - loc) @ nrm
+            if d < gap:
+                moves[v.index] = nrm * (gap - d)
+        for i, m in moves.items():
+            bm.verts[i].co += m
+        for i in sorted({n for j in moves for n in nb[j]} - set(moves) - keep):
+            ms = [moves[n] for n in nb[i] if n in moves]
+            bm.verts[i].co += sum(ms, Vector()) / len(nb[i]) * 0.5
+        return len(moves)
+
+    def folds():
+        bm.normal_update()
+        return [e for e in bm.edges if len(e.link_faces) == 2 and e.link_faces[0].normal @ e.link_faces[1].normal < fold]
+
+    pushed = push()
+    bad = folds()
+    first = len(bad)
+    for _ in range(rounds):
+        if not bad:
+            break
+        ring = {v.index for e in bad for v in e.verts}
+        ring |= {n for i in ring for n in nb[i]}
+        ring = sorted(i for i in ring if i not in keep and not edge[i] and nb[i])
+        for _p in range(relax):
+            new = {i: sum((bm.verts[n].co for n in nb[i]), Vector()) / len(nb[i]) for i in ring}
+            for i, c in new.items():
+                bm.verts[i].co = bm.verts[i].co.lerp(c, 0.6)
+        push()
+        bad = folds()
+    left = len(bad)
+    bm.to_mesh(obj.data)
+    bm.free()
+    obj.data.update()
+    return pushed, first, left
+
+
+MIRROR_RINGS = 6  # rings of cloth that follow a seam vertex moved onto the mid-plane
+MIRROR_CLEAR = 0.002  # m: cloth of the kept half that lies across the mid-plane is put this far on its own side
+
+
+def mirror_half(obj, spacing, skirt_ids=()):
+    """`CLOTH[g]["mirror"]`: the body, the rest pose and the draft are mirror-symmetric, one
+    sim run is not. Scores the left (x > 0) and the right copies of the mirrored panels
+    (`garments.half_score`: stretched edges, folded edges, the skirt's hem above the other
+    side's), keeps the better half and replaces the other by its mirror image. Seams between
+    the halves (centre back, the hook) are laid on the mid-plane, `MIRROR_RINGS` rings of
+    cloth following; panels cut in one across the middle are cut at the plane. Returns the
+    stats (kept side, scores, how far the seam was off the plane)."""
+    bm = bmesh.new()
+    bm.from_mesh(obj.data)
+    lay, sd = bm.faces.layers.int.get("panel"), bm.faces.layers.int.get("side")
+    parts = {}
+    for s in (1, -1):
+        stretched = folds = 0
+        lo = None
+        for e in bm.edges:
+            if not any(f[sd] == s for f in e.link_faces):
+                continue
+            if e.calc_length() > 1.5 * spacing:
+                stretched += 1
+            if len(e.link_faces) == 2 and e.link_faces[0].normal.dot(e.link_faces[1].normal) < -0.2:
+                folds += 1
+        for f in bm.faces:
+            if f[sd] == s and f[lay] in skirt_ids:
+                z = min(v.co.z for v in f.verts)
+                lo = z if lo is None else min(lo, z)
+        parts[s] = (stretched, folds, lo)
+    los = [p[2] for p in parts.values() if p[2] is not None]
+    score = {s: gm.half_score(p[0], p[1], 100.0 * (p[2] - min(los)) if p[2] is not None else 0.0) for s, p in parts.items()}
+    good = 1 if score[1] <= score[-1] else -1
+    seam = [v for v in bm.verts if any(f[sd] == good for f in v.link_faces) and any(f[sd] == -good for f in v.link_faces)]
+    bmesh.ops.delete(bm, geom=[f for f in bm.faces if f[sd] == -good], context="FACES")
+    mid = [f for f in bm.faces if f[sd] == 0]
+    if mid:
+        geom = list({v for f in mid for v in f.verts}) + list({e for f in mid for e in f.edges}) + mid
+        bmesh.ops.bisect_plane(bm, geom=geom, plane_co=(0, 0, 0), plane_no=(-good, 0, 0), clear_outer=True, dist=1e-5)
+    bmesh.ops.delete(bm, geom=[v for v in bm.verts if not v.link_faces], context="VERTS")
+    seam = [v for v in seam if v.is_valid]
+    # The seam onto the plane, the cloth round it following (less per ring).
+    off = max((abs(v.co.x) for v in seam), default=0.0)
+    shift = {v: -v.co.x for v in seam}
+    ring, seen = list(seam), set(seam)
+    for k in range(1, MIRROR_RINGS + 1):
+        nxt = {}
+        for v in ring:
+            for e in v.link_edges:
+                o = e.other_vert(v)
+                if o not in seen and abs(o.co.x) > 1e-6:
+                    nxt.setdefault(o, []).append(shift[v])
+        for o, xs in nxt.items():
+            shift[o] = sum(xs) / len(xs)
+            seen.add(o)
+        ring = list(nxt)
+        w = 1.0 - k / (MIRROR_RINGS + 1.0)
+        for o in ring:
+            o.co.x += shift[o] * w
+    for v in seam:
+        v.co.x = 0.0
+    on_plane = {v for v in bm.verts if abs(v.co.x) < 1e-6}
+    crossed = 0
+    for v in bm.verts:
+        if v not in on_plane and v.co.x * good < MIRROR_CLEAR:
+            v.co.x = good * MIRROR_CLEAR
+            crossed += 1
+    side_v = bm.verts.layers.float.get("_side")
+    dup = bmesh.ops.duplicate(bm, geom=list(bm.verts) + list(bm.edges) + list(bm.faces))["geom"]
+    new_f = [x for x in dup if isinstance(x, bmesh.types.BMFace)]
+    for x in dup:
+        if isinstance(x, bmesh.types.BMVert):
+            x.co.x = -x.co.x
+            if side_v:
+                x[side_v] = -x[side_v]
+    for f in new_f:
+        f[sd] = -f[sd]
+    bmesh.ops.reverse_faces(bm, faces=new_f)
+    bmesh.ops.remove_doubles(bm, verts=[v for v in bm.verts if abs(v.co.x) < 1e-6], dist=1e-5)
+    bm.normal_update()
+    bm.to_mesh(obj.data)
+    bm.free()
+    obj.data.update()
+    return {"kept": "l" if good == 1 else "r", "score": [round(score[1], 1), round(score[-1], 1)],
+            "stretched": [parts[1][0], parts[-1][0]], "folds": [parts[1][1], parts[-1][1]],
+            "seam_off_mm": round(1000 * off, 1), "seam_verts": len(seam), "crossed": crossed}
+
+
+def calm_seam(obj, skirt_ids, rings=5, along=10, passes=12):
+    """The waist seam made a calm line (#523): the vertices shared by skirt panels (face
+    attribute `panel` in `skirt_ids`) and body panels are smoothed along the seam (`along`
+    Taubin pass pairs over their seam neighbours), then the cloth within `rings` edges of it
+    is relaxed (`passes` pass pairs, the seam and the cut edges held), so the body ends and
+    the skirts start on one even line instead of a bunched one. Returns the seam vertices."""
+    bm = bmesh.new()
+    bm.from_mesh(obj.data)
+    bm.verts.ensure_lookup_table()
+    lay = bm.faces.layers.int.get("panel")
+    seam = {v.index for v in bm.verts if v.link_faces
+            and any(f[lay] in skirt_ids for f in v.link_faces) and any(f[lay] not in skirt_ids for f in v.link_faces)}
+    if not seam:
+        bm.free()
+        return 0
+    nb = [[e.other_vert(v).index for e in v.link_edges if e.link_faces] for v in bm.verts]
+    sn = {i: [n for n in nb[i] if n in seam] for i in seam}
+    near, front = set(seam), set(seam)
+    for _ in range(rings):
+        front = {n for i in front for n in nb[i]} - near
+        near |= front
+    free = sorted(i for i in near - seam if not bm.verts[i].is_boundary)
+    for group, nbs, n in ((sorted(i for i in seam if len(sn[i]) > 1), sn, along), (free, nb, passes)):
+        for _ in range(n):
+            for f in (0.5, -0.53):
+                new = {i: sum((bm.verts[k].co for k in nbs[i]), Vector()) / len(nbs[i]) for i in group}
+                for i, c in new.items():
+                    bm.verts[i].co += (c - bm.verts[i].co) * f
+    bm.to_mesh(obj.data)
+    bm.free()
+    obj.data.update()
+    return len(seam)
 
 
 def solidify(obj, thickness):
@@ -1131,6 +1355,23 @@ def finish(obj, ch, skirt, weights=None, under=(), cloth=None, skip=(), smooth=0
     elif skirt:
         ws, cl = zip(*(skirt_weights(v.co, P) for v in obj.data.vertices))
         ws = [_follow_thigh(w, v.co, t, P) for w, v, t in zip(ws, obj.data.vertices, cl)]
+        if skirt == "body":
+            # The top of the skirt (its `hips` share) moves like the coat body it is sewn to:
+            # the same transfer as the torso panels, so the waist seam stays shut in every clip.
+            tw = transfer_weights(obj, ch.flesh, ch.arm, under=under, skip=("forearm", "hand", "upperarm", "thigh", "shin"))
+            for w, t in zip(ws, tw):
+                h = w.pop(P + "hips", 0.0)
+                tot = sum(t.values())
+                if h and tot:
+                    for b, x in t.items():
+                        w[b] = w.get(b, 0.0) + h * x / tot
+                elif h:
+                    w[P + "hips"] = h
+                for b in sorted(w, key=w.get)[:-4]:
+                    del w[b]
+                tot = sum(w.values())
+                for b in w:
+                    w[b] /= tot
     else:
         ws = transfer_weights(obj, ch.flesh, ch.arm, under=under, skip=skip)
         cl = [0.0] * len(ws)
@@ -1495,20 +1736,25 @@ def sleeve_shape(obj, ch, spec, under=()):
     obj.data.update()
 
 
-def dress(ch, garments=gm.ORDER, report=None, patterns=None, over=(), post_weld=None, weld_limit=None, hem_even=True):
+def dress(ch, garments=gm.ORDER, report=None, patterns=None, over=(), post_weld=None, weld_limit=None, hem_even=True,
+          drop=()):
     """Drapes the garments `garments` (in order: each rests on those before) on character
     `ch` (rest pose) and adds them to its `clothes` layer. A garment is drafted by
     `patterns[name]` when given (a family's one-off), else by `garments.GARMENTS` (the
     uniform and what families registered with `registry.garment`). `over`: clothes made
     before (shells, modelled flaps) the garments rest on: they collide in the sim and lend
-    their weights like the draped layers beneath (docs/clothing.md, "Layers"). Returns
-    {object name: material key}."""
+    their weights like the draped layers beneath (docs/clothing.md, "Layers"). `drop`: panel
+    names sewn and draped with their garment but left out of the result (the coat's collar
+    and cuffs, replaced by `tailored`); the seam each shared with the kept panels is kept
+    in `ch.trim_seams[panel]` (positions, rest pose). Returns {object name: material key}."""
     # A unit's own set (`build["drape"]`: garment names in drape order, e.g. the 17th
     # century's hose, slops, doublet) replaces the set its family's `make` asks for.
     plan = (getattr(ch, "build", None) or {}).get("drape")
     if plan:
         garments = tuple(plan)
     body = Body(ch)
+    ch.drape_body = body
+    ch.trim_seams, ch.trim_keys = {}, {}
     uni = gm.uniform(body.m, garments, patterns)
     colliders = [ch.flesh] + ([ch.shoes] if getattr(ch, "shoes", None) else []) + list(over)
     for o in colliders:
@@ -1566,8 +1812,10 @@ def dress(ch, garments=gm.ORDER, report=None, patterns=None, over=(), post_weld=
                         pu.data[pc.base + i].value, pv.data[pc.base + i].value = u, v
                         sd.data[pc.base + i].value = (1.0 if key[1] == "L" else -1.0) if pc.panel.mirror else 0.0
         # from_pydata keeps the face order.
-        for i, (n, _s) in enumerate(finfo):
+        fs = me.attributes.new("side", "INT", "FACE")  # 1: the wearer's left copy (x > 0), -1: right, 0: one panel across
+        for i, (n, s_) in enumerate(finfo):
             fa.data[i].value = names.index(n)
+            fs.data[i].value = (1 if s_ == "L" else -1) if panels[n].mirror else 0
         dt, gaps_sewn = 0.0, []
         if not g.startswith("shirt"):
             # `in_shoes`: stockings are draped without the shoes and run down into them.
@@ -1579,6 +1827,37 @@ def dress(ch, garments=gm.ORDER, report=None, patterns=None, over=(), post_weld=
             if bare:
                 _collision(ch.shoes)
         ev = obj.data
+        skirt_ids = {names.index(n) for n, pn in panels.items() if pn.skirt and not pn.tack}
+        hem_z, waist_z = {}, {}
+
+        def hem_stage(tag):
+            # lowest point of the skirt panels per side (cm): unequal skirts show here (#523)
+            if not skirt_ids or not gm.CLOTH.get(g, {}).get("ease"):
+                return
+            lay_ = obj.data.attributes["panel"].data
+            lo = {"l": None, "r": None}
+            for p_ in obj.data.polygons:
+                if lay_[p_.index].value in skirt_ids:
+                    for vi in p_.vertices:
+                        c_ = obj.data.vertices[vi].co
+                        if abs(c_.x) > 0.02:
+                            k_ = "l" if c_.x > 0 else "r"
+                            lo[k_] = c_.z if lo[k_] is None else min(lo[k_], c_.z)
+            hem_z[tag] = [round(100 * (lo[k_] or 0.0), 1) for k_ in ("l", "r")]
+            # the waist seam (vertices shared by skirt and body panels): mean height per side
+            sk_, bo_ = set(), set()
+            for p_ in obj.data.polygons:
+                if lay_[p_.index].value in skirt_ids:
+                    sk_.update(p_.vertices)
+                elif not panels[names[lay_[p_.index].value]].skirt:  # not the turnback inlays
+                    bo_.update(p_.vertices)
+            zs = {"l": [], "r": []}
+            for vi in sk_ & bo_:
+                c_ = obj.data.vertices[vi].co
+                zs["l" if c_.x > 0 else "r"].append(c_.z)
+            waist_z[tag] = [round(100 * sum(zs[k_]) / max(len(zs[k_]), 1), 1) for k_ in ("l", "r")]
+
+        hem_stage("sim")
         longest = max(((ev.vertices[e.vertices[0]].co - ev.vertices[e.vertices[1]].co).length
                        for e in ev.edges if not e.is_loose), default=0.0)
         per_seam, worst_at = {}, (0.0, None)
@@ -1596,7 +1875,12 @@ def dress(ch, garments=gm.ORDER, report=None, patterns=None, over=(), post_weld=
         base = max(base, gm.CLOTH.get(g, {}).get("close", 0.0))
         limits = [getattr(seams[k], "close", None) or base for k in pieces["_sew_id"]]
         welded = sum(1 for (a, b), lim in zip(sew, limits) if (ev.vertices[a].co - ev.vertices[b].co).length < lim)
+        eased = 0.0
+        if gm.CLOTH.get(g, {}).get("ease"):
+            eased = ease_seams(obj, sew, limits, gm.CLOTH[g]["ease"], set(pins))
+        hem_stage("eased")
         weld(obj, sew, limit=base, limits=limits, fixed=set(pins))
+        hem_stage("welded")
         if not g.startswith("shirt") and bare:
             # Cut level inside the shoes: no ragged edge over them.
             zc = max((ch.shoes.matrix_world @ v.co).z for v in ch.shoes.data.vertices) - float(bare_cut)
@@ -1612,6 +1896,19 @@ def dress(ch, garments=gm.ORDER, report=None, patterns=None, over=(), post_weld=
             pin = obj.vertex_groups.get("acr_pin")
             taubin(obj, gm.CLOTH[g]["smooth"],
                    keep=[v.index for v in obj.data.vertices if pin and any(e.group == pin.index for e in v.groups)])
+        resolved = None
+        if gm.CLOTH.get(g, {}).get("ease"):
+            # The eased and smoothed cloth is off the layers beneath again, its folds relaxed.
+            pin = obj.vertex_groups.get("acr_pin")
+            calm_seam(obj, {names.index(n) for n, pn in panels.items() if pn.skirt and not pn.tack})
+            resolved = resolve(obj, [ch.flesh] + under, gm.CLOTH[g].get("margin", 0.004),
+                               keep=[v.index for v in obj.data.vertices if pin and any(e.group == pin.index for e in v.groups)])
+        hem_stage("resolved")
+        mirrored = None
+        if gm.CLOTH.get(g, {}).get("mirror"):
+            # One sim run tangles one side or the other: the better half, mirrored (#523).
+            mirrored = mirror_half(obj, SPACING.get(g, 3.5) / 100.0, skirt_ids)
+            hem_stage("mirrored")
         if gm.CLOTH.get(g, {}).get("pleats"):
             pleat(obj, panels, names, gm.CLOTH[g]["pleats"], ch=ch, under=under)
         if post_weld is not None:
@@ -1637,11 +1934,37 @@ def dress(ch, garments=gm.ORDER, report=None, patterns=None, over=(), post_weld=
                 body.cape_over(list(over) + [o for o in ch.layers["clothes"] if o.name in made])
         if SOLIDIFY:
             solidify(obj, gm.CLOTH.get(g, gm.CLOTH["waistcoat"])["thickness"])
+        dropped = [n for n in names if n in drop]
+        if dropped:
+            bm = bmesh.new()
+            bm.from_mesh(obj.data)
+            lay = bm.faces.layers.int.get("panel")
+            ids = set()
+            for n in dropped:
+                i = names.index(n)
+                if panels[n].tack:
+                    # An inlay (the lapel) stays in its base panel's cloth; its place (every
+                    # vertex) and its material key are kept for the authored panel.
+                    ch.trim_seams[n] = [tuple(v.co) for v in bm.verts if any(f[lay] == i for f in v.link_faces)]
+                    ch.trim_keys[n] = panels[n].key
+                    base_i = names.index(panels[n].tack)
+                    for f in bm.faces:
+                        if f[lay] == i:
+                            f[lay] = base_i
+                    continue
+                ch.trim_seams[n] = [tuple(v.co) for v in bm.verts
+                                    if any(f[lay] == i for f in v.link_faces) and any(f[lay] != i for f in v.link_faces)]
+                ids.add(i)
+            bmesh.ops.delete(bm, geom=[f for f in bm.faces if f[lay] in ids], context="FACES")
+            bmesh.ops.delete(bm, geom=[v for v in bm.verts if not v.link_faces], context="VERTS")
+            bm.to_mesh(obj.data)
+            bm.free()
         # One object per (key, skirt).
         kinds = {}
         new_under = []  # the parts of one garment rest on the layers before it, not on each other
         for n, pnl in panels.items():
-            kinds.setdefault((pnl.key, pnl.skirt), []).append(names.index(n))
+            if n not in drop:
+                kinds.setdefault((pnl.key, pnl.skirt), []).append(names.index(n))
         both = {k for k, sk in kinds if sk} & {k for k, sk in kinds if not sk}
         for (key, skirt), idx in kinds.items():
             part = obj.copy()
@@ -1655,6 +1978,10 @@ def dress(ch, garments=gm.ORDER, report=None, patterns=None, over=(), post_weld=
             bm.to_mesh(part.data)
             bm.free()
             part.data.attributes.remove(part.data.attributes["panel"])
+            part.data.attributes.remove(part.data.attributes["side"])
+            if not len(part.data.polygons):
+                bpy.data.objects.remove(part)
+                continue
             if gm.CLOTH.get(g, {}).get("sleeve_shape") and all(panels[names[i]].place["region"] == "arm" for i in idx):
                 sleeve_shape(part, ch, gm.CLOTH[g]["sleeve_shape"], under=under)
             label = {("coat", True): "coat_skirts", ("lining", True): "turnbacks"}.get(
@@ -1682,7 +2009,8 @@ def dress(ch, garments=gm.ORDER, report=None, patterns=None, over=(), post_weld=
             else:
                 # A torso panel takes no weights from the forearm or the shirt cuff on it.
                 torso = all(panels[names[i]].place["region"] == "torso" for i in idx)
-                finish(part, ch, skirt, under=under, skip=("forearm", "hand") if torso else (),
+                finish(part, ch, "body" if skirt and gm.CLOTH.get(g, {}).get("skirt_follow") else skirt, under=under,
+                       skip=("forearm", "hand") if torso else (),
                        smooth=gm.CLOTH.get(g, {}).get("weight_smooth", 0))
             ch.add("clothes", part, key, symmetric=True)
             part["acr_garment"] = f"draped:{g}"
@@ -1701,7 +2029,17 @@ def dress(ch, garments=gm.ORDER, report=None, patterns=None, over=(), post_weld=
                     "gap_mm_max_after_sewing": mm(gs, 1.0), "within_5mm": sum(1 for x in gaps if x < 0.005),
                     "worst_seams_mm": {k: round(v * 1000) for k, v in sorted(per_seam.items(), key=lambda kv: -kv[1])[:5]},
                     # the widest pair's midpoint (cm, rest pose, model axes: -Y the front, +Z up)
-                    "worst_gap_at_cm": worst_at[1]}
+                    "worst_gap_at_cm": worst_at[1],
+                    # the widest pair left for the weld after `ease_seams` (0: not eased)
+                    "gap_mm_at_weld": round(1000 * eased, 1)}
+        if hem_z:
+            stats[g]["skirt_hem_cm"] = hem_z
+            stats[g]["waist_seam_cm"] = waist_z
+        if mirrored:
+            stats[g]["mirror"] = mirrored
+        if resolved:
+            # `resolve`: vertices pushed off the layers beneath, folded edges before and after
+            stats[g].update(pushed_off=resolved[0], folds=resolved[1], folds_left=resolved[2])
         for o in ch.layers["clothes"]:
             if o.name in made:
                 _collision(o, thickness=gm.CLOTH.get(g, gm.CLOTH["waistcoat"]).get("margin", 0.004))
@@ -2379,6 +2717,327 @@ def hems(ch, objs=None, turn=HEM_TURN):
         a, b, c = out.get(k, (0, 0, 0))
         out[k] = (a + spikes, b + moved, c + added)
     return out
+
+
+# -- Tailored trim (#523): the coat's stand collar, the stock and the round cuffs ----------
+# `COLLAR["top"]`: the collar's top edge ends at most this far above `Body.neck_z` (front, back).
+# Draped at the coat's 3.5 cm lattice a 4 cm collar and an 11 cm cuff are two triangles
+# deep: they crumple into teeth. They are sewn and draped with the coat (the seams shape
+# its neck and wrists), dropped (`dress(drop=TRIM_PANELS)`) and built again as closed bands.
+TRIM_PANELS = gm.TRIM_PANELS
+TRIM_N = 32  # points round a band
+COLLAR = {"height": (0.022, 0.030), "top": (0.030, 0.105), "over": 0.014, "out": 0.007, "gap": 0.011, "thickness": 0.003}
+STOCK = {"gap": 0.004, "below": 0.028, "above": 0.010, "thickness": 0.0015}
+CUFF = {"depth": 0.105, "past": -0.010, "clear": 0.007, "flare": 0.006, "thickness": 0.004, "round": 0.004, "ramp": 0.05}
+LAPEL = {"width": (0.050, 0.085), "middle": 0.006, "reach": 0.08, "rows": 24, "cols": 6, "off": 0.004, "thickness": 0.003, "smooth": 6,
+         # the coat front cut straight `inset` inside the lapel's inner edge, up to `above` over its top
+         "inset": 0.014, "above": 0.10}
+
+
+def _band(ch, label, key, rings, thickness, weights, closed=True):
+    """A band of quads through `rings` (each `n` points; `closed`: round), `thickness`
+    outwards with closed rims, skinned by `weights(obj)` -> [{bone: weight}] per vertex."""
+    n = len(rings[0])
+    verts = [tuple(p) for row in rings for p in row]
+    m = n if closed else n - 1
+    faces = [(j * n + i, j * n + (i + 1) % n, (j + 1) * n + (i + 1) % n, (j + 1) * n + i)
+             for j in range(len(rings) - 1) for i in range(m)]
+    me = bpy.data.meshes.new(f"{ch.name}.{label}")
+    me.from_pydata(verts, [], faces)
+    obj = bd.link(bpy.data.objects.new(me.name, me))
+    mod = obj.modifiers.new("acr_band", "SOLIDIFY")
+    mod.thickness, mod.offset, mod.use_rim, mod.use_even_offset = thickness, 1.0, True, True
+    dg = bpy.context.evaluated_depsgraph_get()
+    solid = bpy.data.meshes.new_from_object(obj.evaluated_get(dg))
+    obj.modifiers.remove(mod)
+    obj.data = solid
+    solid.name = me.name
+    bpy.data.meshes.remove(me)
+    bm = bmesh.new()
+    bm.from_mesh(obj.data)
+    bmesh.ops.recalc_face_normals(bm, faces=list(bm.faces))
+    bmesh.ops.triangulate(bm, faces=list(bm.faces))
+    bm.to_mesh(obj.data)
+    bm.free()
+    finish(obj, ch, False, weights=weights(obj))
+    ch.add("clothes", obj, key, symmetric=True)
+    obj["acr_garment"] = "tailored:coat"
+    return obj
+
+
+def _weights_from(objs):
+    """weights(obj): each vertex takes the weights of the nearest vertex of `objs`."""
+    from mathutils.kdtree import KDTree
+
+    src = [(o, v) for o in objs for v in o.data.vertices]
+    kd = KDTree(len(src))
+    for i, (o, v) in enumerate(src):
+        kd.insert(o.matrix_world @ v.co, i)
+    kd.balance()
+
+    def weights(obj):
+        out = []
+        for v in obj.data.vertices:
+            o, sv = src[kd.find(obj.matrix_world @ v.co)[1]]
+            w = {o.vertex_groups[g.group].name: g.weight for g in sv.groups if g.weight > 1e-4}
+            t = sum(w.values()) or 1.0
+            out.append({b: x / t for b, x in w.items()})
+        return out
+
+    return weights
+
+
+LACE = {"width": 0.013, "off": 0.0015, "thickness": 0.002}  # officers' braid on cuff tops and lapel edges
+
+
+def tailored(ch, made, lace=False):
+    """The coat's stand collar, the stock and the round cuffs as closed bands
+    (docs/clothing.md "Tailored trim"), after `dress(drop=TRIM_PANELS)`.
+
+    - Collar (`facings`): its base follows the coat's neck seam as draped (`ch.trim_seams`,
+      a cosine series round the neck: smooth and symmetric), `over` below and `out` outside
+      it, so the coat's cut neck edge ends under the band; its top `height` (front, back)
+      above, leaning in to `gap` off the neck. Moves with the coat's neckline.
+    - Stock (`stock`): a band on the neck inside the collar, showing `above` over its top;
+      replaces the draped strip. Moves with the skin.
+    - Cuffs (`facings`): round the forearm's axis, `clear` outside the sleeve as draped
+      over `depth` from the wrist, `flare` wider at the top, rigid on the forearm.
+    - `lace` (officers, palette key `lace`): a band `LACE["width"]` wide round the top of
+      each cuff and down each lapel's outer edge, `off` over them.
+    Adds the objects to `made` and returns the measured report."""
+    body, P = ch.drape_body, ch.prefix
+    rep = {}
+    coats = [o for o in ch.layers["clothes"] if made.get(o.name) in ("coat", "lapels", "facings")
+             and not o.name.endswith(("_skirts", "turnbacks"))]
+    sleeves = [o for o in coats if made[o.name] == "coat"]
+    ts = [2.0 * math.pi * i / TRIM_N for i in range(TRIM_N)]
+    seam = ch.trim_seams.get("collar") or []
+    if len(seam) >= 8 and sleeves:
+        zn = body.neck_z + 0.03
+        cy, A, B = body.ellipse(zn)
+        pts = np.array(seam + [(-x, y, z) for x, y, z in seam])
+        t = np.arctan2(pts[:, 0] / A, -(pts[:, 1] - cy) / B)
+        sc = np.hypot(pts[:, 0] / A, (pts[:, 1] - cy) / B)
+        M = np.stack([np.ones_like(t), np.cos(t), np.cos(2 * t)], axis=1)
+        cs, cz = np.linalg.lstsq(M, sc, rcond=None)[0], np.linalg.lstsq(M, pts[:, 2], rcond=None)[0]
+
+        c = COLLAR
+        hf, hb = c["height"]
+
+        def ring(dz_front, dz_back, out, lean):
+            row = []
+            for a in ts:
+                f = (1.0 + math.cos(a)) / 2.0  # 1 in front, 0 at the back
+                m = np.array((1.0, math.cos(a), math.cos(2 * a)))
+                s, z = float(m @ cs), float(m @ cz) + dz_front * f + dz_back * (1.0 - f)
+                # Never up the jaw: the seam as draped rides high at the sides of the neck.
+                z = min(z, body.neck_z + c["top"][1] + (c["top"][0] - c["top"][1]) * f - (hb - dz_back))
+                if lean is not None:
+                    cyz, Az, Bz = body.ellipse(z)
+                    s = min(s, 1.0 + lean / ((A + B) / 2.0))
+                    row.append((math.sin(a) * (A * s + (Az - A)), cyz - math.cos(a) * (B * s + (Bz - B)), z))
+                else:
+                    row.append((math.sin(a) * (A * s + out), cy - math.cos(a) * (B * s + out), z))
+            return row
+
+        rings = [ring(-c["over"], -c["over"], c["out"], None), ring(0.0, 0.0, c["out"] * 0.6, None),
+                 ring(hf * 0.5, hb * 0.5, 0.0, c["gap"] * 1.6), ring(hf, hb, 0.0, c["gap"])]
+        collar = _band(ch, "collar", "facings", rings, c["thickness"], _weights_from(sleeves))
+        made[collar.name] = "facings"
+        rep["collar"] = {"seam_points": len(seam), "seam_fit_mm": round(1000 * float(np.std(M @ cz - pts[:, 2])), 1),
+                         "base_z": round(float(cz[0]), 3), "front_z": round(float(cz.sum()), 3),
+                         "neck_z": round(float(body.neck_z), 3), "top_z": [round(rings[-1][0][2], 3), round(rings[-1][TRIM_N // 2][2], 3)]}
+        old = [o for o in ch.layers["clothes"] if made.get(o.name) == "stock"]
+        if old:
+            k = STOCK
+
+            def neck(row, dz, gap):
+                out = []
+                for a, p in zip(ts, row):
+                    z = p[2] + dz
+                    cyz, Az, Bz = body.ellipse(z)
+                    out.append((math.sin(a) * (Az + gap), cyz - math.cos(a) * (Bz + gap), z))
+                return out
+
+            srings = [neck(rings[-1], -k["below"], k["gap"] + 0.002), neck(rings[-1], 0.0, k["gap"]),
+                      neck(rings[-1], k["above"], k["gap"])]
+            for o in old:
+                ch.layers["clothes"].remove(o)
+                if o in ch.symmetric:
+                    ch.symmetric.remove(o)
+                ch.keys.pop(o.name, None)
+                made.pop(o.name)
+                old_mesh = o.data
+                bpy.data.objects.remove(o)
+                bpy.data.meshes.remove(old_mesh)  # frees the name: the band is `<unit>.stock` again
+            stock = _band(ch, "stock", "stock", srings, k["thickness"],
+                          lambda ob: transfer_weights(ob, ch.flesh, ch.arm))
+            made[stock.name] = "stock"
+            rep["stock"] = {"top_z": round(max(p[2] for p in srings[-1]), 3)}
+    if ch.trim_seams.get("cuff") and sleeves:
+        tree, _ = None, None
+        verts, polys = [], []
+        for o in sleeves:
+            base = len(verts)
+            verts += [o.matrix_world @ v.co for v in o.data.vertices]
+            polys += [[base + i for i in p.vertices] for p in o.data.polygons]
+        tree = BVHTree.FromPolygons(verts, polys)
+        seg = am.segments(ch.arm)
+        k = CUFF
+        rows = {}
+        for side in ("l", "r"):
+            head, wrist = (Vector(x) for x in seg[P + f"forearm_{side}"])
+            axis = (wrist - head).normalized()
+            u = Vector((0.0, 1.0, 0.0))
+            u = (u - axis * u.dot(axis)).normalized()
+            w = axis.cross(u)
+            ds = []
+            for t in np.linspace(-k["depth"], -0.01, 6):
+                c0 = wrist + axis * float(t)
+                for a in ts:
+                    rad = u * math.cos(a) + w * math.sin(a)
+                    loc = tree.ray_cast(c0 + rad * 0.15, -rad, 0.15)[0]
+                    if loc is not None:
+                        ds.append((loc - c0).length)
+            if not ds:
+                continue
+            # The sleeve end made round inside the cuff (no fold of it wider than the median
+            # + `round`, eased in over `ramp` above the cuff) and ending at the cuff's end.
+            med = float(np.median(ds))
+            end = (wrist - head).length + k["past"]
+            for o in sleeves:
+                for v in o.data.vertices:
+                    rel = o.matrix_world @ v.co - head
+                    t = rel.dot(axis)
+                    if t < end - k["depth"] - k["ramp"] or t > end + 0.08:
+                        continue
+                    rad = rel - axis * t
+                    if rad.length > 0.12:
+                        continue
+                    lim = med + k["round"] + 0.03 * max(0.0, (end - k["depth"] - t) / k["ramp"])
+                    rn = rad * (min(rad.length, lim) / rad.length) if rad.length > 1e-6 else rad
+                    v.co = o.matrix_world.inverted() @ (head + axis * min(t, end - 0.003) + rn)
+                o.data.update()
+            r = med + k["clear"]
+            rings = [[wrist + axis * t + (u * math.cos(a) + w * math.sin(a)) * (r + k["flare"] * f) for a in ts]
+                     for t, f in ((k["past"], 0.0), (k["past"] - k["depth"] * 0.5, 0.5), (k["past"] - k["depth"], 1.0))]
+            bone = P + f"forearm_{side}"
+            cuff = _band(ch, f"cuff_{side}", "facings", rings, k["thickness"],
+                         lambda ob, bone=bone: [{bone: 1.0} for _ in ob.data.vertices])
+            made[cuff.name] = "facings"
+            if lace:
+                ro = r + k["flare"] + k["thickness"] + LACE["off"]
+                top = k["past"] - k["depth"]
+                braid = _band(ch, f"cuff_lace_{side}", "lace",
+                              [[wrist + axis * t + (u * math.cos(a) + w * math.sin(a)) * ro for a in ts]
+                               for t in (top + LACE["width"], top - 0.001)], LACE["thickness"],
+                              lambda ob, bone=bone: [{bone: 1.0} for _ in ob.data.vertices])
+                made[braid.name] = "lace"
+            rows[side] = {"radius_mm": round(1000 * r, 1), "sleeve_max_mm": round(1000 * max(ds), 1),
+                          "sleeve_median_mm": round(1000 * float(np.median(ds)), 1)}
+        rep["cuffs"] = rows
+    lap = ch.trim_seams.get("lapel") or []
+    if len(lap) >= 12 and sleeves:
+        # Lapels: authored panels with straight edges on the coat front as draped.
+        k = LAPEL
+        verts, polys = [], []
+        for o in sleeves:
+            base = len(verts)
+            verts += [o.matrix_world @ v.co for v in o.data.vertices]
+            polys += [[base + i for i in p.vertices] for p in o.data.polygons]
+        tree = BVHTree.FromPolygons(verts, polys)
+        z0, z1, inner, outer = gm.lapel_edges([(abs(x), y, z) for x, y, z in lap], k["width"])
+        # Hooked at the top of the chest, the fronts meet: neither lapel crosses the middle.
+        outer = tuple(o + max(0.0, k["middle"] - i) for i, o in zip(inner, outer))
+        inner = tuple(max(i, k["middle"]) for i in inner)
+        R, C = k["rows"], k["cols"]
+        key = ch.trim_keys.get("lapel", "facings")
+        rows = {}
+        for side, sx in (("l", 1.0), ("r", -1.0)):
+            X, Z, Y = np.zeros((R + 1, C + 1)), np.zeros((R + 1, C + 1)), np.full((R + 1, C + 1), np.nan)
+            # Rays start just in front of the lapel's place as draped: not on the sleeve or cuff.
+            own = np.array([p for p in lap if p[0] * sx > 0.0] or lap)
+            y_from = []
+            for j in range(R + 1):
+                near = own[np.abs(own[:, 2] - (z0 + (z1 - z0) * j / R)) < 0.03]
+                y_from.append(float((near if len(near) else own)[:, 1].min()) - 0.03)
+            for j in range(R + 1):
+                f = j / R
+                for i in range(C + 1):
+                    g = i / C
+                    xi, xo = inner[0] + (inner[1] - inner[0]) * f, outer[0] + (outer[1] - outer[0]) * f
+                    X[j, i], Z[j, i] = sx * (xi + (xo - xi) * g), z0 + (z1 - z0) * f
+                    hit = tree.ray_cast(Vector((X[j, i], y_from[j], Z[j, i])), Vector((0.0, 1.0, 0.0)))[0]
+                    # A ray through the open front finds the coat's back: a miss.
+                    if hit is not None and hit.y < y_from[j] + k["reach"]:
+                        Y[j, i] = hit.y
+            if np.isnan(Y).all():
+                continue
+            miss = int(np.isnan(Y).sum())
+            for _ in range(R + C):  # rays past the front edge: from their neighbours
+                hole = np.isnan(Y)
+                if not hole.any():
+                    break
+                pad = np.pad(Y, 1, constant_values=np.nan)
+                nb = np.stack([pad[:-2, 1:-1], pad[2:, 1:-1], pad[1:-1, :-2], pad[1:-1, 2:]])
+                ok = ~np.isnan(nb)
+                fill = hole & ok.any(axis=0)
+                Y[fill] = (np.where(ok, nb, 0.0).sum(axis=0) / np.maximum(ok.sum(axis=0), 1))[fill]
+            raw = Y.copy()
+            for _ in range(k["smooth"]):  # even, and never under the cloth
+                pad = np.pad(Y, 1, mode="edge")
+                Y = np.minimum((pad[:-2, 1:-1] + pad[2:, 1:-1] + pad[1:-1, :-2] + pad[1:-1, 2:] + 4.0 * Y) / 8.0, raw)
+            Y -= k["off"]
+            cols = range(C + 1) if sx > 0 else range(C, -1, -1)  # faces out (-y)
+            rings = [[(X[j, i], Y[j, i], Z[j, i]) for i in cols] for j in range(R + 1)]
+            lp = _band(ch, f"lapel_{side}", key, rings, k["thickness"], _weights_from(sleeves), closed=False)
+            made[lp.name] = key
+            if lace:
+                # Down the outer edge: the last strip of the lapel's grid, narrowed to the braid.
+                edge = []
+                for j in range(R + 1):
+                    a_, b_ = np.array(rings[j][-1 if sx > 0 else 0]), np.array(rings[j][-2 if sx > 0 else 1])
+                    step = np.linalg.norm(b_ - a_)
+                    b_ = a_ + (b_ - a_) * min(1.0, LACE["width"] / max(step, 1e-6))
+                    lift = np.array((0.0, -(k["thickness"] + LACE["off"]), 0.0))
+                    edge.append([tuple(b_ + lift), tuple(a_ + lift)] if sx > 0 else [tuple(a_ + lift), tuple(b_ + lift)])
+                braid = _band(ch, f"lapel_lace_{side}", "lace", edge, LACE["thickness"], _weights_from(sleeves), closed=False)
+                made[braid.name] = "lace"
+            rows[side] = {"missed_rays": miss, "lift_mm_max": round(1000 * float((raw - k["off"] - Y).max()), 1)}
+        cut = sum(_trim_front(o, body, z0, z1, inner, k) for o in sleeves)
+        rep["lapels"] = {"z": [round(z0, 3), round(z1, 3)], "inner_x": [round(x, 3) for x in inner],
+                         "outer_x": [round(x, 3) for x in outer], "front_faces_cut": cut, **rows}
+    return rep
+
+
+def _trim_front(obj, body, z0, z1, inner, k):
+    """The coat front's free edge as a straight line under the lapel: the cloth of `obj`
+    inside the lapel's inner edge (`inset` in from it, front half of the trunk, from the
+    lapel's foot to `above` over its top) is cut away and the edge left laid on that line.
+    The sim leaves this edge crumpled; it showed as shreds beside the lapels and as a red V
+    under the collar. Returns the faces removed."""
+    mw, inv = obj.matrix_world, obj.matrix_world.inverted()
+    bm = bmesh.new()
+    bm.from_mesh(obj.data)
+    lim = {}
+    for v in bm.verts:
+        p = mw @ v.co
+        if z0 <= p.z <= z1 + k["above"] and p.y < body.ellipse(p.z)[0] and abs(p.x) < 0.2:
+            x = gm.trim_line(p.z, z0, z1, inner, k["middle"]) + k["inset"]
+            if abs(p.x) < x:
+                lim[v] = (p, x)
+    dead = [f for f in bm.faces if all(v in lim for v in f.verts)
+            or any(v in lim and abs(lim[v][0].x) < 0.004 for v in f.verts)]
+    n = len(dead)
+    bmesh.ops.delete(bm, geom=dead, context="FACES")
+    for v, (p, x) in lim.items():
+        if v.is_valid and v.link_faces:
+            v.co = inv @ Vector((math.copysign(x, p.x), p.y, p.z))
+    bmesh.ops.delete(bm, geom=[v for v in bm.verts if not v.link_faces], context="VERTS")
+    bm.to_mesh(obj.data)
+    bm.free()
+    obj.data.update()
+    return n
 
 
 def inherit_weights(obj, ch, under):

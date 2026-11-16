@@ -70,7 +70,7 @@ from mathutils import Matrix, Vector
 from . import armature as am
 from . import body as bd
 from . import aim as aiming
-from . import armour, crawl, faces, gear, heads, horse, mount, poses, registry, rig
+from . import armour, crawl, faces, garments, gear, heads, horse, mount, poses, registry, rig
 from .humans import Character, prepare_export
 from .cavalry_kit import KITS  # noqa: F401  (the units' `kit`)
 
@@ -92,6 +92,8 @@ PALETTE = {
     "wood": (0.42, 0.24, 0.12), "saddle": (0.25, 0.15, 0.08), "tack": (0.08, 0.07, 0.06), "saddlecloth": (0.72, 0.10, 0.06), "sash": (0.75, 0.10, 0.10), "hat": (0.10, 0.09, 0.08),
     "tunic": (0.80, 0.75, 0.62), "hair": (0.05, 0.04, 0.04), "knapsack": (0.80, 0.70, 0.55),
     "facings": (0.15, 0.20, 0.50), "lace": (0.80, 0.64, 0.28), "crest": (0.92, 0.90, 0.86), "brass": (0.72, 0.58, 0.30),
+    # Draped coats (`tailor`): the turnbacks' lining, shirt and black stock, as the line's.
+    "lining": (0.88, 0.86, 0.80), "shirt": (0.92, 0.91, 0.88), "stock": (0.08, 0.08, 0.08),
 }
 # The 17th-century riders (`dress` "buff17"): buff, linen band and blacked bucket boots keep
 # these colours (`FIXED17`); the cloth sleeves (`dsleeve`) take the sprite's coat colour.
@@ -1204,6 +1206,233 @@ def dress17(ch, spec, name, origin):
     drape.falling_band(ch, name)
 
 
+# The seated rider's coat skirts (draped coats, `tailor`, weights and fit: `seat_skirts`): the
+# front skirts turn forward and out with the thighs and lie on them, each back skirt hangs out
+# and down beside the cantle (its lower half back towards the vertical along the flank).
+# Euler degrees as `LEGS_SEAT`.
+SKIRT_SEAT = {"skirt_fl_01": (-52, -20, 0), "skirt_fr_01": (-52, 20, 0), "skirt_bl_01": (18, -48, 0), "skirt_br_01": (18, 48, 0),
+              "skirt_bl_02": (0, 30, 0), "skirt_br_02": (0, -30, 0)}
+# `seat_skirts`: the side seam's blend between the front and back chains (from y, over m,
+# the rider's frame), the cloth's distance off the saddle, horse and thighs, the saddle
+# axis below the top of the back, smoothing rounds.
+SEAT_FIT = {"seam_y": -0.03, "blend": 0.08, "margin": 0.020, "turnback": 0.005, "axis": 0.28, "rounds": 3}
+
+
+def seat_skirts(ch, hz, solids, origin, pose):
+    """Fits the draped coat's skirts and turnbacks to the seat (#523): `garments.seat_weights` per
+    vertex, then every skirt vertex skinned into `pose` that lies inside the saddle, the
+    saddlecloth, the horse or the rider's thighs (`solids`: objects in rest; the thighs
+    posed) is moved out along the ray from the saddle's axis (a line along the back,
+    `SEAT_FIT["axis"]` under its top) to `margin` over the outermost surface, the moves
+    smoothed over the cloth, and the result taken back through the vertex's skinning matrix
+    into the rest mesh. The turnbacks take weights and moves from the skirt under them, so
+    they stay whole panels on it. Returns the numbers for `stats.json`."""
+    import numpy as np
+    from mathutils.bvhtree import BVHTree
+    from mathutils.kdtree import KDTree
+
+    from . import drape
+
+    k = SEAT_FIT
+    skirts = [o for o in ch.layers["clothes"] if o.name.endswith("coat_skirts")]
+    backs = [o for o in ch.layers["clothes"] if o.name.endswith("turnbacks")]
+    if not skirts:
+        return {}
+    o3 = Vector(origin)
+    M = drape.pose_matrices(ch, pose)
+
+    def set_weights(obj, ws):
+        for g in list(obj.vertex_groups):
+            if g.name in ch.arm.data.bones:
+                obj.vertex_groups.remove(g)
+        groups = {}
+        for i, w in enumerate(ws):
+            for b, x in w.items():
+                g = groups.get(b) or obj.vertex_groups.new(name=b)
+                groups[b] = g
+                g.add([i], x, "REPLACE")
+
+    def skin(obj, ws):
+        rest = np.array([tuple(obj.matrix_world @ v.co) + (1.0,) for v in obj.data.vertices])
+        mats = np.array([drape._blend(M, w) for w in ws])
+        return rest, mats, np.einsum("nij,nj->ni", mats, rest)[:, :3]
+
+    # The solids: rest meshes, and the rider's thighs as posed.
+    V, F = [], []
+    for o in solids:
+        base = len(V)
+        V += [tuple(o.matrix_world @ v.co) for v in o.data.vertices]
+        F += [[base + i for i in p.vertices] for p in o.data.polygons]
+    fw = drape._vertex_weights(ch.flesh)
+    leg = [bool(w) and max(w, key=w.get)[len(P):].startswith("thigh_") for w in fw]
+    _r, _m, fp = skin(ch.flesh, fw)
+    base = len(V)
+    V += [tuple(p) for p in fp]
+    F += [[base + i for i in p.vertices] for p in ch.flesh.data.polygons if all(leg[i] for i in p.vertices)]
+    tree = BVHTree.FromPolygons(V, F)
+    sad = hz.head("saddle")
+    ax, cz = sad.x, back_top(hz, sad.y) - k["axis"]
+
+    def push(pts, margin):
+        out, n = pts.copy(), 0
+        for i, p in enumerate(pts):
+            d = Vector((p[0] - ax, 0.0, p[2] - cz))
+            r = d.length
+            if r < 1e-4:
+                continue
+            d /= r
+            c = Vector((ax, p[1], cz))
+            hit = tree.ray_cast(c + d * 2.0, -d, 2.0)
+            if hit[0] is not None and r < 2.0 - hit[3] + margin:
+                out[i] = tuple(c + d * (2.0 - hit[3] + margin))
+                n += 1
+        return out, n
+
+    def fit(obj, ws, share, margin, start=None):
+        rest, mats, p0 = skin(obj, ws)
+        nb = [[] for _ in ws]
+        for e in obj.data.edges:
+            a, b = e.vertices
+            nb[a].append(b)
+            nb[b].append(a)
+        p = p0 if start is None else p0 + start
+        p, inside = push(p, margin)
+        for _ in range(k["rounds"]):
+            d = (p - p0) * share[:, None]
+            d = 0.5 * d + 0.5 * np.array([d[n].mean(axis=0) if n else d[i] for i, n in enumerate(nb)])
+            p = push(p0 + d * (share[:, None] > 0), margin)[0]
+        d = (p - p0) * (share[:, None] > 0)
+        moved = np.linalg.norm(d, axis=1)
+        new = np.einsum("nij,nj->ni", np.linalg.inv(mats), np.concatenate([p0 + d, np.ones((len(d), 1))], axis=1))[:, :3]
+        inv = obj.matrix_world.inverted()
+        keys = obj.data.shape_keys.key_blocks if obj.data.shape_keys else ()
+        for i, v in enumerate(obj.data.vertices):
+            if moved[i] > 1e-5:
+                delta = inv @ Vector(new[i]) - v.co
+                v.co = v.co + delta
+                for kb in keys:
+                    kb.data[i].co = kb.data[i].co + delta
+        obj.data.update()
+        return d, inside, float(moved.max()) if len(moved) else 0.0
+
+    rep = {"inside": 0, "moved_mm_max": 0.0, "turnback_inside": 0}
+    kd_pts, kd_w, kd_d = [], [], []
+    for obj in skirts:
+        ws = [garments.seat_weights(w, (obj.matrix_world @ v.co - o3).x, (obj.matrix_world @ v.co - o3).y, P, k["seam_y"], k["blend"])
+              for w, v in zip(drape._vertex_weights(obj), obj.data.vertices)]
+        set_weights(obj, ws)
+        share = np.array([min(1.0, sum(x for b, x in w.items() if b[len(P):].startswith("skirt_")) / 0.4) for w in ws])
+        rest0 = [obj.matrix_world @ v.co for v in obj.data.vertices]
+        d, inside, far = fit(obj, ws, share, k["margin"])
+        rep["inside"] += inside
+        rep["moved_mm_max"] = max(rep["moved_mm_max"], round(1000 * far, 1))
+        kd_pts += rest0
+        kd_w += ws
+        kd_d += list(d)
+    kd = KDTree(len(kd_pts))
+    for i, p in enumerate(kd_pts):
+        kd.insert(p, i)
+    kd.balance()
+    for obj in backs:
+        ws, start = [], []
+        for v in obj.data.vertices:
+            near = kd.find_n(obj.matrix_world @ v.co, 3)
+            wt = [1.0 / (dist + 0.003) for _c, _i, dist in near]
+            tot = sum(wt)
+            w, d = {}, np.zeros(3)
+            for (_c, i, _d), x in zip(near, wt):
+                d += kd_d[i] * (x / tot)
+                for b, y in kd_w[i].items():
+                    w[b] = w.get(b, 0.0) + y * x / tot
+            for b in sorted(w, key=w.get)[:-4]:
+                del w[b]
+            tot = sum(w.values())
+            ws.append({b: y / tot for b, y in w.items()})
+            start.append(d)
+        set_weights(obj, ws)
+        share = np.array([min(1.0, sum(x for b, x in w.items() if b[len(P):].startswith("skirt_")) / 0.4) for w in ws])
+        start = np.array(start) * share[:, None]
+        _d, inside, _far = fit(obj, ws, np.where(share > 0, 1.0, 0.0), k["margin"] + k["turnback"], start=start)
+        rep["turnback_inside"] += inside
+    print("ACR seat skirts:", rep)
+    return rep
+
+
+# What the rider's tailor drapes (drape order, `drape.dress`); the high boots stay a shell.
+RIDER_DRAPE = ("breeches", "shirt", "waistcoat", "coat")
+
+
+def tailor(root, name, spec):
+    """The rider's clothes as the foot units get theirs (#523): breeches, shirt, waistcoat and
+    the regimental coat draped once on a standing man at the world origin (the drafts, the
+    placement and the skirt weights are in his frame: `drape.Body`), with the tailored
+    collar, stock, cuffs and lapels (`drape.tailored`), buttons and the officers' sash. The
+    man is thrown away; `wear` puts the clothes on the rider. Returns (objects as
+    [(layer, object, key, symmetric)], the drape report)."""
+    from . import drape, officers, straps
+
+    d = Character(root, name, dict(BUILD, drape=RIDER_DRAPE))
+    d.body(shoulders=False)
+    report = {}
+    made = drape.dress(d, report=report, drop=drape.TRIM_PANELS)
+    report["tailored"] = drape.tailored(d, made, lace=bool(spec.get("lace")))
+    cloth = [o for o in d.layers["clothes"] if o.name in made and made[o.name] != "lace"]
+    fixed = [o for o in cloth if not o.name.endswith(("coat_skirts", "turnbacks"))]
+    for inner, outer, depth in (("waistcoat", ("coat", "facings", "lapels"), 0.006), ("shirt", ("coat", "facings", "lapels"), 0.004),
+                                ("breeches", ("waistcoat",), 0.004)):
+        for o in fixed:
+            if made[o.name] == inner:
+                drape.hide_under(d, o, [x for x in fixed if made[x.name] in outer], depth)
+    drape.buttons(d, cloth, name)
+    kit = spec.get("kit") or ()
+    if not kit or "carbine_belt" in kit:
+        # The shoulder belt, or the kit's broad carbine belt (`cavalry_kit.straps` takes it
+        # over): the flat strap of the foot units over the coat as draped. Laid by
+        # `kit_hd.lay_strap` on the folds it came out shredded.
+        from . import cavalry_kit
+
+        d.strap_surface, d.strap_under = drape.surface(cloth, f"{name}.belt_surface"), fixed
+        if kit:
+            belt = straps.belt(d, f"{name}.carbine_belt", straps.LEFT_SHOULDER, straps.RIGHT_HIP + Vector((0, 0, 0.05)), 0.014,
+                               width=cavalry_kit.CARBINE_W)
+        else:
+            belt = straps.belt(d, f"{name}.belt", straps.LEFT_SHOULDER, straps.RIGHT_HIP, 0.014)
+        d.add("clothes", belt, "belts", symmetric=True)
+    if spec.get("sash"):
+        officers._sash(d, name, spec)
+    taken = [(layer, o, d.keys[o.name], o in d.symmetric) for layer in ("clothes", "gear") for o in d.layers[layer]]
+    for o in (d.flesh, d.arm):
+        data = o.data
+        bpy.data.objects.remove(o, do_unlink=True)
+        (bpy.data.meshes if isinstance(data, bpy.types.Mesh) else bpy.data.armatures).remove(data)
+    return taken, report
+
+
+def wear(ch, cloth, origin, spec):
+    """Puts the clothes of `tailor` on rider `ch`: moved to his ground point, their vertex
+    groups renamed to his bones, skinned to his armature; his skin under them pushed in
+    (`drape.hide_skin`). Without `facings` the collar, cuffs and lapels are coat cloth."""
+    from . import drape
+
+    taken, ch.drape_report = cloth
+    move = Matrix.Translation(Vector(origin))
+    for layer, o, key, symmetric in taken:
+        o.data.transform(move)
+        for g in o.vertex_groups:
+            g.name = P + g.name
+        if o.get("acr_home_bones"):
+            o["acr_home_bones"] = [P + b for b in o["acr_home_bones"]]
+        o.parent = ch.arm
+        o.matrix_parent_inverse = Matrix.Identity(4)
+        for md in o.modifiers:
+            if md.type == "ARMATURE":
+                md.object = ch.arm
+        if key in ("facings", "lapels") and not spec.get("facings"):
+            key = "coat"
+        ch.add(layer, o, key, symmetric)
+    drape.hide_skin(ch, [o for layer, o, _k, _s in taken if layer == "clothes"])
+
+
 def make(ctx, spec):
     name, root = ctx.name, ctx.root
     if os.environ.get("ACR_NO_KIT"):  # the unit as before its kit, for before/after numbers
@@ -1225,11 +1454,18 @@ def make(ctx, spec):
         # The second right-hand socket for the drawn sabre, beside the gun's.
         hs = next(b for b in table if b.name == P + "socket.hand_r")
         table.append(rig.Bone(P + "socket.blade_r", hs.parent, hs.head, hs.tail, False))
+    # The 18th-century coat is draped on a standing man before the rider exists (`tailor`).
+    draped = spec.get("dress", "coat") == "coat" and not os.environ.get("ACR_RIDER_SHELLS")
+    cloth = tailor(root, name, spec) if draped else None
+    legs_seat = dict(LEGS_SEAT, **SKIRT_SEAT) if draped else LEGS_SEAT
     ch = Character(root, name, dict(BUILD, origin=tuple(origin)), prefix=P, table=table)
     mount.join(ch.arm, hz, P + "root")
-    ch.body()
+    ch.body(shoulders=not draped)  # no re-mesh under drafted garments (as `line.make`)
     close_hands(ch)
-    if spec.get("dress", "coat") == "coat":
+    if draped:
+        wear(ch, cloth, origin, spec)
+        ch.shell("boots", "boots_high", lambda c, n, h, p: h in SHINS | FEET or (h in LEGS and c.z < 0.58 + oz), 0.02)
+    elif spec.get("dress", "coat") == "coat":
         ch.shell("waistcoat", "waistcoat", lambda c, n, h, p: h in TORSO and 0.97 + oz < c.z < 1.47 + oz, 0.012)
         ch.shell("coat", "coat", lambda c, n, h, p: (h in TORSO and 0.97 + oz < c.z < 1.49 + oz and not (c.y - cy < -0.14 and abs(c.x) < 0.07))
                  or h in ARMS, 0.03)
@@ -1270,14 +1506,17 @@ def make(ctx, spec):
         if spec.get("holster"):
             ch.add("gear", holster_pistol(ch, hz, name), "wood")
     ch.horse = {"mount": hz, "extra": extra}
+    if draped:
+        solids = [hz.meshes[0], *extra] + ([sad_obj] if tack == "military" else [])
+        ch.drape_report["seat"] = seat_skirts(ch, hz, solids, origin, legs_seat)
 
     # Seated pose: legs, then arms solved onto the reins.
     reins = hz.head("reins_01_l") if "reins_01_l" in hz.arm.data.bones else sad + Vector((0.1, -0.27, 0.0))
     targets = {s: Vector((0.10 * k, reins.y + 0.06, sad.z + 0.17)) for s, k in (("l", 1), ("r", -1))}
-    am.pose(ch.arm, LEGS_SEAT, prefix=P)
+    am.pose(ch.arm, legs_seat, prefix=P)
     both = reins_world(ch.arm, targets)
     left = {k: v for k, v in both.items() if k.endswith("_l")}
-    seat = _with_world(LEGS_SEAT, both)
+    seat = _with_world(legs_seat, both)
     def right(target, hand=None, socket=None):
         """The left hand on the reins, the right one solved to `target` (and turned)."""
         w = dict(left, **{k: v for k, v in reins_world(ch.arm, {"r": target}, sides=("r",)).items()})
@@ -1295,7 +1534,7 @@ def make(ctx, spec):
         return solve_strike(ch, left, trunk, point, axis, length, left_target, tip)
 
     # Standing in the stirrups: the seat raised, the knees opened (m2-melee6).
-    stirrups = dict(LEGS_SEAT, thigh_l=(-42, -16, 0), shin_l=(56, 0, 0), foot_l=(-14, 0, 0),
+    stirrups = dict(legs_seat, thigh_l=(-42, -16, 0), shin_l=(56, 0, 0), foot_l=(-14, 0, 0),
                     thigh_r=(-42, 16, 0), shin_r=(56, 0, 0), foot_r=(-14, 0, 0))
     pommel = Vector((0.0, sad.y - 0.22, sad.z + 0.12))
     lance_len = LANCE[0] - LANCE[1] + 0.30
@@ -1303,17 +1542,17 @@ def make(ctx, spec):
     club = spec.get("blade") == "club"
     blade_tip = weapon_tip(spec.get("blade", "sabre"))
 
-    poses = {"seat": seat, "lean": _with_world(dict(LEGS_SEAT, spine=(-12, 0, 0)), both),
-             "aim": _with_world(dict(LEGS_SEAT, **AIM_R, **AIM_L), {"socket.hand_r": (88, 0, 0)}),
-             "cut_up": _with_world(dict(LEGS_SEAT, **CUT_UP_R), dict(left, **{"socket.hand_r": (-40, 0, 0)})),
-             "cut_down": _with_world(dict(LEGS_SEAT, **CUT_DOWN_R), dict(left, **{"socket.hand_r": (110, 0, 0)})),
-             "flag": _with_world(dict(LEGS_SEAT, **FLAG_R), dict(left, hand_r=FLAG_HAND, **{"socket.hand_r": (0, 0, 0)})),
+    poses = {"seat": seat, "lean": _with_world(dict(legs_seat, spine=(-12, 0, 0)), both),
+             "aim": _with_world(dict(legs_seat, **AIM_R, **AIM_L), {"socket.hand_r": (88, 0, 0)}),
+             "cut_up": _with_world(dict(legs_seat, **CUT_UP_R), dict(left, **{"socket.hand_r": (-40, 0, 0)})),
+             "cut_down": _with_world(dict(legs_seat, **CUT_DOWN_R), dict(left, **{"socket.hand_r": (110, 0, 0)})),
+             "flag": _with_world(dict(legs_seat, **FLAG_R), dict(left, hand_r=FLAG_HAND, **{"socket.hand_r": (0, 0, 0)})),
              # Lance couched at the right hip, the point forward and up; the thrust.
-             "lance": _with_world(dict(LEGS_SEAT), right(side(0, -0.12, 0.15), (-20, 0, 0))),
-             "thrust": _with_world(dict(LEGS_SEAT, spine=(-10, 0, 8)), right(side(0.04, -0.62, 0.50), (-5, 0, 0))),
+             "lance": _with_world(dict(legs_seat), right(side(0, -0.12, 0.15), (-20, 0, 0))),
+             "thrust": _with_world(dict(legs_seat, spine=(-10, 0, 8)), right(side(0.04, -0.62, 0.50), (-5, 0, 0))),
              # Strike clips (docs/melee.md): the lance drawn back high, then driven down past
              # the horse's right shoulder at a man on the ground, or level at a standing one.
-             "lance_back": _with_world(dict(LEGS_SEAT, spine=(4, 0, -6)), right(side(0.02, 0.10, 0.42), (-30, 0, 0))),
+             "lance_back": _with_world(dict(legs_seat, spine=(4, 0, -6)), right(side(0.02, 0.10, 0.42), (-30, 0, 0))),
              # Down (m2-melee5, measured offline at the hit frame): the hand raised to about
              # 1.95 m, a little behind the seat, the lance 44° down and 8° out to the right,
              # so its point (2.5 m from the hand) meets the ground about 1.8 m ahead and
@@ -1323,17 +1562,17 @@ def make(ctx, spec):
              # m2-melee6: solved at the point (right 0.81, forward 1.73, up 0.20), the hand
              # held out to the right of the shoulder and the lance only 3° out, so the shaft
              # behind the grip passes outside the rider's body instead of through it.
-             "lance_down": strike(dict(LEGS_SEAT, spine=(-6, -8, 0), spine1=(-2, -4, 0)),
+             "lance_down": strike(dict(legs_seat, spine=(-6, -8, 0), spine1=(-2, -4, 0)),
                                   Vector((-0.81, -1.73, 0.20)), axis_of(44, 3), lance_len, None),
              # The thrust at a standing man: his chest (1.15 m up) 3.0 m ahead, 4 degrees right
              # (the lancers' stance of 90 px, #511), the lance 12 degrees down from the hand at
              # the shoulder's height. Level (2 degrees) the point passed 1.68 m up, over him.
-             "lance_mid": strike(dict(LEGS_SEAT, spine=(-14, 0, 8)), Vector((-0.21, -2.99, 1.15)), axis_of(12, 2),
+             "lance_mid": strike(dict(legs_seat, spine=(-14, 0, 8)), Vector((-0.21, -2.99, 1.15)), axis_of(12, 2),
                                  lance_len, None),
              # Drawn sabre (`drawn`): raised over the right shoulder, the blade up and back;
              # the cuts down at a man on the ground right and left of the horse, and the cut
              # at a standing man (the blade level with his shoulder).
-             "sabre_up": _with_world(dict(LEGS_SEAT, spine=(4, 0, -10)), right(side(0.06, 0.04, 0.78), (-110, 0, 0))),
+             "sabre_up": _with_world(dict(legs_seat, spine=(4, 0, -10)), right(side(0.06, 0.04, 0.78), (-110, 0, 0))),
              # Down right (m2-melee5): leaning far out over the right side, the hand low
              # beside the horse, the blade driven almost straight down at a man lying
              # about 1.2 m out (the horse turned 75° from him, `strike_view::TURN_SABRE`).
@@ -1350,9 +1589,9 @@ def make(ctx, spec):
              # out): across the neck, leaning out over the left shoulder.
              "sabre_down_l": strike(dict(stirrups, **SABRE_DOWN_L), SABRE_DOWN_L_AT, axis_of(*SABRE_DOWN_L_AXIS),
                                     sabre_len, pommel, blade_tip),
-             "sabre_mid": _with_world(dict(LEGS_SEAT, spine=(-8, -8, 6)), right(side(-0.16, -0.46, 0.36), (25, 25, 0))),
+             "sabre_mid": _with_world(dict(legs_seat, spine=(-8, -8, 6)), right(side(-0.16, -0.46, 0.36), (25, 25, 0))),
              # A gun upright, its butt on the right thigh (the socket turned from the aim's).
-             "gun": _with_world(dict(LEGS_SEAT), right(side(0.04, -0.22, 0.12), None, (-2, 0, 0)))}
+             "gun": _with_world(dict(legs_seat), right(side(0.04, -0.22, 0.12), None, (-2, 0, 0)))}
     for k in ("lance", "gun", "flag"):
         poses[k + "_lean"] = dict(poses[k], spine=(-12, 0, 0))
     ch.strike_ctx = {"left": left, "stirrups": stirrups, "pommel": pommel, "sabre_len": sabre_len}
@@ -1588,6 +1827,8 @@ def unscale(ch):
 
 
 def build(ctx, spec):
+    # A unit's own palette may leave out the draped coat's lining, shirt and stock (`tailor`).
+    spec = dict(spec, palette=dict({k: PALETTE[k] for k in ("lining", "shirt", "stock")}, **spec["palette"]))
     ch = make(ctx, spec)
     if spec.get("release"):
         ch.bow_release = spec["release"]
@@ -1645,3 +1886,5 @@ def build(ctx, spec):
     if getattr(ch, "reload_stats", None):
         ctx.stats["reload"] = ch.reload_stats
     ctx.stats["kit"] = kit_report
+    if getattr(ch, "drape_report", None):
+        ctx.stats["drape"] = ch.drape_report

@@ -25,7 +25,8 @@ def belt(ch, obj_name, frm, to, offset, width=0.06, key="belts"):
 
     garments = ch.strap_under is not None
     n = 28 if garments else 12  # follow the folds of the draped coat
-    b = bd.strap(ch.arm, obj_name, ch.strap_surface, frm, to, width, offset, samples=n)
+    # Over draped cloth the belt is flat, thick and one band over the shoulder (#523).
+    b = bd.strap(ch.arm, obj_name, ch.strap_surface, frm, to, width, offset, samples=n, flat=garments)
     if garments:
         drape.inherit_weights(b, ch, ch.strap_under)
     return b

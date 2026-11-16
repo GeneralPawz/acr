@@ -1189,6 +1189,200 @@ UVs keep the bands' weave continuous. Weights transfer from skin/sleeve surfaces
 are limited to four. `outfit.collar_cuffs` records profiles, button counts, measured
 thickness ranges, boundary/nonmanifold edge counts, and weight errors per piece.
 
+## Tailored trim (#523)
+
+`drape.tailored(ch, made)` (line family, `line.make`; `build["tailored"] = False` switches it
+off): the coat's stand collar and round cuffs are sewn and draped with the coat (their seams
+shape its neck and wrists) but left out of the result (`dress(drop=garments.TRIM_PANELS)`)
+and built again as closed bands with a thickness: at the coat's 3.5 cm lattice a 4 cm collar
+and an 11 cm cuff are two triangles deep and crumple into teeth.
+
+- **Collar** (`facings`): the base follows the coat's neck seam as draped (a cosine series
+  round the neck, symmetric), 14 mm below and 7 mm outside it; the top 22 mm (front) to
+  30 mm (back) above, leaning in to 11 mm off the neck, and never higher than
+  `Body.neck_z` + 30 mm in front (the jaw). Weights from the nearest coat vertex.
+- **Stock** (`stock`): a band on the neck inside the collar, 10 mm above its top; replaces
+  the draped strip. Weights from the skin.
+- **Cuffs** (`facings`): round the forearm's axis, 4 mm outside the sleeve as draped
+  (largest radius, at most the median + 8 mm), 7 mm wider at the top, rigid on the forearm.
+
+`stats.json` → `drape.tailored` holds the seam fit, the heights and the cuff radii. EngF18,
+audit before → after: coat poke 71 → 42, flesh holes 22 → 9, waistcoat holes 12 → 2, facings
+ragged 34 → 22 mm (lapels only); worse: stock poke 34 → 77 (its rim above the collar counts),
+shirt 6 → 49 (the wristbands inside the cuffs), waistcoat 14 → 30 (under the collar). Open:
+the lapels are still inlays of the crumpled coat front (ragged), the cuff buttons and the
+wristbands are hidden by the cuff, and the coat's neck edge shows beside the collar at the
+shoulders.
+
+### Coat at 1.5 cm, authored lapels, fitted cuffs, flat belt (#523, second slice)
+
+- **Coat body:** `registry.SPACING["coat"]` 3.5 -> 1.5 cm (the HD path's spacing; 1 610 ->
+  7 834 sim vertices, sim 3.9 -> 16.5 s), `CLOTH["coat"]["close"] = 0.13` (every seam pair
+  merged: 250 -> 578 of 263 -> 578 welded) and `"smooth": 10` (Taubin after the weld). Shared
+  by every unit that drapes `coat` (the line family and the officers' coats).
+- **Lapels:** `TRIM_PANELS` now holds `lapel`. A dropped inlay stays as coat cloth in its
+  base panel (`dress`), its vertices go to `ch.trim_seams["lapel"]` and its key to
+  `ch.trim_keys`. `tailored` builds `lapel_l` / `lapel_r`: straight edges fitted through the
+  draped place (`garments.lapel_edges`, width 50-85 mm, not across the middle), a 24 x 6
+  grid laid 4 mm over the coat front (rays from just in front of the place, low-passed,
+  never under the cloth), 3 mm thick. `buttons` finds them like the inlays before.
+- **Cuffs:** the sleeve end is made round inside the cuff (no fold wider than the median
+  radius + 4 mm, eased in over 5 cm above it) and ends with it; the cuff's radius is the
+  median + 7 mm (EngF18: 59.5 / 57.3 -> 52.3 / 52.6 mm) and it ends 10 mm above the wrist,
+  so the shirt's wristband shows.
+- **Belts over draped cloth** (`body.strap(flat=True)`, `garments.strap_rows`; every family
+  whose straps lie on garments): 5 rays across the width, the belt straight across them and
+  lifted over every hit, both edges low-passed along the run, one band from hip over the
+  shoulder to hip, 3 mm thick with rims. It bridges folds instead of following them.
+- Open after this slice (see the third): the skirts' front edge at the hip is not
+  straightened; the belt stands off the waist where it bridges from the chest to the hip.
+
+### Seams shut before the weld, cut front edge, deeper armhole (#523, third slice)
+
+- **Armhole:** `garments.SCYE_DROP` = 3 cm: the coat's armhole is `nape_to_waist / 2 + 3` deep.
+  At half the back length the side seam's top stood either side of the arm (99 mm apart at
+  the end of the sim); now it ends under the armpit.
+- **Sewing:** `CLOTH["coat"]["sew_hold"]`: `simulate` keeps `SEW_FORCE` while the cloth settles
+  (it fell to 15 and the sleeve seams opened again: `sleeve_top.fwd` 97 -> 27 mm with the
+  hold alone).
+- **Eased closing:** `CLOTH["coat"]["ease"]` = 16: `drape.ease_seams` (`garments.ease_closed`)
+  brings every sewn group to its mean before the weld and hands that move on over 16 rings
+  of cloth (Jacobi), so the weld merges coincident points (`drape.coat.gap_mm_at_weld` = 0)
+  and a seam the sim left open stretches the cloth round it instead of folding one row.
+- **Front edge:** `drape._trim_front` (in `tailored`, `LAPEL["inset"]`, `"above"`): the coat
+  cloth inside the lapel's inner edge is cut away 14 mm in from it, from the lapel's foot to
+  10 cm over its top, and the edge laid on that straight line
+  (`drape.tailored.lapels.front_faces_cut`). No shreds beside the lapels, no red V at the hook.
+- **Waistcoat:** 17 cm below the waist (was 14) and buttoned to 11 cm under the neck point
+  (was 16): no skin at the belly or under the stock. Every unit that drapes `waistcoat`.
+- EngF18 (= FrnF18), sim seam gaps: max 97 -> 49 mm, side seam 92 -> 43, armholes 74 -> 49 / 46,
+  sleeve front seam 97 -> 44 (the sim is not repeatable to the millimetre: 57 and 49 in two
+  builds). Audit: coat poke 318 -> 312, holes 4 -> 2, score 20.4 -> 10.0; coat skirts poke
+  309 -> 44; waistcoat 39 -> 25; worse: flesh 84 -> 106 (over the skirts), lapel_r 6 -> 22.
+- Open: dark nicks on the front of the shoulders and coat cloth through the lapels in
+  places (the eased cloth is not re-collided); the back waist still bunches above the
+  skirts; the belt bridges from chest to hip; the stock's 67 poking vertices are its rim
+  shown 10 mm over the collar by design (`STOCK["above"]`): an audit case, not a defect.
+
+### Eased cloth resolved, calm waist seam, taut belt (#523, fourth slice)
+
+- **`drape.resolve`** (garments with `CLOTH[g]["ease"]`, after the weld and the smoothing):
+  vertices nearer than the garment's margin to the skin or the layers beneath are put that
+  far off (normal turned to the skin's), then the vertices of folded edges (face normals
+  more than about 100 degrees apart) are relaxed and pushed off again, 4 rounds. Stats:
+  `drape.coat.pushed_off`, `folds`, `folds_left` (EngF18: 566, 396 -> 103).
+- **`drape.calm_seam`**: the waist seam (vertices shared by skirt and body panels) smoothed
+  along its run, 5 rings of cloth round it relaxed.
+- **`CLOTH["coat"]["skirt_follow"]`**: the `hips` share of a skirt vertex is replaced by the
+  weights transferred from the layers beneath (as the body panels; no arm or leg bones), so
+  both sides of the waist seam move alike (`drape.finish`, `skirt="body"`).
+- **Belt:** `garments.strap_rows(..., taut=True)` (`body.strap`, flat belts): each edge is the
+  upper hull of its depths along the run, so the belt bridges chest to hip.
+- EngF18 audit, slice 3 -> 4: coat holes (stand) 2 -> 0, coat skirts poke 44 -> 30, lapel_r
+  22 -> 15; worse: coat poke 312 -> 324, coat holes (walk) 3 -> 5, waistcoat 25 -> 36,
+  collar 24 -> 33, stock 67 -> 82.
+- Open: 103 folded edges are left (a few dark smudges on the right shoulder); a white patch
+  (shirt or waistcoat through the coat) beside the collar on the right shoulder, new with the
+  relaxing; torn bits remain at the side-back of the waist seam; the belt's front edge is
+  still kinked across its width (per-row slope); lapels are still fitted to the draped trace.
+
+### Unequal back skirts: half fixed (#523, fifth slice, open)
+
+- `stats.json` -> `drape.coat.skirt_hem_cm`: the lowest point of the skirt panels per side
+  (`[left, right]`, cm) after the sim, the easing, the weld and `resolve`. The difference is
+  there after the sim; nothing later changes it.
+- **Cause 1 (fixed):** the coat's body jumps about 10 cm up in the first 10 frames as the
+  shoulder and armhole seams close (the waist seam ends at z = 1.15, not 1.04). Weightless
+  for the whole sewing phase, the skirts flew on up to the horizontal. `CLOTH["coat"]
+  ["weightless"]` = 12 (`simulate`): gravity fades in from frame 12. EngF18 hems
+  80.5 / 56.8 -> 70.1 / 56.1 cm, folds 396 -> 242, worst seam 49 -> 42 mm.
+- **Cause 2 (open):** the top 15 cm of the left back skirt is drawn up into the waist seam
+  (cloth cut at z 0.89-1.04 ends at 1.11-1.17, edges stretched up to 2.2 times; the right
+  skirt's are within 2 %), and it creeps there under gravity between frames 30 and 75. The
+  cloth is tangled on the layers beneath at the back waist (not yet shown which; the
+  breeches' seat is the suspect). This is also the "back waist bunches" of the third slice.
+- The body's 10 cm jump itself (fixed in the sixth slice): the body panels are about 10 cm short for their
+  path over the chest and shoulder, so the waist seam sits high and the hem ends at 0.57
+  instead of 0.48.
+
+### Longer body, mirrored half (#523, sixth slice)
+
+- **Length:** `garments.COAT_RISE` = 10 cm: the coat's body panels are that much longer than
+  the back length + 2 below the armhole line (the armhole keeps its depth, `SCYE_DROP`) and
+  start half of it below the waist line (`place["lift"]`), so the neck point starts on the
+  shoulder and nothing jumps as the shoulder seams close. EngF18: waist seam z 1.15 -> 1.06
+  (`drape.coat.waist_seam_cm`, mean per side), skirt hems 70.1 / 56.1 -> 50.4 / 49.8 cm
+  after the sim (drafted 48): without the jump the left skirt is no longer flung up, which
+  was "cause 2" above. Sim seam gaps max 42 -> 41 mm, side seam 37 -> 16.
+- **`CLOTH[g]["mirror"]`** (`drape.mirror_half`, after `resolve`, before the trim and the
+  weights; on for `coat`): each half (the `L` and `R` copies of the mirrored panels, face
+  attribute `side`) is scored with `garments.half_score` (edges longer than 1.5 times the
+  spacing + folded edges + 20 per cm its skirt hem is above the other's); the better one is
+  kept and mirrored. Vertices shared by both halves (centre back, the hook) are laid on
+  x = 0 with 6 rings of cloth following; other cloth of the kept half that lies across the
+  middle is put 2 mm on its own side; panels cut in one across the middle are cut at the
+  plane. Stats `drape.coat.mirror`: EngF18 kept `r` (scores 464.5 / 299.0: the left waist
+  seam was still 6.5 cm higher, 112.2 / 105.5 cm), seam up to 18.6 mm off the plane,
+  139 vertices across it. Lapels, cuffs and the cut front edge follow (`tailored` after it).
+- EngF18 audit, slice 3 -> 6: lapel_l poke 55 -> 43, lapel_r 22 -> 15, flesh poke 106 -> 85;
+  worse: coat poke 312 -> 333, coat holes (walk) 3 -> 8, flesh holes (walk) 7 -> 19, coat
+  skirts 44 -> 54, stock 67 -> 80, waistcoat 25 -> 32.
+- Open: dark folded triangles on the chest and shoulders, now on both sides alike (the kept
+  half has 42 folded edges); the mirrored halves overlap at the back vent (both 2 mm off the
+  plane); waistcoat and breeches are not mirrored (they have no skirt tangle; their seams
+  at the centre would need the same treatment and `close` is set for neither).
+
+### Riders: the same coat, draped standing (#523, seventh slice)
+
+The 18th-century riders (`cavalry.make`, `dress` "coat": 12 units) built their clothes as
+`ch.shell` offsets of the rider's skin plus a `body.tube` skirt, because `drape` works in the
+standing man's frame (`Body.waist_z` = 1.04, the slices, the mirror plane x = 0,
+`skirt_weights`) and the rider's rest pose stands at his saddle's ground point with prefixed
+bones. Now:
+
+- **`cavalry.tailor`** builds a standing man of the rider's build at the world origin (no
+  prefix), drapes `RIDER_DRAPE` (breeches, shirt, waistcoat, coat) on him as `line.make` does
+  (`drape.dress`, `drape.tailored`, `hide_under`, `buttons`, the shoulder belt of
+  `straps.belt` for units without a kit, the officers' sash) and throws him away.
+- **`cavalry.wear`** moves the clothes to the rider's origin, renames their vertex groups to
+  `rider.*`, binds them to the unit's armature and pushes his skin in (`hide_skin`). The seat
+  is skinning only: each garment is draped once. Without `facings` the trim is coat cloth.
+  The high boots stay a shell. `stats.json` has the `drape` block now.
+- **`cavalry.SKIRT_SEAT`** (in every seated pose, draped riders only): the skirt bones are
+  posed with the seat, the front chains forward and out with the thighs (-52, 20 degrees
+  out), each back chain out and down beside the cantle (48 degrees out, 18 back; its lower
+  segment 30 back towards the vertical along the flank).
+- **`cavalry.seat_skirts`** (eighth slice) fits skirts and turnbacks to that pose:
+  `garments.seat_weights` puts each vertex's skirt share on the chains of its own side only
+  (no blend across the front opening or the back vent; front chain before the side seam,
+  back chain behind it, blended over 8 cm; behind the seam the thigh's share goes to the
+  back chain), then every skirt vertex that, skinned into the seat, lies inside the saddle,
+  the saddlecloth, the horse or the posed thighs is moved out along the ray from the
+  saddle's axis to 20 mm over the outermost surface, the moves smoothed (3 rounds) and
+  taken back through the vertex's skinning matrix into the rest mesh. The turnbacks take
+  weights and moves from the three nearest skirt vertices. `stats.json`: `drape.seat` =
+  {`inside`, `moved_mm_max`, `turnback_inside`} (EngKOf18: 484 vertices, 146 mm, 24). The
+  kit on the saddle (portmanteau, roll, scabbard) is placed later and is not a solid here.
+- The dragoons' carbine belt is the flat strap of the foot units (`straps.belt`, 7 cm wide)
+  laid by `tailor` on the standing man; `cavalry_kit.straps` takes it over and lays only
+  the waist belt itself.
+- Officers' lace (`spec["lace"]`): `drape.tailored(lace=True)` adds a band (`drape.LACE`,
+  13 mm) round the top of each cuff and down each lapel's outer edge, key `lace`.
+- `ACR_RIDER_SHELLS=1` builds the shells as before.
+- EngKOf18, shells -> draped: man 11 041 -> 28 709 triangles, glb 6.7 -> 7.9 MB; coat 595 of
+  595 pairs welded, hems 45.2 / 45.2 cm; audit coat holes 7 -> 0, cuffs ragged 29 -> 0 mm,
+  lapels 10 -> 0 mm; worse: audit score 53.2 -> 75.4, `model_layers` poking 596 -> 2 240,
+  crossing 332 -> 912 (EngD18 525 -> 825, 386 -> 830).
+- Seat fitted (eighth slice), previous draped build -> now: EngKOf18 `model_layers` poking
+  2 240 -> 2 461, crossing 912 -> 813; EngD18 825 -> 995, 830 -> 562. Audit `coat_skirts`
+  score 9.0 -> 25.6 (ragged 9.8 -> 12.7 mm, new flag `seam`); the lace bands count as
+  slivers (4-6 points each).
+- Open: the front skirts' front corners (with the turnbacks) bunch up on the pommel and
+  holsters instead of falling inside the knees; the skirts stand out wide from the hips
+  (stiff, 20 mm off every solid); the dragoon's scabbard, portmanteau and roll are not
+  solids of the fit (the scabbard crosses the left back skirt); in the stirrups pose the
+  front skirts keep the seat's angle.
+
 ## Hems (#523)
 
 `drape.hems(ch)` runs in `Character.morphs` (every family; `drape.HEMS = True`) over each
