@@ -2,6 +2,7 @@
 
 import os
 import sys
+import math
 import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "lib"))
@@ -141,6 +142,93 @@ class Period17(unittest.TestCase):
         # Long hose reach above the knee.
         h, _ = self.uni["hose"]
         self.assertGreater(h["hose"].bounds()[3], m["knee_to_ankle"] + 20.0)
+
+
+class Pikeman1640(unittest.TestCase):
+    """The pikeman's legs and collar of about 1640 (#523): full breeches gathered into a
+    knee band, stockings into the shoe, the falling band laid flat."""
+
+    def test_breeches_are_full_and_gathered_into_a_band_below_the_knee(self):
+        m = gm.MEASURE
+        plain, _ = gm.breeches(m)
+        full, seams = gm.breeches17(m)
+        self.assertTrue(all(p.garment == "breeches17" and p.area() > 0 for p in full.values()))
+        # Fuller round the thigh by the draft's `full`, longer than the knee.
+        self.assertGreater(full["br_front"].bounds()[2], plain["br_front"].bounds()[2] + 5.0)
+        self.assertGreater(full["br_front"].bounds()[3], plain["br_front"].bounds()[3] + 5.0)
+        # The gather: the legs' bottom edge is much longer than the band it is sewn to, and
+        # the band hangs below the seam (its top edge is sewn), once round the leg, pinned.
+        g = next(s for s in seams if s.a[0][0] == "knee_band" and s.b[0][1] == "knee")
+        self.assertEqual(g.a[0][:3], ("knee_band", "top", True))
+        a, b = gm.seam_lengths(full, g)
+        self.assertGreater(b, a * 1.3)
+        band = full["knee_band"]
+        self.assertLess(band.place["lift"], 0.0)
+        self.assertEqual(band.place["pin"], "all")
+        self.assertAlmostEqual(band.place["wrap"], band.bounds()[2])
+        self.assertLess(band.bounds()[2], m["knee"] + 6.0)  # closed on the leg
+        from acr_assets import registry
+
+        self.assertLess(registry.SPACING["breeches17"], 2.0)  # fine enough for folds
+
+    def test_pleats_are_regular_and_only_stand_outwards(self):
+        n = gm.CLOTH["breeches17"]["pleats"]["n"]
+        ys = [gm.pleat_wave(k / 600.0, n) for k in range(601)]
+        self.assertTrue(all(0.0 <= y <= 1.0 for y in ys))
+        peaks = [k for k in range(1, 600) if ys[k - 1] < ys[k] >= ys[k + 1]]
+        self.assertEqual(len(peaks), n)
+        self.assertEqual({b - a for a, b in zip(peaks, peaks[1:])}, {600 // n})  # evenly spaced
+        self.assertAlmostEqual(gm.pleat_wave(0.0, n), 0.0)  # a valley on each seam
+        self.assertAlmostEqual(gm.pleat_wave(1.0, n), 0.0)
+        # The buff coat's cloth sleeves are shaped (`drape.sleeve_shape`), its skirts flare
+        # over the full breeches.
+        self.assertIn("sleeve_shape", gm.CLOTH["buffcoat"])
+        sl = gm.CLOTH["buffcoat"]["sleeve_shape"]
+        self.assertGreaterEqual(sl["full"], 0.015)  # a fuller upper arm
+        self.assertTrue(0.01 <= sl["show"] <= 0.02)  # the shirt cuff shows 1-2 cm beyond the hem
+        self.assertIn("wing", sl)
+        # The breeches: calm legs, the top kept under the coat, no folds there, the band closed.
+        pl = gm.CLOTH["breeches17"]["pleats"]
+        self.assertGreater(pl["calm"]["round"], pl["calm"]["along"])  # even round the leg first
+        self.assertLessEqual(pl["cover"]["off"], 0.01)
+        self.assertGreater(pl["under"], 15.0)
+        self.assertEqual(pl["close"]["panel"], "knee_band")
+        self.assertIn("knee_band", gm.breeches17(gm.MEASURE)[0])
+        b, _ = gm.buffcoat(gm.MEASURE)
+        sk = b["buff_skirt_front"]
+        self.assertGreater(sk.outline[1][0] - sk.outline[2][0], 10.0)
+
+    def test_stockings_end_level_in_the_shoe_and_under_the_band(self):
+        m = gm.MEASURE
+        st, seams = gm.GARMENTS["stockings17"](m)
+        h = st["hose"]
+        bottom = h.edge_points("bottom")
+        self.assertEqual(len({v for _u, v in bottom}), 1)  # level: no tongue over the instep
+        self.assertLess(bottom[0][1], 0.0)
+        top = h.bounds()[3] - (m["knee_to_ankle"] - 1.0)
+        self.assertTrue(2.0 < top < 10.0)  # above the knee band, well under the breeches
+        self.assertTrue(gm.CLOTH["stockings17"]["in_shoes"])
+        self.assertEqual(seams[0].garment, "stockings17")
+        # The long hose keep their cut.
+        self.assertEqual(len(gm.hose(m)[0]["hose"].outline), 8)
+
+    def test_falling_band_lies_on_the_high_points_at_its_own_width(self):
+        # Deeper in front than behind, symmetric about the centre front.
+        self.assertGreater(gm.band_width(-math.pi / 2), gm.band_width(math.pi / 2) + 3.0)
+        self.assertAlmostEqual(gm.band_width(-math.pi / 2 + 0.4), gm.band_width(-math.pi / 2 - 0.4))
+        # A hollow between the collar and the corslet's edge is bridged, lumps are not followed.
+        prof = [(0.0, 1.0), (1.0, 0.2), (2.0, 0.9), (3.0, 0.1), (4.0, 0.0)]
+        self.assertEqual(gm.upper_hull(prof), [(0.0, 1.0), (2.0, 0.9), (4.0, 0.0)])
+        pts = gm.lay_over(prof, [0.0, 1.0, 2.0, 3.0, 6.0])
+        self.assertEqual(pts[0], (0.0, 1.0))
+        for (r0, z0), (r1, z1), d in zip(pts, pts[1:], (1.0, 1.0, 1.0, 3.0)):
+            self.assertGreater(r1, r0)  # never folds back over itself
+            self.assertLess(abs(math.hypot(r1 - r0, z1 - z0) - d), 0.05)  # keeps its width
+        # Narrow on the shoulders: a collar, not a cape.
+        self.assertLess(gm.band_width(0.0, 11.0, 5.5), 6.0)
+        # `lift` moves it off the surface along the normal.
+        up = gm.lay_over([(0.0, 0.0), (1.0, 0.0)], [0.5], lift=0.1)
+        self.assertAlmostEqual(up[0][1], 0.1)
 
 
 class DrapePilot(Period17):

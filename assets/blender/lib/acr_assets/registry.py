@@ -63,6 +63,7 @@ PAINT_FN = {}  # painter name -> fn(p, n, rgb, L, seed)
 # Garments beyond garments.GARMENTS' uniform are added to that same dict; drape spacing (cm).
 SPACING = {"coat": 3.5, "waistcoat": 5.0, "breeches": 4.2, "gaiters": 3.5, "shirt": 2.0,
            "doublet": 3.5, "doublet_slashed": 3.5, "buffcoat": 4.0, "buffcoat_bare": 4.0, "hose": 3.5, "slops": 3.5,
+           "breeches17": 1.1, "stockings17": 2.0,
            "shirt17": 2.0, "frn_blouse": 3.0, "frn_sash": 2.0, "frn_cape": 3.0, "trade_shirt": 3.0, "unku": 3.5,
            "yacolla": 3.5, "tilmatli": 3.5, "nat_leggings": 3.0,
            "nat_breechcloth": 2.5}

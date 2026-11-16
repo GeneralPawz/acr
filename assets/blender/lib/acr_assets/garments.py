@@ -41,7 +41,7 @@ MEASURE = {
 
 # Ease (cm of girth) per garment over the body.
 EASE = {"waistcoat": 8.0, "coat": 20.0, "breeches": 0.5, "gaiters": 1.0, "shirt": 2.0,
-        "doublet": 12.0, "buffcoat": 16.0, "hose": 1.0, "slops": 26.0}
+        "doublet": 12.0, "buffcoat": 16.0, "hose": 1.0, "slops": 26.0, "breeches17": 20.0, "stockings17": 1.0}
 
 # Wool broadcloth, linen and canvas: thickness (m) of the solidified cloth, sim settings.
 CLOTH = {
@@ -53,10 +53,34 @@ CLOTH = {
     # 17th century: the doublet's wool, the buff coat's thick oiled leather (stiff and heavy:
     # it stands off the body in few broad folds), knitted hose, full slops.
     "doublet": {"thickness": 0.0025, "mass": 0.35, "tension": 18.0, "bending": 1.5, "shrink": 0.02, "margin": 0.005},
-    "buffcoat": {"thickness": 0.0045, "mass": 0.90, "tension": 40.0, "bending": 14.0, "shrink": 0.0, "margin": 0.007},
+    "buffcoat": {"thickness": 0.0045, "mass": 0.90, "tension": 40.0, "bending": 14.0, "shrink": 0.0, "margin": 0.007,
+                 "close": 0.13,  # m: no seam pair is left open (`drape.dress`)
+                 # the cloth sleeves of about 1640 (`drape.sleeve_shape`)
+                 "sleeve_shape": {"cuts": 2, "full": 0.022, "elbow": 0.012, "crease": 0.007, "pitch": 0.036,
+                                  "taper": 0.10, "cuff": 0.012, "turn": 0.002, "show": 0.015, "reach": 0.08,
+                                  "skin": 0.005, "wing": (0.035, 0.012)}},
     "hose": {"thickness": 0.0015, "mass": 0.20, "tension": 15.0, "bending": 0.4, "shrink": 0.06, "margin": 0.003},
     "slops": {"thickness": 0.0025, "mass": 0.30, "tension": 12.0, "bending": 1.2, "shrink": 0.0, "margin": 0.004},
     "shirt17": {"thickness": 0.0012, "mass": 0.15, "tension": 10.0, "bending": 0.2, "shrink": 0.0, "margin": 0.002},
+    # Full wool breeches: soft enough to fold where the gather pulls them in, no shrink (the
+    # fullness must hang); `smooth`: Taubin passes after the sim (`drape.dress`).
+    "breeches17": {"thickness": 0.0020, "mass": 0.30, "tension": 15.0, "bending": 1.5, "shrink": 0.0, "margin": 0.004,
+                   "smooth": 12, "weight_smooth": 10,
+                   "pleats": {"panels": ("br_front", "br_back"), "edges": ("inseam", "outseam"), "n": 6,
+                              "band": 0.012, "band_reach": 0.12, "mid": 0.004, "waist": 0.0, "waist_reach": 0.07,
+                              # no folds in the top 22 cm (under the coat's skirts)
+                              "under": 22.0,
+                              # the knee band closed on the stocking
+                              "close": {"panel": "knee_band", "off": 0.004},
+                              # the sim's wrinkles low-passed out of the legs (`drape.calm`)
+                              "calm": {"cells": 32, "step": 1.5, "round": 8, "along": 3, "puff": 0.003, "top": 0.0,
+                                       "blend": 0.08, "skin": 0.006, "smooth": 4},
+                              # the top kept close under the fitted coat (`drape.cover`)
+                              "cover": {"drop": 0.14, "off": 0.010, "slope": 0.3}}},
+    # Knitted stockings: `in_shoes` drapes them without the shoes and cuts them level that far (m)
+    # below the shoes' top edge, so they run down into them.
+    "stockings17": {"thickness": 0.0015, "mass": 0.20, "tension": 15.0, "bending": 0.4, "shrink": 0.06, "margin": 0.003,
+                    "in_shoes": 0.025, "smooth": 8},
 }
 # Drafted instead of shells (#287 drape pilot): linen and cotton shirts and tunics, wool and
 # cotton cloaks, a wool sash that shrinks onto the shirt.
@@ -558,9 +582,10 @@ def doublet(m=MEASURE, tabs=True, slashed=False, key="doublet", sleeve_key="dsle
     return panels, seams
 
 
-def buffcoat(m=MEASURE, sleeves="dsleeve", key="buff", drop=None):
+def buffcoat(m=MEASURE, sleeves="dsleeve", key="buff", drop=None, flare=13.0):
     """The buff coat (1640s): thick oiled leather, fitted, hooked shut to the waist, long
-    skirts to above the knee (open at the back vent), sleeves of cloth (`sleeves` = its
+    skirts to above the knee (open at the back vent, `flare` cm wider at the hem per quarter:
+    ease over full breeches), sleeves of cloth (`sleeves` = its
     key), of buff (`sleeves` = `key`) or none (`None`: under a pikeman's armour)."""
     panels, seams = _body17(m, "buffcoat", key, sleeves or key, chest=16.0, waist=12.0, collar=False)
     if sleeves is None:
@@ -570,7 +595,7 @@ def buffcoat(m=MEASURE, sleeves="dsleeve", key="buff", drop=None):
     bw = panels["coat_back"].outline[1][0]
     drop = m["waist_to_knee"] - 10.0 if drop is None else drop
     for nm, w, theta, d, last in (("buff_skirt_front", fw, 0.0, 1, "front"), ("buff_skirt_back", bw, 180.0, -1, "vent")):
-        panels[nm] = Panel(nm, "buffcoat", key, [(0.0, 0.0), (w + 7.0, 0.0), (w, drop), (0.0, drop)],
+        panels[nm] = Panel(nm, "buffcoat", key, [(0.0, 0.0), (w + flare, 0.0), (w, drop), (0.0, drop)],
                            {"hem": (0, 1), "side": (1, 2), "waist": (2, 3), last: (3, 0)},
                            {"region": "torso", "theta": theta, "dir": d, "u0": 0.0, "at": "waist", "lift": -drop,
                             "gap": 3.5}, skirt=True)
@@ -580,21 +605,53 @@ def buffcoat(m=MEASURE, sleeves="dsleeve", key="buff", drop=None):
     return panels, seams
 
 
-def hose(m=MEASURE, key="hose", top=0.6):
+def hose(m=MEASURE, key="hose", top=0.6, tongue=4.0, garment="hose"):
     """Long hose (stockings) from the instep to `top` x the knee-to-waist length above the
-    knee, close to the leg, seamed up the back; the top pinned (gartered under the slops)."""
+    knee, close to the leg, seamed up the back; the top pinned (gartered under the slops).
+    `tongue` (cm): the front dropping over the instep like a gaiter's; 0: a level bottom
+    4 cm below the ankle, for stockings that run down into the shoe (`CLOTH[...]["in_shoes"]`)."""
     calf = m["calf"] + 1.0
     ank = m["ankle"] + 5.0
     knee = m["knee"] + 1.0
     h = m["knee_to_ankle"] - 1.0
     up = m["waist_to_knee"] * top
-    thigh = m["thigh"] * 0.88 + 1.0
-    g = [(0.0, 0.0), (ank * 0.75, -4.0), (ank, 0.0), (calf, h * 0.55), (knee, h), (thigh, h + up), (0.0, h + up),
-         (0.0, h * 0.55)]
-    P = {"hose": Panel("hose", "hose", key, g, {"bottom": (0, 2), "outer": (2, 5), "top": (5, 6), "start": (6, 0)},
+    thigh = knee + (m["thigh"] * 0.88 + 1.0 - knee) * min(1.0, top / 0.6)
+    if tongue:
+        g = [(0.0, 0.0), (ank * 0.75, -tongue), (ank, 0.0)]
+    else:
+        g = [(0.0, -4.0), (ank * 0.5, -4.0), (ank, -4.0)]
+    g += [(calf, h * 0.55), (knee, h), (thigh, h + up), (0.0, h + up), (0.0, h * 0.55)]
+    P = {"hose": Panel("hose", garment, key, g, {"bottom": (0, 2), "outer": (2, 5), "top": (5, 6), "start": (6, 0)},
                        {"region": "leg", "theta": 180.0, "dir": 1, "u0": 0.0, "at": "ankle", "lift": 1.0, "gap": 0.8,
                         "pin": "top"})}
-    return P, [Seam([("hose", "start", True)], [("hose", "outer")], "hose", close=GAITER_CLOSE)]
+    return P, [Seam([("hose", "start", True)], [("hose", "outer")], garment, close=GAITER_CLOSE)]
+
+
+def breeches17(m=MEASURE, full=20.0, below=3.0, blouse=3.0, band=4.0, key="breeches", garment="breeches17"):
+    """Full breeches of about 1640 (Waugh's Diagrams V-VIII, pike and shot): the breeches'
+    draft `full` cm wider round the thigh and the leg's bottom edge, the legs running
+    straight down to `below` cm under the knee plus `blouse` cm of length that hangs over
+    the band, and gathered there into a `band` cm deep knee band that closes on the leg
+    over the stocking (it goes once round the leg where it is placed, and stays: `wrap`, `pin`). The band hangs below the gather seam."""
+    mm = dict(m, seat=m["seat"] + full * 0.5, thigh=m["thigh"] + full, knee=m["knee"] + full,
+              waist_to_knee=m["waist_to_knee"] + below + blouse)
+    panels, seams = breeches(mm)
+    girth = m["knee"] * 0.93 + 5.5  # the leg below the knee over the stocking
+    for p in panels.values():
+        p.garment = garment
+        p.key = key
+        if p.place["region"] == "leg":
+            p.place = dict(p.place, lift=-(below + blouse), gap=3.5)
+    panels["knee_band"].outline = [(0.0, 0.0), (girth, 0.0), (girth, band), (0.0, band)]
+    panels["knee_band"].place = dict(panels["knee_band"].place, lift=-(below + band), gap=1.1, pin="all", wrap=girth)
+    for sm in seams:
+        sm.garment = garment
+        if sm.a[0][:2] == ("knee_band", "bottom"):
+            sm.a = [_link(("knee_band", "top", True))]
+            sm.ease = 1.0
+        else:
+            sm.close = 0.07  # the full legs' seams end shut down to the pinned band
+    return panels, seams
 
 
 def slops(m=MEASURE, key="slops", slash_key="slashes", full=26.0, down=0.45, paned=True):
@@ -628,6 +685,61 @@ def slops(m=MEASURE, key="slops", slash_key="slashes", full=26.0, down=0.45, pan
         panels.update(_slashes("br_back", "slops", [-wb * f for f in (0.3, 0.65)], 1.5, leg_b + 6.0, bk.place,
                                slash_key, width=1.6))
     return panels, seams
+
+
+# -- the falling band --------------------------------------------------------------------------
+
+def band_width(t, front=12.0, back=7.5):
+    """Depth (cm) of the falling band `t` radians round the neck (-pi/2 = centre front, where
+    it is split): a plain linen collar, level across the back and the shoulders, deepening
+    to the two square front points."""
+    f = max(0.0, -math.sin(t))
+    return back + (front - back) * f * f
+
+
+def pleat_wave(f, n):
+    """Height 0..1 of a gathered edge's folds at fraction `f` across the panel, `n` folds:
+    rounded ridges with narrow valleys between them (where the gathering thread pulls)."""
+    return (0.5 - 0.5 * math.cos(2.0 * math.pi * n * f)) ** 0.6
+
+
+def upper_hull(pts):
+    """The upper convex hull of the profile `pts` [(r, z)] (r ascending): the line a stiff
+    cloth takes over the high points (the coat's collar, the corslet's rolled neck edge),
+    bridging the hollows between them instead of following every lump."""
+    hull = []
+    for p in pts:
+        while len(hull) >= 2:
+            (r0, z0), (r1, z1) = hull[-2], hull[-1]
+            if (r1 - r0) * (p[1] - z0) - (z1 - z0) * (p[0] - r0) >= 0.0:
+                hull.pop()
+            else:
+                break
+        hull.append((float(p[0]), float(p[1])))
+    return hull
+
+
+def lay_over(profile, lengths, lift=0.0):
+    """Points [(r, z)] at arc `lengths` (from the profile's first point) along the upper hull
+    of `profile` [(r, z)], `lift` off it along its normal: a flat panel keeps its width when
+    laid over the body (no stretch, no fold over itself). Past the hull's end it runs on
+    along the last segment."""
+    hull = upper_hull(profile)
+    if len(hull) < 2:
+        r, z = hull[0] if hull else (0.0, 0.0)
+        return [(r + d, z + lift) for d in lengths]
+    out = []
+    for d in lengths:
+        left = d
+        for k, ((r0, z0), (r1, z1)) in enumerate(zip(hull, hull[1:])):
+            seg = math.hypot(r1 - r0, z1 - z0)
+            if left <= seg or k == len(hull) - 2:
+                f = left / max(seg, 1e-9)
+                nr, nz = -(z1 - z0) / max(seg, 1e-9), (r1 - r0) / max(seg, 1e-9)
+                out.append((r0 + (r1 - r0) * f + nr * lift, z0 + (z1 - z0) * f + nz * lift))
+                break
+            left -= seg
+    return out
 
 
 def shirt17(m=MEASURE):
@@ -799,6 +911,10 @@ GARMENTS = {"coat": coat, "waistcoat": waistcoat, "breeches": breeches, "gaiters
             "doublet": doublet, "doublet_slashed": lambda m=MEASURE: doublet(m, slashed=True),
             "buffcoat": buffcoat, "buffcoat_bare": lambda m=MEASURE: buffcoat(m, sleeves=None),
             "hose": hose, "slops": slops, "shirt17": shirt17,
+            # about 1640: full breeches gathered into a band below the knee, over stockings
+            # that end under it and run down into the shoe
+            "breeches17": breeches17,
+            "stockings17": lambda m=MEASURE: hose(m, top=0.09, tongue=0.0, garment="stockings17"),
             # drafted instead of shells (#287 drape pilot); the families key them (`keyed`)
             "frn_blouse": lambda m=MEASURE: tunic(m, "frn_blouse", "fshirt", chest=30.0, waist=34.0, below=14.0),
             "frn_sash": lambda m=MEASURE: band(m, "frn_sash", "fsash"),
@@ -850,6 +966,55 @@ LAYER_RANK = {
     "cartridge": 8, "knapsack": 8, "pouch": 8, "sack": 8, "scabbard": 8, "horn": 8, "match": 8,
 }
 
+
+
+# -- hems -------------------------------------------------------------------------------------
+
+HEM_ROUNDS = 24  # Taubin pass pairs along an open outline (`smooth_outline`)
+HEM_LAMBDA, HEM_MU = 0.5, -0.53
+HEM_CORNER = 50.0  # degrees of turn left after `HEM_CORNER_ROUNDS` light passes: a corner, kept
+HEM_CORNER_ROUNDS = 3
+
+
+def smooth_outline(pts, closed=True, pinned=(), rounds=HEM_ROUNDS, corners=True):
+    """An outline (list of 3-tuples) with its teeth smoothed away along its own run
+    (Taubin: a shrinking pass and a growing pass, so a cuff keeps its girth). `pinned`
+    indices and the ends of an open outline stay. Pure: `drape.hems` moves the free edges
+    of every garment with it, `tests/test_clothaudit.py` holds it to the audit's ragged
+    number."""
+    n = len(pts)
+    p = [tuple(float(c) for c in q) for q in pts]
+    fixed = set(pinned)
+    if not closed:
+        fixed |= {0, n - 1}
+    if n < 3:
+        return p
+    if corners and rounds > HEM_CORNER_ROUNDS:
+        # A real corner (a skirt's front edge meeting its hem, a vent) is still a corner
+        # after a light pass, a tooth is not: corners stay where they are.
+        q = smooth_outline(p, closed, fixed, HEM_CORNER_ROUNDS, corners=False)
+        ang = [0.0] * n
+        for i in range(n):
+            if not closed and i in (0, n - 1):
+                continue
+            a, b, c = q[(i - 1) % n], q[i], q[(i + 1) % n]
+            u, v = [b[k] - a[k] for k in range(3)], [c[k] - b[k] for k in range(3)]
+            lu, lv = math.sqrt(sum(x * x for x in u)), math.sqrt(sum(x * x for x in v))
+            if lu > 1e-9 and lv > 1e-9:
+                ang[i] = math.degrees(math.acos(max(-1.0, min(1.0, sum(x * y for x, y in zip(u, v)) / (lu * lv)))))
+        # ... and its neighbours run straight (a tooth's neighbours turn back).
+        fixed |= {i for i in range(n) if ang[i] > HEM_CORNER and ang[(i - 1) % n] < HEM_CORNER / 2
+                  and ang[(i + 1) % n] < HEM_CORNER / 2}
+    for r in range(2 * rounds):
+        f = HEM_LAMBDA if r % 2 == 0 else HEM_MU
+        nxt = list(p)
+        for i in range(n):
+            if i in fixed:
+                continue
+            a, b = p[(i - 1) % n], p[(i + 1) % n]
+            nxt[i] = tuple(p[i][k] + ((a[k] + b[k]) * 0.5 - p[i][k]) * f for k in range(3))
+        p = nxt
+    return p
 
 
 # -- traced patterns -------------------------------------------------------------------------

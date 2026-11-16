@@ -158,6 +158,7 @@ class Character:
                 print(f"[{self.name}] {name}: neck opening by distance, radius {field.radius:.3f}")
         obj = bd.derive(self.flesh, f"{self.name}.{name}", keep, offset, border=self.build.get("mh_body", True), field=field)
         obj = self.add("clothes", obj, key, symmetric)
+        obj["acr_garment"] = "shell:Character.shell"
         if shoe and not getattr(self, "shoes", None):
             # The MakeHuman feet stay bare skin; footwear gets a shoe over a last (#287).
             self.shoes = self.add("clothes", mbody.shoes(self.arm, self.flesh, f"{self.name}.footwear", P, key=key), key, symmetric)
@@ -192,6 +193,9 @@ class Character:
             print(f"[{self.name}] layer order: {order} from {self.layer_votes}")
         if drape.RELAX:
             print(f"[{self.name}] free edges relaxed: {drape.relax_edges(self)}")
+        if drape.HEMS:
+            self.hem_report = drape.hems(self)
+            print(f"[{self.name}] hems (spikes, edge vertices, hem faces): {self.hem_report}")
         if drape.CULL:
             before = sum(self.triangles().values())
             self.cull_report = drape.cull_hidden(self, order)

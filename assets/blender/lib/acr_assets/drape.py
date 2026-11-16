@@ -580,6 +580,9 @@ def place(body, panel, uv):
         # slants 20 cm across the panel: measured from u0 it wraps round the thigh).
         ue = panel.u_on(pl["u0_edge"], v) if pl.get("u0_edge") else u0
         t = th0 + sgn * (u - ue) / 100.0 / r
+        if pl.get("wrap"):
+            # A band cut to close on the limb: its `wrap` cm go once round at any height.
+            t = th0 + sgn * 2.0 * math.pi * (u - ue) / pl["wrap"]
         out.append((p[0] + math.sin(t) * r, p[1] - math.cos(t) * r, z))
         axis.append((p[0], p[1], z))
     return out, axis
@@ -731,9 +734,10 @@ def simulate(obj, settings, sew=(), frames=None):
     return dt, gaps
 
 
-def weld(obj, sew, limit=0.02, limits=None):
+def weld(obj, sew, limit=0.02, limits=None, fixed=()):
     """Merges the sewn vertex pairs that met (within `limit`, or `limits[i]` per pair, the
-    seam's `close`); drops the sewing edges."""
+    seam's `close`); drops the sewing edges. A group with `fixed` (pinned) vertices merges
+    at their mean, so a pinned band's seam stays the level ring it was placed as."""
     parent = {}
 
     def find(x):
@@ -756,7 +760,8 @@ def weld(obj, sew, limit=0.02, limits=None):
     tmap = {}
     for r, vs in groups.items():
         if len(vs) > 1:
-            c = sum((bm.verts[i].co for i in vs), Vector()) / len(vs)
+            at = [i for i in vs if i in fixed] or vs
+            c = sum((bm.verts[i].co for i in at), Vector()) / len(at)
             bm.verts[r].co = c
             for i in vs:
                 if i != r:
@@ -807,12 +812,18 @@ def hem(obj, depth, even=True):
     bpy.data.meshes.remove(old)
 
 
-def transfer_weights(obj, flesh, arm_obj, keep=4, under=()):
+def transfer_weights(obj, flesh, arm_obj, keep=4, under=(), skip=()):
     """Weights interpolated from the nearest face of the skin (rest pose), or of the layer
     right beneath: `under` are the inner garments already skinned (docs/clothing.md,
     "Layers"). A vertex takes the weights of the surface it rests on, so the two move
-    together under any pose and cannot cross."""
+    together under any pose and cannot cross. `skip`: bone names (without prefix and side,
+    e.g. "forearm") whose faces lend no weights: a coat's flared skirt hangs beside the
+    wrist in the rest pose and took the forearm's (a spike to the raised hand)."""
     srcs = []
+
+    def skipped(b):
+        return any(k in b for k in skip)
+
     for o in [flesh, *under]:
         fm = o.data
         names = {g.index: g.name for g in o.vertex_groups}
@@ -822,6 +833,8 @@ def transfer_weights(obj, flesh, arm_obj, keep=4, under=()):
         polys = [p for p in fm.polygons if o is not flesh or not all(
             vw[i] and _hand_bone(max(vw[i], key=vw[i].get))
             for i in p.vertices)]
+        if skip:
+            polys = [p for p in polys if not all(vw[i] and skipped(max(vw[i], key=vw[i].get)) for i in p.vertices)]
         if not polys:
             continue
         tree = BVHTree.FromPolygons([v.co for v in fm.vertices], [p.vertices for p in polys])
@@ -1103,10 +1116,12 @@ def unpose(obj, M, weights):
     return big
 
 
-def finish(obj, ch, skirt, weights=None, under=(), cloth=None):
+def finish(obj, ch, skirt, weights=None, under=(), cloth=None, skip=(), smooth=0):
     """Weights, `_cloth`, homes and parts, split at the part borders, bound to the rig.
     `weights`: given per vertex ({bone: weight}) instead of transferred from the skin;
-    `under`: inner layers to take the weights from where they are nearer than the skin."""
+    `under`: inner layers to take the weights from where they are nearer than the skin;
+    `skip`: bones that lend none (`transfer_weights`); `smooth`: passes over the transferred
+    weights (`smooth_weights`: full legs gathered into a band bend over the knee, not at it)."""
     P = ch.prefix
     pin = obj.vertex_groups.get("acr_pin")
     if pin:
@@ -1117,8 +1132,20 @@ def finish(obj, ch, skirt, weights=None, under=(), cloth=None):
         ws, cl = zip(*(skirt_weights(v.co, P) for v in obj.data.vertices))
         ws = [_follow_thigh(w, v.co, t, P) for w, v, t in zip(ws, obj.data.vertices, cl)]
     else:
-        ws = transfer_weights(obj, ch.flesh, ch.arm, under=under)
+        ws = transfer_weights(obj, ch.flesh, ch.arm, under=under, skip=skip)
         cl = [0.0] * len(ws)
+        side = obj.data.attributes.get("_side")
+        if side is not None:
+            # Full breeches: the inside of one leg lies nearer the other thigh's skin than its
+            # own, and took its weights (spikes between the legs in the walk).
+            for v, w, sd in zip(obj.data.vertices, ws, [d.value for d in side.data]):
+                if sd and abs(v.co.x) > 0.002:
+                    off, own = ("_r", "_l") if sd > 0 else ("_l", "_r")
+                    for b in [b for b in w if b.endswith(off) and b[len(P):-2] in ("thigh", "shin", "foot")]:
+                        w[b[:-2] + own] = w.get(b[:-2] + own, 0.0) + w.pop(b)
+            obj.data.attributes.remove(side)
+        if smooth:
+            ws = smooth_weights(obj, ws, smooth)
     groups = {}
     bones = [P + b for b in rig.BODY_BONES] + [P + f"skirt_{c[0]}_0{k}" for c in rig.SKIRT_COLUMNS for k in (1, 2)]
     bones = [b for b in bones if b in ch.arm.data.bones]
@@ -1141,6 +1168,331 @@ def finish(obj, ch, skirt, weights=None, under=(), cloth=None):
     for p in obj.data.polygons:
         p.use_smooth = True
     return am.bind(obj, ch.arm)
+
+
+def calm(obj, ch, pv, free, spec):
+    """The sim's wrinkles taken out of full legs (docs/clothing.md "Pleats"): per leg the
+    cloth's distance from the thigh's axis is low-passed over (angle round the leg, height on
+    the panel `pv` cm): the mean per cell (`cells` round, `step` cm), blurred `round` passes
+    round the leg and `along` up it, plus `puff` m. So the leg keeps its volume and its bag
+    over the band, even all round, and loses every dent. Only the `free` vertices move, fully
+    from `top` m under the crotch (blended in over `blend` m), and none nearer the skin than
+    `skin` m."""
+    me = obj.data
+    n = len(me.vertices)
+    co = np.empty(n * 3)
+    me.vertices.foreach_get("co", co)
+    co = co.reshape(-1, 3)
+    side = np.array([d.value for d in me.attributes["_side"].data])
+    pv, free = np.asarray(pv, float), np.asarray(free, bool)
+    seg = am.segments(ch.arm)
+    mid = side == 0.0
+    crotch = np.array([0.0, float(co[mid][:, 1].mean()), float(co[mid][:, 2].min())]) if mid.any() else None
+    nt, step = int(spec.get("cells", 32)), float(spec.get("step", 1.5))
+    for sd, s in ((1.0, "l"), (-1.0, "r")):
+        hip, knee = (np.array(x[:]) for x in seg[ch.prefix + f"thigh_{s}"])
+        ax = (knee - hip) / np.linalg.norm(knee - hip)
+        e1 = np.array([0.0, -1.0, 0.0])
+        e1 -= ax * (e1 @ ax)
+        e1 /= np.linalg.norm(e1)
+        e2 = np.cross(ax, e1)
+        rel = co - hip
+        t = rel @ ax
+        radv = rel - np.outer(t, ax)
+        r = np.linalg.norm(radv, axis=1)
+        th = np.arctan2(radv @ e2, radv @ e1)
+        t_c = float((crotch - hip) @ ax) if crotch is not None else 0.25 * float(np.linalg.norm(knee - hip))
+        w = np.clip((t - t_c - spec.get("top", 0.0)) / spec.get("blend", 0.08), 0.0, 1.0)
+        w = w * w * (3.0 - 2.0 * w)
+        m = free & (side == sd) & (w > 0.0) & (r > 1e-4)
+        if m.sum() < 50:
+            continue
+        v0 = float(pv[m].min())
+        ft = (th[m] + math.pi) / (2.0 * math.pi) * nt
+        fv = (pv[m] - v0) / step
+        nv = int(fv.max()) + 1
+        acc, cnt = np.zeros((nv, nt)), np.zeros((nv, nt))
+        np.add.at(acc, (fv.astype(int), ft.astype(int) % nt), r[m])
+        np.add.at(cnt, (fv.astype(int), ft.astype(int) % nt), 1.0)
+        for _ in range(nt + nv):  # empty cells from their neighbours
+            hole = cnt == 0
+            if not hole.any():
+                break
+            pa, pc = np.pad(acc, ((1, 1), (0, 0))), np.pad(cnt, ((1, 1), (0, 0)))
+            sa = np.roll(acc, 1, 1) + np.roll(acc, -1, 1) + pa[:-2] + pa[2:]
+            sc = np.roll(cnt, 1, 1) + np.roll(cnt, -1, 1) + pc[:-2] + pc[2:]
+            fill = hole & (sc > 0)
+            acc[fill], cnt[fill] = sa[fill] / sc[fill], 1.0
+        g = acc / np.maximum(cnt, 1.0)
+        for _ in range(int(spec.get("round", 8))):
+            g = (np.roll(g, 1, 1) + 2.0 * g + np.roll(g, -1, 1)) / 4.0
+        for _ in range(int(spec.get("along", 3))):
+            p = np.pad(g, ((1, 1), (0, 0)), mode="edge")
+            g = (p[:-2] + 2.0 * p[1:-1] + p[2:]) / 4.0
+        a = ft - 0.5
+        i0 = np.floor(a).astype(int)
+        a = a - i0
+        b = fv - 0.5
+        j0 = np.clip(np.floor(b).astype(int), 0, nv - 1)
+        b = np.clip(b - j0, 0.0, 1.0)
+        j1 = np.clip(j0 + 1, 0, nv - 1)
+        i0, i1 = i0 % nt, (i0 + 1) % nt
+        target = ((g[j0, i0] * (1 - a) + g[j0, i1] * a) * (1 - b) + (g[j1, i0] * (1 - a) + g[j1, i1] * a) * b
+                  + spec.get("puff", 0.0))
+        rn = r[m] + w[m] * (target - r[m])
+        co[m] = hip + np.outer(t[m], ax) + radv[m] / r[m][:, None] * rn[:, None]
+    tree = _cloth_tree([ch.flesh])
+    gap = spec.get("skin", 0.006)
+    for i in np.nonzero(free)[0]:
+        loc, nrm, _k, _d = tree.find_nearest(Vector(co[i]))
+        if loc is not None and (Vector(co[i]) - loc) @ nrm < gap:
+            co[i] = (loc + nrm * gap)[:]
+    me.vertices.foreach_set("co", co.ravel())
+    me.update()
+
+
+def cover(obj, ch, spec):
+    """The top of a garment worn under a fitted coat kept close: down to `drop` m under its
+    top edge no vertex stands more than `off` m off the skin (`slope` m more per m below
+    that), so the coat draped next starts and ends outside it. Returns the vertices moved."""
+    me = obj.data
+    tree = _cloth_tree([ch.flesh])
+    top = max(v.co.z for v in me.vertices)
+    moved = 0
+    for v in me.vertices:
+        lim = spec["off"] + max(0.0, top - spec["drop"] - v.co.z) * spec.get("slope", 0.3)
+        if lim > 0.06:
+            continue
+        loc, nrm, _k, _d = tree.find_nearest(v.co)
+        if loc is not None and (v.co - loc) @ nrm > lim:
+            v.co = loc + nrm * lim
+            moved += 1
+    me.update()
+    return moved
+
+
+def pleat(obj, panels, names, spec, ch=None, under=()):
+    """Regular gathers laid into the draped surface (docs/clothing.md "Pleats"): on the
+    panels `spec["panels"]`, between the edges `spec["edges"]` (u at each height), `n` folds
+    per panel fan out from the gathered bottom edge: `band` m deep there (fading over
+    `band_reach` m up the panel), `waist` m under the top edge, `mid` m between as the
+    hanging vertical folds, none in the top `under` cm (worn under the coat; fading in over
+    10 cm below). The folds only stand outwards (nothing sinks into the layer below). The
+    cloth sim at this mesh size gives dents, not gathers; `spec["calm"]` (`calm`) takes the
+    sim's wrinkles out first, `spec["cover"]` (`cover`) keeps the top under the coat,
+    `spec["close"]` lays the band `panel` `off` m onto the layers `under` it."""
+    me = obj.data
+    # Each leg on its own side: without self-collision the full legs sink into each other
+    # between the thighs, and took the other thigh's weights (spikes in the walk).
+    centre = {i for e in me.edges if len({me.attributes["_side"].data[i].value for i in e.vertices}) > 1
+              for i in e.vertices}  # the centre seams join the two sides
+
+    def apart():
+        for v, d in zip(me.vertices, me.attributes["_side"].data):
+            if d.value * v.co.x < 0.003 and d.value and v.index not in centre:
+                v.co.x = 0.003 * d.value
+        me.update()
+
+    apart()
+    lay = [d.value for d in me.attributes["panel"].data]
+    ks = {names.index(nm) for nm in spec["panels"]}
+    # The seams to the bands stay where they were sewn (a level ring at the knee band).
+    held = {i for poly in me.polygons if lay[poly.index] not in ks for i in poly.vertices}
+    if ch is not None and spec.get("close"):
+        # The band closed on the stocking: it was pinned where it was placed, a pipe round
+        # the leg (the hull plus the gap); each vertex goes `off` m onto the layer beneath.
+        k = names.index(spec["close"]["panel"])
+        tree = _cloth_tree([ch.flesh, *under])
+        band = sorted({i for poly in me.polygons if lay[poly.index] == k for i in poly.vertices})
+        moved = []
+        for i in band:
+            v = me.vertices[i]
+            loc, _n, _k, d = tree.find_nearest(v.co)
+            if loc is not None and d > spec["close"]["off"]:
+                moved.append(d - spec["close"]["off"])
+                v.co = loc + (v.co - loc).normalized() * spec["close"]["off"]
+        me.update()
+        print(f"pleat: band {spec['close']['panel']} closed, {len(moved)} of {len(band)} vertices, "
+              f"mean {1000 * sum(moved) / max(len(moved), 1):.0f} mm")
+    if ch is not None and spec.get("calm"):
+        pin = obj.vertex_groups.get("acr_pin")
+        keep = held | centre | {v.index for v in me.vertices if pin and any(e.group == pin.index for e in v.groups)}
+        free = [i not in keep for i in range(len(me.vertices))]
+        calm(obj, ch, [d.value for d in me.attributes["_pv"].data], free, spec["calm"])
+        taubin(obj, spec["calm"].get("smooth", 4), keep=sorted(keep))
+        apart()
+    if ch is not None and spec.get("cover"):
+        cover(obj, ch, spec["cover"])
+    pu = [d.value for d in me.attributes["_pu"].data]
+    pv = [d.value for d in me.attributes["_pv"].data]
+    e0, e1 = spec["edges"]
+    disp = {}
+    for nm in spec["panels"]:
+        pnl = panels[nm]
+        _u0, v0, _u1, v1 = pnl.bounds()
+        k = names.index(nm)
+        for poly in me.polygons:
+            if lay[poly.index] != k:
+                continue
+            for i in poly.vertices:
+                if i in disp or i in held:
+                    continue
+                v = pv[i]
+                a, b = pnl.u_on(e0, v), pnl.u_on(e1, v)
+                f = (pu[i] - a) / (b - a) if abs(b - a) > 1e-6 else 0.0
+                amp = (spec["band"] * math.exp(-max(v - v0, 0.0) / (100.0 * spec["band_reach"]))
+                       + spec["mid"] * min(1.0, max(v1 - v - spec.get("under", 0.0), 0.0) / 10.0)
+                       + spec["waist"] * math.exp(-max(v1 - v, 0.0) / (100.0 * spec["waist_reach"])))
+                # None next to the first edge (the inseam: the legs must not grow into each other).
+                disp[i] = amp * gm.pleat_wave(f, spec["n"]) * min(1.0, max(0.0, f) / 0.2)
+    me.attributes.remove(me.attributes["_pu"])
+    me.attributes.remove(me.attributes["_pv"])
+    nrm = [v.normal.copy() for v in me.vertices]
+    for i, d in disp.items():
+        me.vertices[i].co += nrm[i] * d
+    me.update()
+
+
+def sleeve_shape(obj, ch, spec, under=()):
+    """A 17th-century sleeve cut into the draped tube (docs/clothing.md "Sleeves"): the
+    mesh subdivided `cuts` times and rounded, then per arm:
+
+    - the wrist edge cut level (a plane across the forearm) `show` m short of the shirt
+      cuff's end (`under`: the layers beneath; the object named `*.shirt`), the last `reach`
+      m of the sleeve drawn back to it evenly, and its last `cuff` m `turn` m proud (a hem);
+    - `full` m fuller round the upper arm, on the outside and the back only (not towards
+      the trunk or the corslet's plates), none at the armscye seam;
+    - a point at the elbow (`elbow` m), crease folds on the inside of the bend (`crease` m
+      deep, `pitch` m apart);
+    - the forearm narrowed towards the wrist by `taper` of its radius;
+    - nowhere nearer than `skin` m to the arm or the shirt cuff under it;
+    - `wing`: (width, lift) m of a shoulder wing, a crescent strip standing over the upper
+      half of the armscye seam."""
+    bm = bmesh.new()
+    bm.from_mesh(obj.data)
+    if spec.get("cuts"):
+        bmesh.ops.subdivide_edges(bm, edges=list(bm.edges), cuts=spec["cuts"], use_grid_fill=True)
+        inner = [v for v in bm.verts if not v.is_boundary]
+        for _ in range(6):  # the coarse drape's facets rounded off
+            bmesh.ops.smooth_vert(bm, verts=inner, factor=0.5, use_axis_x=True, use_axis_y=True, use_axis_z=True)
+    seg = am.segments(ch.arm)
+    front = Vector((0.0, -1.0, 0.0))
+    shirts = [o for o in under if o.name.endswith(".shirt")]
+    tree = _cloth_tree([ch.flesh])
+    for side in "lr":
+        sh, el = seg[ch.prefix + f"upperarm_{side}"]
+        _e, wr = seg[ch.prefix + f"forearm_{side}"]
+        au, af = (el - sh).normalized(), (wr - el).normalized()
+        lu, lf = (el - sh).length, (wr - el).length
+        away = Vector((1.0 if side == "l" else -1.0, 0.0, 0.0))
+        vs = [v for v in bm.verts if (v.co.x > 0) == (side == "l")]
+        if not vs:
+            continue
+        # The wrist edge, level: its place along the forearm per angle round it, then the
+        # sleeve's end drawn back to one plane.
+        e1 = (front - af * (front @ af)).normalized()
+        e2 = af.cross(e1)
+        edge = [v for v in vs if v.is_boundary and (v.co - el) @ af > 0.5 * lf]
+        cut, over = None, None
+        if edge:
+            nb = 16
+            acc = [[] for _ in range(nb)]
+            for v in edge:
+                d = v.co - el
+                acc[int((math.atan2(d @ e2, d @ e1) + math.pi) / (2 * math.pi) * nb) % nb].append(d @ af)
+            se = [sum(a) / len(a) if a else None for a in acc]
+            for k in range(nb):
+                if se[k] is None:
+                    se[k] = next(se[(k + j) % nb] for j in range(1, nb + 1) if se[(k + j) % nb] is not None)
+            cut = min(se)
+            cuff = [o.matrix_world @ v.co - el for o in shirts for v in o.data.vertices
+                    if ((o.matrix_world @ v.co).x > 0) == (side == "l")]
+            if cuff:
+                cut = min(cut, max(d @ af for d in cuff) - spec.get("show", 0.015))
+                over = (min(d @ af for d in cuff), sum((d - af * (d @ af)).length for d in cuff) / len(cuff) + 0.004)
+            s0 = cut - spec.get("reach", 0.08)
+            for v in vs:
+                d = v.co - el
+                s = d @ af
+                if s <= s0:
+                    continue
+                f = (math.atan2(d @ e2, d @ e1) + math.pi) / (2 * math.pi) * nb - 0.5
+                k = math.floor(f)
+                end = se[k % nb] * (1 - (f - k)) + se[(k + 1) % nb] * (f - k)
+                v.co += af * (min(cut, s0 + (s - s0) * (cut - s0) / max(end - s0, 1e-4)) - s)
+        end = cut if cut is not None else max((v.co - el) @ af for v in vs)
+        print(f"sleeve_shape {side}: wrist edge {len(edge)} vertices, forearm {lf:.3f} m, cut at {end:.3f} m, "
+              f"cuff (from, radius) {over and tuple(round(x, 3) for x in over)}")
+        for v in vs:
+            s = (v.co - el) @ af
+            t = (v.co - sh) @ au
+            if s > 0:
+                foot, ax = el + af * s, af
+            else:
+                foot, ax = sh + au * min(max(t, 0.0), lu), au
+            rad = v.co - foot
+            rad -= ax * (rad @ ax)
+            r = rad.length
+            if r < 1e-5:
+                continue
+            rad.normalize()
+            d = 0.0
+            if s <= 0:
+                seam = min(1.0, max(0.0, (t / lu - 0.08) / 0.22))  # none at the armscye
+                outer = max(0.0, rad @ away, rad @ -front) * (1.0 - max(0.0, -(rad @ away)))
+                d += spec["full"] * math.exp(-((t / lu - 0.5) / 0.28) ** 2) * seam * (0.25 + 0.75 * outer)
+            else:
+                d -= r * spec.get("taper", 0.0) * min(1.0, s / max(end, 1e-4)) ** 1.5
+            inside = max(0.0, rad @ front)
+            d += spec["elbow"] * math.exp(-(s / 0.045) ** 2) * max(0.0, -(rad @ front))
+            d += spec["crease"] * math.exp(-(s / 0.065) ** 2) * inside * (0.5 - 0.5 * math.cos(2 * math.pi * s / spec["pitch"]))
+            if s > end - spec["cuff"]:
+                d += spec["turn"]
+            if over and s > over[0]:  # over the shirt cuff
+                d = max(d, over[1] - r)
+            v.co += rad * d
+            if tree is not None and not (v.is_boundary and s <= 0):
+                loc, nrm, _k, _d = tree.find_nearest(v.co)
+                if loc is not None and (v.co - loc) @ nrm < spec.get("skin", 0.005):
+                    v.co = loc + nrm * spec.get("skin", 0.005)
+        if spec.get("wing"):
+            width, lift = spec["wing"]
+            z = Vector((0.0, 0.0, 1.0))
+            up = (z - au * (z @ au)).normalized()
+            rows = {}
+            for e in [e for e in bm.edges if e.is_boundary]:
+                pair = []
+                for v in e.verts:
+                    t = (v.co - sh) @ au
+                    if (v.co.x > 0) != (side == "l") or t > 0.4 * lu:
+                        break
+                    rad = v.co - sh - au * t
+                    if rad.length < 1e-5:
+                        break
+                    rad.normalize()
+                    h = min(1.0, max(0.0, (rad @ up + 0.1) / 0.7))
+                    pair.append((v, rad, h * h * (3.0 - 2.0 * h)))
+                if len(pair) < 2 or max(p[2] for p in pair) < 0.05:
+                    continue
+                quad = []
+                for v, rad, h in pair:
+                    if v not in rows:
+                        rows[v] = (v, bm.verts.new(v.co + rad * (0.003 + lift * h) + au * width * h))
+                    quad.append(rows[v])
+                (a0, b0), (a1, b1) = quad
+                face = [a0, a1, b1, b0]
+                mid = (a0.co + a1.co + b0.co + b1.co) / 4
+                n = (a1.co - a0.co).cross(b0.co - a0.co)
+                if n @ (mid - sh - au * ((mid - sh) @ au)) < 0:
+                    face.reverse()
+                try:
+                    bm.faces.new(face)
+                except ValueError:
+                    pass
+    bm.normal_update()
+    bm.to_mesh(obj.data)
+    bm.free()
+    obj.data.update()
 
 
 def dress(ch, garments=gm.ORDER, report=None, patterns=None, over=(), post_weld=None, weld_limit=None, hem_even=True):
@@ -1185,12 +1537,16 @@ def dress(ch, garments=gm.ORDER, report=None, patterns=None, over=(), post_weld=
         # Only the middle half of the edge: its ends must be free to close their seams.
         pins = []
         for key, pc in pieces.items():
-            if isinstance(key, tuple) and pc.panel.place.get("pin"):
+            if isinstance(key, tuple) and pc.panel.place.get("pin") not in (None, "all"):
                 e = pc.edge(pc.panel.place["pin"])
                 pins += [i for i in e[len(e) // 4:len(e) - len(e) // 4] if i not in seam_v]
             if isinstance(key, tuple) and pc.panel.place.get("pin_v"):
                 # A cloak's yoke: everything within `pin_v` cm of the neck ring.
                 pins += [pc.base + i for i, (_u, v) in enumerate(pc.uv) if v <= pc.panel.place["pin_v"]]
+            if isinstance(key, tuple) and pc.panel.place.get("pin") == "all":
+                # A band that stays where it is tied (the breeches' knee band).
+                pins += list(range(pc.base, pc.base + pc.n))
+                continue
             if isinstance(key, tuple) and pc.panel.place.get("pin_vr"):
                 # Bands of v (cm): the breechcloth's folds over the belt.
                 pins += [pc.base + i for i, (_u, v) in enumerate(pc.uv)
@@ -1199,12 +1555,29 @@ def dress(ch, garments=gm.ORDER, report=None, patterns=None, over=(), post_weld=
             obj.vertex_groups.new(name="acr_pin").add(pins, 1.0, "REPLACE")
         fa = me.attributes.new("panel", "INT", "FACE")
         names = list(panels)
+        cloth_g = gm.CLOTH.get(g, {})
+        if cloth_g.get("pleats"):
+            # Each vertex's place on its panel (cm), for the pleats laid in after the sim.
+            pu, pv = me.attributes.new("_pu", "FLOAT", "POINT"), me.attributes.new("_pv", "FLOAT", "POINT")
+            sd = me.attributes.new("_side", "FLOAT", "POINT")
+            for key, pc in pieces.items():
+                if isinstance(key, tuple):
+                    for i, (u, v) in enumerate(pc.uv):
+                        pu.data[pc.base + i].value, pv.data[pc.base + i].value = u, v
+                        sd.data[pc.base + i].value = (1.0 if key[1] == "L" else -1.0) if pc.panel.mirror else 0.0
         # from_pydata keeps the face order.
         for i, (n, _s) in enumerate(finfo):
             fa.data[i].value = names.index(n)
         dt, gaps_sewn = 0.0, []
         if not g.startswith("shirt"):
+            # `in_shoes`: stockings are draped without the shoes and run down into them.
+            bare_cut = gm.CLOTH.get(g, {}).get("in_shoes")
+            bare = bare_cut and getattr(ch, "shoes", None)
+            if bare:
+                _collision(ch.shoes, False)
             dt, gaps_sewn = simulate(obj, gm.CLOTH.get(g, gm.CLOTH["waistcoat"]), sew)
+            if bare:
+                _collision(ch.shoes)
         ev = obj.data
         longest = max(((ev.vertices[e.vertices[0]].co - ev.vertices[e.vertices[1]].co).length
                        for e in ev.edges if not e.is_loose), default=0.0)
@@ -1218,9 +1591,29 @@ def dress(ch, garments=gm.ORDER, report=None, patterns=None, over=(), post_weld=
                 worst_at = (gap, [round(100 * c, 1) for c in mid])
         gaps = sorted((ev.vertices[a].co - ev.vertices[b].co).length for a, b in sew)
         base = weld_limit if weld_limit is not None else WELD if not g.startswith("shirt") else 0.3
+        # `CLOTH[g]["close"]`: every seam of the garment ends shut (pairs up to that far apart
+        # merge at their mean): one pair left open by the sim is a hole in the armpit.
+        base = max(base, gm.CLOTH.get(g, {}).get("close", 0.0))
         limits = [getattr(seams[k], "close", None) or base for k in pieces["_sew_id"]]
         welded = sum(1 for (a, b), lim in zip(sew, limits) if (ev.vertices[a].co - ev.vertices[b].co).length < lim)
-        weld(obj, sew, limit=base, limits=limits)
+        weld(obj, sew, limit=base, limits=limits, fixed=set(pins))
+        if not g.startswith("shirt") and bare:
+            # Cut level inside the shoes: no ragged edge over them.
+            zc = max((ch.shoes.matrix_world @ v.co).z for v in ch.shoes.data.vertices) - float(bare_cut)
+            bm = bmesh.new()
+            bm.from_mesh(obj.data)
+            geom = list(bm.verts) + list(bm.edges) + list(bm.faces)
+            bmesh.ops.bisect_plane(bm, geom=geom, plane_co=(0, 0, zc), plane_no=(0, 0, -1), clear_inner=False,
+                                   clear_outer=True)
+            bm.to_mesh(obj.data)
+            bm.free()
+        if gm.CLOTH.get(g, {}).get("smooth"):
+            # The sim's crumple (triangle-sized dents) smoothed away; the folds stay.
+            pin = obj.vertex_groups.get("acr_pin")
+            taubin(obj, gm.CLOTH[g]["smooth"],
+                   keep=[v.index for v in obj.data.vertices if pin and any(e.group == pin.index for e in v.groups)])
+        if gm.CLOTH.get(g, {}).get("pleats"):
+            pleat(obj, panels, names, gm.CLOTH[g]["pleats"], ch=ch, under=under)
         if post_weld is not None:
             post_weld(obj, g)
         unposed = 0.0
@@ -1262,6 +1655,8 @@ def dress(ch, garments=gm.ORDER, report=None, patterns=None, over=(), post_weld=
             bm.to_mesh(part.data)
             bm.free()
             part.data.attributes.remove(part.data.attributes["panel"])
+            if gm.CLOTH.get(g, {}).get("sleeve_shape") and all(panels[names[i]].place["region"] == "arm" for i in idx):
+                sleeve_shape(part, ch, gm.CLOTH[g]["sleeve_shape"], under=under)
             label = {("coat", True): "coat_skirts", ("lining", True): "turnbacks"}.get(
                 (key, skirt), f"{key}_skirts" if skirt and key in both else key)
             part.name = part.data.name = f"{ch.name}.{label}"
@@ -1285,8 +1680,12 @@ def dress(ch, garments=gm.ORDER, report=None, patterns=None, over=(), post_weld=
                 finish(part, ch, skirt, weights=sleeve_weights(part, ch, sw["offset"], sw["smooth"],
                                                                     blend=sw.get("blend", 0.0)))
             else:
-                finish(part, ch, skirt, under=under)
+                # A torso panel takes no weights from the forearm or the shirt cuff on it.
+                torso = all(panels[names[i]].place["region"] == "torso" for i in idx)
+                finish(part, ch, skirt, under=under, skip=("forearm", "hand") if torso else (),
+                       smooth=gm.CLOTH.get(g, {}).get("weight_smooth", 0))
             ch.add("clothes", part, key, symmetric=True)
+            part["acr_garment"] = f"draped:{g}"
             made[part.name] = key
             if not skirt:
                 new_under.append(part)
@@ -1820,6 +2219,168 @@ def relax_edges(ch, objs=None):
 
 
 
+HEMS = True  # `hems` before the morphs: every open garment edge straightened and turned under (#523)
+HEM_TURN = 0.004  # m: the turned hem's depth (in under the cloth) and width (back along it)
+HEM_SKIP = ("brass", "garter", "garters", "fringe", "flaps")  # keys left alone: strips, fins and fringes
+
+
+def _outlines(pairs):
+    """Chains of the free edges `pairs` (two sortable keys each) as (list of keys, closed);
+    broken where more than two free edges meet."""
+    nb = {}
+    for a, b in pairs:
+        nb.setdefault(a, []).append(b)
+        nb.setdefault(b, []).append(a)
+    used, out = set(), []
+
+    def walk(start, nxt):
+        chain = [start, nxt]
+        used.add(frozenset((start, nxt)))
+        while len(nb[chain[-1]]) == 2:
+            a, b = nb[chain[-1]]
+            n = a if b == chain[-2] else b
+            k = frozenset((chain[-1], n))
+            if k in used:
+                return chain, n == chain[0]
+            used.add(k)
+            if n == chain[0]:
+                return chain, True
+            chain.append(n)
+        return chain, False
+
+    order = sorted(nb)
+    for v in [v for v in order if len(nb[v]) != 2] + order:
+        for n in sorted(nb[v]):
+            if frozenset((v, n)) not in used:
+                out.append(walk(v, n))
+    return out
+
+
+def hems(ch, objs=None, turn=HEM_TURN):
+    """Every open edge of the clothes straightened and hemmed (docs/clothing.md "Hems"):
+    a shell cut from the body hull ends along the hull's triangles and a draped panel along
+    its 3.5 cm lattice, which reads as torn teeth. Per garment object: the spikes go (a
+    triangle with two free edges and an angle under `RELAX_EAR`), each free outline is
+    smoothed along its own run (`garments.smooth_outline`; the inner neighbours follow half
+    way), then the edge is turned under: one ring of faces `turn` in under the cloth and
+    `turn` back from the edge, with the edge's weights, so it shows a thickness.
+
+    An edge is free when no other face of the object lies on the same two positions (the
+    objects are split at the part borders: those cuts are not edges of the cloth). Vertices
+    shared with another garment object (the seams between the objects of one sewn garment)
+    and objects that have a rim already (`HEM`) stay. Shape keys move along.
+    Returns {key: (spikes removed, edge vertices smoothed, hem faces added)}."""
+    clothes = [o for o in ch.layers["clothes"] if o.type == "MESH" and len(o.data.polygons)]
+    if objs is None:
+        objs = [o for o in clothes if gm.LAYER_RANK.get(ch.keys.get(o.name), 0) in range(1, 7)
+                and ch.keys.get(o.name) not in HEM_SKIP and ch.keys.get(o.name) not in HEM
+                and not any(s in o.name.rsplit(".", 1)[-1] for s in HEM_SKIP)
+                and len(o.get("acr_material_keys") or ()) <= 1]
+
+    def pos(co):
+        return tuple(round(c, 4) for c in co)
+
+    owners = {}
+    for o in clothes:
+        mw = o.matrix_world
+        for v in o.data.vertices:
+            owners.setdefault(pos(mw @ v.co), set()).add(o.name)
+    out = {}
+    for o in objs:
+        mw = o.matrix_world
+        bm = bmesh.new()
+        bm.from_mesh(o.data)
+        spikes = 0
+        for _ in range(2):
+            ears = [f for f in bm.faces if len(f.verts) == 3 and sum(1 for e in f.edges if e.is_boundary) >= 2
+                    and min(math.degrees(l.calc_angle()) for l in f.loops) < RELAX_EAR]
+            if not ears:
+                break
+            bmesh.ops.delete(bm, geom=ears, context="FACES")
+            spikes += len(ears)
+        loose = [v for v in bm.verts if not v.link_faces]
+        if loose:
+            bmesh.ops.delete(bm, geom=loose, context="VERTS")
+        bm.verts.index_update()
+        key = {v: pos(v.co) for v in bm.verts}
+        group = {}
+        for v, k in key.items():
+            group.setdefault(k, []).append(v)
+        uses = {}
+        for f in bm.faces:
+            for e in f.edges:
+                k = frozenset((key[e.verts[0]], key[e.verts[1]]))
+                uses[k] = uses.get(k, 0) + 1
+        free = [e for e in bm.edges if e.is_boundary and key[e.verts[0]] != key[e.verts[1]]
+                and uses[frozenset((key[e.verts[0]], key[e.verts[1]]))] == 1]
+        shared = {k for k, vs in group.items() if len(owners.get(pos(mw @ vs[0].co), ())) > 1}
+        free = [e for e in free if not (key[e.verts[0]] in shared and key[e.verts[1]] in shared)]
+        on = {key[v] for e in free for v in e.verts}
+        shapes = list(bm.verts.layers.shape.values())
+
+        def move(v, d):
+            v.co += d
+            for lay in shapes:
+                v[lay] += d
+
+        moved = 0
+        for chain, closed in _outlines([(key[e.verts[0]], key[e.verts[1]]) for e in free]):
+            if len(chain) < 5:
+                continue
+            new = gm.smooth_outline(chain, closed, [i for i, k in enumerate(chain) if k in shared])
+            inner = {}
+            for k, p in zip(chain, new):
+                d = Vector(p) - Vector(k)
+                if d.length < 1e-7:
+                    continue
+                for v in group[k]:
+                    for e in v.link_edges:
+                        w = e.other_vert(v)
+                        if key[w] not in on:
+                            inner.setdefault(key[w], []).append(d)
+                    move(v, d)
+            for k, ds in inner.items():
+                for w in group[k]:
+                    move(w, sum(ds, Vector()) * (0.5 / len(ds)))
+            moved += len(chain)
+        # The turned hem: the free edges extruded, the new ring in under the cloth and back.
+        bm.normal_update()
+        added = 0
+        if free and turn > 0.0:
+            back = {}
+            for e in free:
+                f = e.link_faces[0]
+                d = f.calc_center_median() - (e.verts[0].co + e.verts[1].co) * 0.5
+                d -= d.project(e.verts[1].co - e.verts[0].co)
+                for v in e.verts:
+                    back.setdefault(key[v], []).append((d.normalized() if d.length > 1e-9 else Vector(), f.normal.copy()))
+            offset = {}
+            for k, ds in back.items():
+                d = sum((x[0] for x in ds), Vector())
+                n = sum((x[1] for x in ds), Vector())
+                offset[k] = (d.normalized() if d.length > 1e-9 else d) * turn - (n.normalized() if n.length > 1e-9 else n) * turn
+            old = {v: key[v] for e in free for v in e.verts}
+            res = bmesh.ops.extrude_edge_only(bm, edges=free)
+            rim = {}
+            for f in [g for g in res["geom"] if isinstance(g, bmesh.types.BMFace)]:
+                added += 1
+                for e in f.edges:
+                    a, b = e.verts
+                    if a in old and b not in old:
+                        rim[b] = old[a]
+                    elif b in old and a not in old:
+                        rim[a] = old[b]
+            for v, k in rim.items():
+                move(v, offset[k])
+        bm.to_mesh(o.data)
+        bm.free()
+        o.data.update()
+        k = ch.keys.get(o.name)
+        a, b, c = out.get(k, (0, 0, 0))
+        out[k] = (a + spikes, b + moved, c + added)
+    return out
+
+
 def inherit_weights(obj, ch, under):
     """Replaces the weights of gear laid over the garments (the crossbelts) by those of the
     garment surface under each vertex (`transfer_weights` with `under`)."""
@@ -1981,74 +2542,93 @@ def _cloth_tree(objs):
     return BVHTree.FromPolygons(vs, fs) if fs else None
 
 
-BAND_CLEAN = True  # the falling band's rings limited in drop and smoothed round the neck (#287 trisoup4)
-BAND_SLOPE = 0.8  # tan of the steepest drop from one ring to the next
-BAND_SMOOTH = 4  # smoothing passes round the neck
+PLATE_BONE = "spine1"  # the corslet's back and breast are rigid on it (`armour.corslet`)
+BAND_STEP = 0.005  # m between the rays of a radial profile
+BAND_SMOOTH = 3  # smoothing passes round the neck
+BAND_STAND = 0.016  # m: the short stand up the neck inside the band
 
 
-def falling_band(ch, name, width=(0.115, 0.085), key="fallband", n=48, rings=7, lift=0.008):
-    """The falling band: a wide linen collar lying flat on the doublet's shoulders, deeper in
-    front (`width` m front, back), split at the centre front. Each vertex is cast straight
-    down onto the clothes (`lift` above them) from a ring round the neck; skinned like the
-    cloth under it. Added to `ch`'s clothes with key `key`."""
+def falling_band(ch, name, width=(0.11, 0.055), key="fallband", n=64, rings=10, lift=0.007):
+    """The falling band: a plain linen collar cut flat (`garments.band_width`: level round the
+    back, two square points in front, split at the centre front, a short stand up the neck)
+    and laid over what the man wears at the neck: the coat, and the corslet's neck edge when
+    it is built first (`ch.armour`). Per angle round the neck the surface under it is
+    sampled along the radius; the panel lies on that profile's upper hull at its own width
+    (`garments.lay_over`), so stiff linen bridges the hollows and never folds over itself.
+    Skinned like the cloth under it. Added to `ch`'s clothes with key `key`."""
+    bpy.context.view_layer.update()
     cloth = [o for o in ch.layers["clothes"] if o.type == "MESH" and ch.keys.get(o.name) not in ("shoes",)]
-    tree = _cloth_tree(cloth)  # not the skin: rays near the neck found the chin and the face
+    plates = list(getattr(ch, "armour", None) or ())
+    tree = _cloth_tree(cloth + plates)  # not the skin: rays near the neck found the chin
+    plate_tree = _cloth_tree(plates) if plates else None
     seg = am.segments(ch.arm)
     head, tail = seg[ch.prefix + "neck"]
     cx, cy = head.x, head.y + 0.008
     r0 = 0.062
-    bm = bmesh.new()
-    # Per row (angle) and ring: the cloth surface under it (`floor`, z + lift) or None.
-    rows_xy, floor = [], []
+    down = Vector((0, 0, -1))
+
+    def floor_at(x, y):
+        hit = tree.ray_cast(Vector((x, y, head.z + 0.05)), down, 0.40)
+        return None if hit[0] is None else hit[0].z
+
+    rows = []
     for i in range(n + 1):
         t = -math.pi / 2 + 2 * math.pi * (i + 0.5 * (i == 0) - 0.5 * (i == n)) / n  # split at the front (-Y)
-        front = max(0.0, -math.sin(t)) ** 2
-        w = width[1] + (width[0] - width[1]) * front
-        xy, fl = [], []
+        w = gm.band_width(t, width[0] * 100.0, width[1] * 100.0) / 100.0
+        prof = []
+        for k in range(int((w + 0.03) / BAND_STEP) + 1):
+            r = r0 + k * BAND_STEP
+            z = floor_at(cx + r * math.cos(t), cy + r * math.sin(t))
+            if z is not None:
+                prof.append((r, z))
+        if not prof or prof[0][0] > r0 + 0.02:
+            prof.insert(0, (r0, (prof[0][1] + 0.01) if prof else head.z - 0.03))
+        rows.append((t, gm.lay_over(prof, [w * k / rings for k in range(rings + 1)], lift)))
+    # Smoothed round the neck (both the reach and the height of each ring), then lifted off
+    # any cloth or plate it sank into.
+    R = [[p[0] for p in row] for _t, row in rows]
+    Z = [[p[1] for p in row] for _t, row in rows]
+    for _ in range(BAND_SMOOTH):
+        R, Z = ([[(A[max(i - 1, 0)][k] + 2 * A[i][k] + A[min(i + 1, n)][k]) / 4 for k in range(rings + 1)]
+                 for i in range(n + 1)] for A in (R, Z))
+    bm = bmesh.new()
+    grid = []
+    on_plate = set()  # vertices lying on the corslet: rigid with it, so they cannot cross it
+    for i, (t, _row) in enumerate(rows):
+        line = []
         for k in range(rings + 1):
-            r = r0 + w * k / rings
-            o = Vector((cx + r * math.cos(t), cy + r * math.sin(t), head.z + 0.03))
-            hit = tree.ray_cast(o, Vector((0, 0, -1)), 0.35)
-            xy.append((o.x, o.y, r))
-            fl.append(None if hit[0] is None else hit[0].z + lift)
-        rows_xy.append(xy)
-        floor.append(fl)
-    # Stiff linen: a ring drops at most `BAND_SLOPE` x its radial step below the ring inside
-    # it (a ray past the shoulder's or the back's edge found the cloth far below: the long
-    # spikes of #287's trisoup), then each ring is smoothed round the neck, never under the
-    # cloth.
-    z = []
-    for xy, fl in zip(rows_xy, floor):
-        zr = []
-        for k in range(rings + 1):
-            f = fl[k]
-            if k == 0:
-                zr.append(f if f is not None else head.z - 0.03)
-            elif not BAND_CLEAN:
-                zr.append(f if f is not None else head.z - 0.03)
-            else:
-                lim = zr[-1] - BAND_SLOPE * (xy[k][2] - xy[k - 1][2])
-                zr.append(max(f, lim) if f is not None else lim)
-        z.append(zr)
-    if BAND_CLEAN:
-        for _ in range(BAND_SMOOTH):
-            z = [[max((z[max(i - 1, 0)][k] + 2 * z[i][k] + z[min(i + 1, n)][k]) / 4,
-                      floor[i][k] if floor[i][k] is not None else -1e9) for k in range(rings + 1)]
-                 for i in range(n + 1)]
-    grid = [[bm.verts.new((x, y, zz)) for (x, y, _r), zz in zip(xy, zr)] for xy, zr in zip(rows_xy, z)]
+            x, y = cx + R[i][k] * math.cos(t), cy + R[i][k] * math.sin(t)
+            f = floor_at(x, y)
+            z = Z[i][k] if f is None or k == 0 else max(Z[i][k], min(f + lift * 0.6, Z[i][k] + 0.02))
+            line.append(bm.verts.new((x, y, z)))
+            if plate_tree is not None and f is not None:
+                hit = plate_tree.ray_cast(Vector((x, y, head.z + 0.05)), down, 0.40)
+                if hit[0] is not None and hit[0].z > f - 0.004:
+                    on_plate.add(line[-1])
+        grid.append(line)
     for a, b in zip(grid, grid[1:]):
         for k in range(rings):
             bm.faces.new((a[k], b[k], b[k + 1], a[k + 1]))
-    # The edge turned down 6 mm, so the band reads as a flat collar with a thickness.
-    lip = [bm.verts.new(row[-1].co - Vector((0, 0, 0.006))) for row in grid]
+    # The stand: the band's inner edge runs a little up the neck.
+    stand = [bm.verts.new((cx + (r0 - 0.005) * math.cos(t), cy + (r0 - 0.005) * math.sin(t), line[0].co.z + BAND_STAND))
+             for (t, _row), line in zip(rows, grid)]
+    # The outer edge turned down 5 mm, so the band reads as a flat collar with a thickness.
+    lip = [bm.verts.new(row[-1].co - Vector((0, 0, 0.005))) for row in grid]
     for i in range(n):
+        bm.faces.new((stand[i], stand[i + 1], grid[i + 1][0], grid[i][0]))
         bm.faces.new((grid[i][-1], grid[i + 1][-1], lip[i + 1], lip[i]))
     me = bpy.data.meshes.new(f"{name}.{key}")
+    bm.verts.index_update()
+    on_plate = {v.index for v in on_plate}
     bm.to_mesh(me)
     bm.free()
     obj = bd.link(bpy.data.objects.new(f"{name}.{key}", me))
     under = [o for o in cloth if not o.name.endswith("_skirts")]
-    finish(obj, ch, False, under=under)
+    ws = transfer_weights(obj, ch.flesh, ch.arm, under=under)
+    for i in on_plate:
+        ws[i] = {ch.prefix + PLATE_BONE: 1.0}
+    finish(obj, ch, False, weights=ws)
+    obj["acr_garment"] = "modelled:drape.falling_band"
     return ch.add("clothes", obj, key, symmetric=True)
 
 

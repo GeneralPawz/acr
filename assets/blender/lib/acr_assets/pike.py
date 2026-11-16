@@ -164,7 +164,9 @@ FIXED = ("belts", "match", "armour", "plate", "scabbard", "brass", "cartridge", 
 # (musketeers) or a buff coat with cloth sleeves (pikemen, under the armour); the falling
 # band is modelled over them (`drape.falling_band`, gear).
 MUSKETEER_DRAPE = ("breeches", "gaiters", "shirt17", "doublet")
-PIKEMAN_DRAPE = ("breeches", "gaiters", "shirt17", "buffcoat")
+# The pikeman's legs (#523): stockings first, then the full breeches of about 1640 gathered
+# into a band below the knee over them (`garments.breeches17`, `stockings17`).
+PIKEMAN_DRAPE = ("stockings17", "breeches17", "shirt17", "buffcoat")
 MUSKET_KEYS = ("STAND", "MOTION_L", "MOTION_R", "MOTION_LB", "MOTION_RB", "PATTACK", "UATTACK", "PSTAND", "ATTACK",
                "PATTACK1", "UATTACK1", "PSTAND1", "ATTACK1", "DEATH", "DEATHLIE1")
 
@@ -175,6 +177,7 @@ def _palette(palette):
     # The doublet and the cloth sleeves in the unit's coat colour.
     pal.setdefault("doublet", pal.get("coat"))
     pal.setdefault("dsleeve", pal.get("coat"))
+    pal.setdefault("hose", pal.get("gaiters"))  # the stockings in the unit's legwear colour
     return pal
 
 
@@ -258,12 +261,13 @@ def pikeman_spec(md, palette=None, hat="pike_morion", **kw):
     place of the drafted buff coat or breeches (docs/clothing.md "Traced patterns")."""
     pal = _palette(palette)
     swap = {}
-    for key, slot in (("coat_pattern", "buffcoat"), ("breeches_pattern", "breeches")):
+    for key, slot in (("coat_pattern", "buffcoat"), ("breeches_pattern", "breeches17")):
         rel = kw.pop(key, None)
         if rel:
-            swap[slot] = traced_garment(rel, slot)
+            swap[slot] = traced_garment(rel, slot.rstrip("17"))
     _drape(kw, tuple(swap.get(g, g) for g in PIKEMAN_DRAPE))
-    s = line.spec(md, palette=pal, hat=hat, gear=("falling_band", "pike_corselet", "off_scabbard"),
+    # The corslet over the coat, then the falling band over the corslet's neck edge.
+    s = line.spec(md, palette=pal, hat=hat, gear=("pike_corselet", "falling_band", "off_scabbard"),
                   fixed=FIXED + tuple(kw.pop("fixed", ())), **kw)
     s["weapon"] = "pike"
     return s

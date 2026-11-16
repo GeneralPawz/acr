@@ -947,12 +947,76 @@ so `line.make` and `frontier.make` drape them unchanged (`pike.MUSKETEER_DRAPE`,
 | `hose` | long hose from the instep to mid-thigh, seamed up the back, the top pinned | `hose` | knit |
 | `slops` | trunk hose: the breeches cut short, 26 cm of extra girth over the thigh **gathered** into a thigh band (seam ease 1.3), paned (lining strips) | `slops`, `slashes` | wool |
 | `shirt17` | deep linen cuffs only (not simulated) | `shirt` | linen |
+| `breeches17` | full breeches of about 1640 (#523): the breeches' draft 20 cm wider round thigh and leg, the legs 3 cm below the knee plus 3 cm that hang over, **gathered** into a 4 cm knee band sewn by its top edge. The band goes once round the leg where it is placed (`place["wrap"]`) and is pinned whole (`place["pin"] = "all"`), so it ends closed on the stocking. Spacing 1.1 cm (about 18 600 triangles), 12 Taubin passes after the sim (`CLOTH[...]["smooth"]`), then the band closed, the legs calmed and the pleats ("Pleats" below); weights smoothed 10 passes (`weight_smooth`) | `breeches` | wool, bending 1.5, no shrink |
+| `stockings17` | `hose` to 4.5 cm above the knee with a level bottom (`tongue=0`); draped first, without the shoes (`CLOTH[...]["in_shoes"]`), then cut level 2.5 cm below the shoes' top edge, 8 Taubin passes | `hose` | knit |
+
+**Pleats** (#523, `drape.pleat`, `CLOTH[...]["pleats"]`). The sim at 1.1 cm spacing gathers
+the breeches into dents and random wrinkles, not folds, so the surface is authored after the
+sim and the Taubin passes, in this order:
+
+1. `close`: the knee band was pinned where it was placed, the leg's hull plus the gap: a
+   pipe 24 mm off the stocking (band girth 58 cm on a 40 cm leg). Each band vertex goes 4 mm
+   onto the layer beneath (stocking, skin).
+2. `calm` (`drape.calm`): per leg the cloth's distance from the thigh's axis is low-passed
+   over (angle round the leg, height on the panel): the mean per cell (32 round, 1.5 cm up),
+   blurred 8 passes round and 3 up, plus 3 mm; from the crotch down (blended in over 8 cm),
+   not nearer than 6 mm to the skin; then 4 Taubin passes. The leg keeps its volume and the
+   bag over the band, even all round; every wrinkle of the sim is gone. Above the crotch
+   (under the coat) the sim's surface stays.
+3. `cover` (`drape.cover`): down to 14 cm under the waistband's top no vertex stands more than
+   10 mm off the skin (30 mm more per 10 cm below), so the fitted coat draped next lies outside
+   the gathered waist. (7 mm over 17 cm was tried: the coat then sews 136 of 136 by itself,
+   but 80 breeches vertices poke through it against 31: the coat's sim is that sensitive to
+   the layer beneath.) Moving the breeches under the finished coat by their distance off
+   the skin was tried and removed: 236 vertices moved, pokes 31 -> 124.
+4. The folds: per leg panel 6 (`garments.pleat_wave`) fan out between inseam and outseam,
+   12 mm deep at the knee band fading over 12 cm, 4 mm as hanging folds up the thigh, none in
+   the top 22 cm (`under`: the coat's skirts), none next to the inseam or on the seam to the
+   band (it stays the level ring the band was pinned as: `weld(..., fixed=)`), always outwards.
+
+Each leg is kept on its own side of the middle and takes leg weights of its own side only
+(`_side`): without self-collision the full legs sink into each other and took the other
+thigh's weights (spikes in the walk). This is authored geometry on a simulated base, not a
+drape result: the sim gives the volume and the seams, the script the surface.
+
+**Sleeves** (`drape.sleeve_shape`, `CLOTH["buffcoat"]["sleeve_shape"]`). Waugh's Diagram IX
+draws the buff coat's sleeve in one piece, folded; it is draped as traced and then shaped
+round the arm bones (authored, as the pleats): subdivided twice and rounded; the wrist edge
+cut level across the forearm 1.5 cm short of the shirt cuff's end (`show`), the last 8 cm
+drawn back to it evenly, a 2 mm hem; 22 mm fuller round the upper arm on the outside and the
+back only (not towards the trunk or the plates, none at the armscye); a 12 mm point at the
+elbow, 7 mm crease folds 3.6 cm apart inside the bend; the forearm 10 % narrower to the
+wrist; nowhere nearer than 5 mm to the arm, and outside the shirt cuff; a shoulder wing
+(`wing`: 3.5 cm wide, 12 mm proud), a crescent over the upper half of the armscye seam.
+The buff coat's skirts flare 13 cm per quarter (was 7), as ease over `breeches17`. Its seams
+all end shut (`CLOTH["buffcoat"]["close"]` = 13 cm): the stiff leather leaves one to three
+pairs open in the sim (which ones changes with the layer beneath), and one open pair is a hole.
+A torso panel takes no weights from the forearm or the shirt cuff (`transfer_weights(skip=)`):
+the flared skirt hangs beside the wrist in the rest pose and followed the raised hand.
+
+EngPik (FrnPik alike), before -> after this (audit and `stats.json`,
+`ACR-analysis/clothing-audit/pikeman4/`): breeches through the buff coat 66 -> 29 vertices in
+`STAND` (3 before the pleats), uncovered skin 16 -> 5, breeches' open seam 57.5 -> 12.5 cm,
+fullness 1.33 -> 1.64 (band 58.2 -> 44.7 cm), coat pairs welded 133 -> 136 of 136 (the sim
+alone closes 135: one sleeve-seam pair at the armpit stays 121 mm apart and is shut by `close`;
+the side seam's worst pair 42 mm). Open: the walk still crumples the bag behind the bent knee
+(skinning, not the rest shape); the outer left thigh keeps one diagonal fold in `STAND`; the
+sleeve counts 194 vertices outside the back plate and the tassets (211; the right arm hangs
+into the tassets in `STAND`); the shoulder wing and the shirt cuff's ring do not read on the
+sheet; the breeches above the crotch are still the sim's surface.
 
 Modelled, not draped (`drape.py`, registered gear):
-- **`falling_band`**: the wide linen collar. A grid round the neck (48 angles x 7 rings,
-  11.5 cm deep in front, 8.5 cm behind, split at the centre front), each vertex cast
-  straight down onto the draped clothes (not the skin: the chin caught the rays) and
-  lifted 8 mm, a turned-down lip; skinned like the cloth under it (`finish(..., under=)`).
+- **`falling_band`**: a plain linen collar cut flat (`garments.band_width`: 5.5 cm deep
+  behind, 11 cm at the two front points, split at the centre front, a 1.6 cm stand up the
+  neck). Per angle round the neck (64) the surface under it (the draped clothes and
+  `ch.armour` when the corslet is built first; not the skin: the chin caught the rays) is
+  sampled every 5 mm along the radius; the panel lies on that profile's **upper hull** at
+  its own width (`garments.upper_hull`, `lay_over`, 10 rings, 7 mm off), so stiff linen
+  bridges the hollows between the coat's collar and the corslet's neck edge and cannot fold
+  over itself (the old grid cast every vertex straight down and followed every lump). Then
+  3 smoothing passes round the neck, a turned-down lip; skinned like the cloth under it,
+  except the vertices lying on the corslet, which are rigid on its bone (`PLATE_BONE`) so
+  they cannot cross the plate in any clip.
 - **`bucket_boots`**: per leg, rings up the shin fitted per angle to the skin and the hose
   plus 1 cm, then the bucket: the top flaring 6 cm out over the knee and its edge turned
   down; skinned from the skin; key `jackboots` (painted like leather, no gaiter buttons).
@@ -1124,6 +1188,73 @@ use the existing `fallband` layer (above the stock, alongside the facing). Cylin
 UVs keep the bands' weave continuous. Weights transfer from skin/sleeve surfaces and
 are limited to four. `outfit.collar_cuffs` records profiles, button counts, measured
 thickness ranges, boundary/nonmanifold edge counts, and weight errors per piece.
+
+## Hems (#523)
+
+`drape.hems(ch)` runs in `Character.morphs` (every family; `drape.HEMS = True`) over each
+garment object of rank 1..6: it removes edge spikes, smooths every free outline along its
+own run (`garments.smooth_outline`: 24 Taubin pass pairs, so a cuff keeps its girth; a real
+corner, i.e. a turn of more than 50 degrees left after 3 light passes with straight
+neighbours, stays), moves the inner neighbours half way, and turns the edge under: one ring
+of faces 4 mm in under the cloth and 4 mm back (`HEM_TURN`), carrying the edge's weights
+and shape keys. A free edge is one no other face of the object shares by position (objects
+are split at the part borders); vertices shared with another garment object are pinned.
+Left alone: objects that already have a solidify rim (`drape.HEM`: coat skirts, turnbacks,
+facings, lapels), garters, flaps, fringes, brass (`HEM_SKIP`). The build prints
+`hems (spikes, edge vertices, hem faces)` per key.
+
+EngPik, before -> after (audit, `ACR-analysis/clothing-audit/pikeman/`): ragged flags 4 -> 0
+(`gaiters` 16.6 mm / 2.2 teeth per m -> 0 / 0, `dsleeve` 18.8 / 5.8 -> 0 / 0, `fallband`
+18.7 / 3.5 -> 4.7 / 3.5, `buff` 19.6 / 2.1 -> 19.5 / 2.0); FrnPik 4 -> 2. Open: the shirt
+cuff counts 22-36 vertices outside the sleeve since (0-9 before); garter inlays keep their
+zigzag; rimmed objects are not straightened.
+
+Every garment object carries how it was made as the custom property `acr_garment` =
+`"<made>:<builder>"` (node extra in the glb): `shell:Character.shell`, `draped:<garment>`
+(`drape.dress`), `modelled:drape.falling_band`.
+
+## Clothing audit (#523)
+
+`assets/blender/tools/clothing_audit.py` (`acr_assets.clothaudit`, tests
+`tests/test_clothaudit.py`) reads built glbs with plain Python and numpy (no Blender, no
+rebuild; the 310 showcase models take 9 s), skins them in `STAND` and in the middle of the
+walk clip, and writes one row per unit and garment:
+
+    python3 assets/blender/tools/clothing_audit.py <glb or folder>... --out <abs dir> \
+        [--jobs 8] [--stats target/assets/units]
+
+Output: `audit.csv`, `ranking.md` (worst units, worst garments across units, flag counts)
+and `skipped.txt` (models without garments). A garment is a skinned mesh whose name or
+material key has a rank in `garments.LAYER_RANK` (1..6); armour, belts and boxes only cover;
+hair, caps (not drawn by the game) and fringes are ignored.
+
+| column | meaning | flag when (`clothaudit.LIMITS`) |
+|---|---|---|
+| `poke_stand`, `poke_walk`, `poke_mm`, `poke_over`, `poke_at` | vertices 2-25 mm outside a same-facing triangle of a layer above; the deepest, the layer, the bone. The turned hem strips (`hem_rim`: boundary triangles under 8 mm wide, and their ring vertices) neither cover nor poke | > 12 (skin: > 4) |
+| `rag_mm`, `teeth_per_m`, `rag_loop_cm`, `rag_at` | the worst open outline: mean distance of its reversal vertices from their neighbours' chord, and reversals of the turning direction per metre (outlines under an upper layer, and seams shared with another object, are skipped) | > 8 mm and > 2 per m |
+| `holes_stand`, `holes_walk` | skin vertices no layer covers although 85 % of the skin within 4 cm is covered, counted for the garment round them | > 4 |
+| `seam_cm`, `seam_gap_mm` | boundary facing other boundary of the same garment within 2.5 cm (a seam left open, a slit) | > 15 cm |
+| `stretch`, `collapse` | share of faces whose area in the walk is outside 0.6..1.6 of `STAND`, below 0.4 | > 8 % |
+| `sliver_stand`, `sliver_walk` | share of faces with an angle under 10 degrees | > 25 % |
+| `soup` | share of faces more than 25 degrees off the mean normal of their neighbours | > 45 % |
+| `kind`, `made_by`, `tri_angle` | the node extra `acr_garment` (`draped`, `shell`, `modelled` and the builder; models built since "Hems"). Without it a guess: `draped` when the median smallest angle is at least 45.5 degrees (a Delaunay lattice), else `shell`, which is wrong for draped garments with inlays; `--stats` makes the `drape` keys of `stats.json` win | |
+| `score` | sum of number / limit over the flags (each capped at 10) | |
+
+`shape.csv` (`clothaudit.leg_shape`, left leg in `STAND`) gives the cut of the legwear a
+number: convex girths of the leg garments at mid thigh, widest 4-16 cm above the knee,
+narrowest 1-7 cm below it (the knee band) and at the calf; for a garment that ends 1-12 cm
+below the knee the band is its inner ring there (the nearest cloth to the leg per angle, over
+its last 4 cm), since the fullness hangs over the band as a bag; `fullness` = above knee /
+band (about 1.0 is a tube, the conquistador's slops 1.82, EngPik's breeches 1.64 since the
+band closes on the stocking; 1.26 by the same measure before); `closure` =
+band / the skin's girth there (the skin under clothes is pushed in 12 mm, so read it as a
+comparison between units, not as 1.0 = tight); `band_gap_cm`: the longest stretch from
+10 cm above the knee to the ankle without a legwear vertex.
+
+Known false rows: thin fins and strips (legging flaps, turnbacks: seam, sliver, soup) and
+pokes against rigid armour at its openings. It does not judge shape (a smooth tube scores
+clean), textures or other poses. First run and the rows checked on renders:
+`ACR-analysis/clothing-audit/2026-11-15/` (`summary.md`, `verified.md`).
 
 ## Known problems
 

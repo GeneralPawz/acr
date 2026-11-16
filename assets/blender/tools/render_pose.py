@@ -109,7 +109,9 @@ def main(argv):
             posecheck.import_glb(model)
     sc = bpy.context.scene
     for o in sc.objects:
-        if o.type == "MESH" and ("acr_lod" in o.keys() or ".lod" in o.name.lower()):
+        # LODs, and the stump caps: the game does not draw `<name>.caps` (`model.rs`).
+        if o.type == "MESH" and ("acr_lod" in o.keys() or ".lod" in o.name.lower() or "acr_caps" in o.keys()
+                                 or o.name.lower().split(".")[-1] in ("caps", "bones")):
             o.hide_render = True
     poser = None if legacy else posecheck.Poser(sc)
     cam = studio(sc)
