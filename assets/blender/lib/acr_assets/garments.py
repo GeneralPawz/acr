@@ -1042,6 +1042,20 @@ def plumb(ys, out=1.0):
     return [first if y is None else y for y in res]
 
 
+def wrap_ring(n, overlap=0.5, start=-0.25, lift=0.008, ramp=0.35):
+    """The run of a wrapped cloth round the body (a kilt): `n` + 1 points [(angle, lift)]
+    from `start` (rad; 0 is the wearer's left, -pi/2 the front) once round and `overlap`
+    rad further, so the outer end lies over the inner one at one hip. `lift` m is how far
+    the cloth stands off what it lies on: 0 on the first turn, rising smoothly over the
+    last `ramp` rad before the turn is full, `lift` over the whole overlap."""
+    out = []
+    for i in range(n + 1):
+        a = (2.0 * math.pi + overlap) * i / n
+        t = min(max((a - (2.0 * math.pi - ramp)) / max(ramp, 1e-6), 0.0), 1.0)
+        out.append((start + a, lift * t * t * (3.0 - 2.0 * t)))
+    return out
+
+
 def flap_follow(x, z, pivot_z, half=0.12, drop=0.36, reach=0.12, most=0.78, fall=0.3, blend=0.8):
     """Bone shares of free-hanging cloth below the belt (a breechcloth flap, a shirt's skirt)
     at (x across, z up): the hips above the hip joint (`pivot_z`); from `reach` m below it

@@ -136,6 +136,21 @@ class NativeLegwear(unittest.TestCase):
         for w in (left, right, mid, hem, gm.flap_follow(0.01, 0.85, 0.93)):
             self.assertAlmostEqual(sum(w.values()), 1.0)
 
+    def test_wrap_ring_overlaps_at_one_hip(self):
+        ring = gm.wrap_ring(60, overlap=0.5, start=-0.25, lift=0.008)
+        self.assertEqual(len(ring), 61)
+        self.assertAlmostEqual(ring[0][0], -0.25)
+        self.assertAlmostEqual(ring[-1][0] - ring[0][0], 2.0 * math.pi + 0.5)
+        self.assertEqual(ring[0][1], 0.0)
+        lifts = [l for _a, l in ring]
+        self.assertEqual(lifts, sorted(lifts))
+        # Over the inner end the outer end stands a full lift off it; the first turn lies flat.
+        for a, l in ring:
+            if a - ring[0][0] >= 2.0 * math.pi:
+                self.assertAlmostEqual(l, 0.008)
+            if a - ring[0][0] < 2.0 * math.pi - 0.35:
+                self.assertEqual(l, 0.0)
+
     def test_fill_ring_bridges_gaps(self):
         self.assertEqual(gm.fill_ring([1.0, None, None, 4.0]), [1.0, 2.0, 3.0, 4.0])
         self.assertEqual(gm.fill_ring([None, 2.0, None, 2.0]), [2.0, 2.0, 2.0, 2.0])

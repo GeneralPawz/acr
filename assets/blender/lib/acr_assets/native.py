@@ -519,7 +519,7 @@ def _seam_flap(ch, side, line, width=(0.044, 0.030), thickness=0.006):
     return _authored(ch, f"legging_flap{'_l' if side > 0 else '_r'}", "flaps", sv, sf, groups * 2, "_seam_flap")
 
 
-def _belt(ch, off, over=(), n=40, z=(0.982, 1.006, 1.030), thickness=0.004):
+def _belt(ch, off, over=(), n=40, z=(0.982, 1.006, 1.030), thickness=0.004, name="belt", key="belt_hide"):
     """The belt (#523): a closed band of hide round the hips, `off` m outside the skin and
     the layers `over`, bridging the hollow of the back, `thickness` thick."""
     from . import garments as gm
@@ -541,7 +541,7 @@ def _belt(ch, off, over=(), n=40, z=(0.982, 1.006, 1.030), thickness=0.004):
     faces = [(j * n + i, j * n + (i + 1) % n, (j + 1) * n + (i + 1) % n, (j + 1) * n + i)
              for j in range(len(z) - 1) for i in range(n)]
     sv, sf = _solid(verts, faces, thickness)
-    return _authored(ch, "belt", "belt_hide", sv, sf, _skin_groups(ch, verts, sided=False) * 2, "_belt", symmetric=True)
+    return _authored(ch, name, key, sv, sf, _skin_groups(ch, verts, sided=False) * 2, "_belt", symmetric=True)
 
 
 def _breech_strip(ch, gap, over=(), cols=6, width=(0.20, 0.07), thickness=0.003):
@@ -623,7 +623,7 @@ def _apron(ch, name, z1, w0, w1, over, back=False, lean=0.04, clear=0.012, rows=
     return _authored(ch, name, "breechcloth", sv, sf, groups * 2, "_apron", smooth=2 * len(faces))
 
 
-def _skin_cloth(ch, cuts, keep, ease, passes=6, floor=0.7, neck=None):
+def _skin_cloth(ch, cuts, keep, ease, passes=6, floor=0.7, neck=None, split=False):
     """Cloth cut out of the skin's own surface (#523): the flesh cut clean by the planes
     `cuts` [(point, normal towards the side cut away, region(co) -> bool the cut is confined
     to)], the faces of the bones `keep` kept, every vertex pushed out along its (smoothed) normal by
@@ -631,7 +631,9 @@ def _skin_cloth(ch, cuts, keep, ease, passes=6, floor=0.7, neck=None):
     `floor` of its ease; rim vertices stay in their plane. Returns the cloth points, the skin
     points under them, the faces, the skin's weights per vertex and the rims {cut: [vertex,
     ...] in face order}. `neck` (the neck joint, the height of the neck edge): the skin round
-    the neck is first made one surface up to that height (`_yoke`)."""
+    the neck is first made one surface up to that height (`_yoke`). `split`: an edge loop
+    that runs along several cuts (a cloak's lower edge and its front opening) is returned per
+    cut, each the longest run."""
     cuts = [(co, no.normalized(), inside) for co, no, inside in cuts]
     bm = bmesh.new()
     bm.from_mesh(ch.flesh.data)
@@ -695,7 +697,8 @@ def _skin_cloth(ch, cuts, keep, ease, passes=6, floor=0.7, neck=None):
             if d < floor * es[i]:
                 pos[i] = pos[i] + nrm[i] * (floor * es[i] - d)
     loops, seen = {}, set()
-    for a in sorted(nxt):
+    heads = set(nxt) - set(nxt.values())  # an open chain (a cut ending at another) from its start
+    for a in sorted(heads) + sorted(nxt):
         if a in seen:
             continue
         chain, v = [], a
@@ -703,6 +706,19 @@ def _skin_cloth(ch, cuts, keep, ease, passes=6, floor=0.7, neck=None):
             seen.add(v)
             chain.append(v)
             v = nxt.get(v)
+        ids = [rim.get(v, -1) for v in chain]
+        if split and len(set(ids)) > 1:
+            k0 = next(k for k in range(len(chain)) if ids[k] != ids[k - 1])  # a closed loop: start at a corner
+            chain, ids = chain[k0:] + chain[:k0], ids[k0:] + ids[:k0]
+            run = [chain[0]]
+            for k in range(1, len(chain) + 1):
+                if k < len(chain) and ids[k] == ids[k - 1]:
+                    run.append(chain[k])
+                    continue
+                if len(run) > len(loops.get(ids[k - 1], ())):
+                    loops[ids[k - 1]] = run
+                run = [chain[k]] if k < len(chain) else []
+            continue
         if len(chain) > len(loops.get(rim.get(a, -1), ())):
             loops[rim.get(a, -1)] = chain
     return pos, org, faces, groups, loops
@@ -877,6 +893,183 @@ def _matchcoat(ch, over, thickness=0.006, gap=0.016):
     sv, sf = _solid([tuple(p) for p in pos], faces, thickness)
     print(f"[{ch.name}] matchcoat: {len(pos)} points, rims {sorted(loops)}")
     return _authored(ch, "matchcoat", "matchcoat", sv, sf, groups * 2, "_matchcoat", smooth=2 * len(faces))
+
+
+def _under(ch, skip=("flaps",)):
+    """The clothes laid so far that cloth can lie on (no shoes, none of the keys `skip`)."""
+    return [o for o in ch.layers["clothes"] if o.type == "MESH" and o is not getattr(ch, "shoes", None)
+            and ch.keys.get(o.name) not in skip]
+
+
+def _free_weights(ch, pts, top, pivot, **follow):
+    """Weights of cloth hanging free below `top`: the skin's at `top`, `garments.flap_follow`
+    from the hip joint `pivot` down (as the shirt's skirt and the flaps; `follow`: its
+    `most` and `fall` for a cloth that lies outside those and must clear the thigh)."""
+    from . import garments as gm
+
+    P, out = ch.prefix, []
+    for p, g in zip(pts, _skin_groups(ch, pts)):
+        u = min(max((top - p[2]) / max(top - pivot, 1e-6), 0.0), 1.0)
+        w = {b: x * (1.0 - u) for b, x in g.items()}
+        for b, x in gm.flap_follow(p[0], p[2], pivot, **follow).items():
+            w[P + b] = w.get(P + b, 0.0) + x * u
+        w = dict(sorted(w.items(), key=lambda kv: -kv[1])[:4])
+        tot = sum(w.values()) or 1.0
+        out.append({b: x / tot for b, x in w.items() if x > 0.0})
+    return out
+
+
+def _bodice(ch, name, key, sleeves=True, waist=0.99, cuff=0.035, thickness=0.004, gap=0.010, ease=(0.012, 0.020, 0.013)):
+    """A closed upper garment that follows the body (#523; Pueblo's jerkin and tunic): the
+    skin's surface (`_skin_cloth`) on the closed neck ring (`_yoke`), cut clean at the
+    `waist` (it ends under the kilt's top and the sash) and `cuff` m above the wrists, or
+    `sleeves` False at the armholes (an upright plane 5 mm inside the shoulder joint).
+    Over a shirt it lies `gap` m outside it, else `ease` m off the skin (chest, waist,
+    sleeves). `thickness` thick with closed rims; no opening down the front."""
+    P = ch.prefix
+    seg = am.segments(ch.arm)
+    neck, sh = seg[P + "neck"][0], seg[P + "upperarm_l"][0]
+    up = Vector((0.0, 0.0, 1.0))
+    cuts = [(Vector((0.0, 0.0, waist)), -up, lambda c: abs(c.x) < 0.24 and c.z < waist + 0.10),
+            (Vector((0.0, 0.0, neck.z + 0.03)), up,
+             lambda c: c.z > neck.z - 0.02 and c.x * c.x + (c.y - neck.y) ** 2 < 0.15 ** 2)]
+    for sd in "lr":
+        if sleeves:
+            el, wr = seg[P + f"forearm_{sd}"]
+            ax = (wr - el).normalized()
+            cuts.append((wr - ax * cuff, ax, lambda c, el=el, ax=ax, ln=(wr - el).length:
+                         (c - el).dot(ax) > 0.4 * ln and ((c - el) - ax * (c - el).dot(ax)).length < 0.11))
+        else:
+            # An upright plane just inside the shoulder joint: a plane across the arm also
+            # slices the flank, and confined to the arm it left the edge ragged over the cap.
+            s0 = seg[P + f"upperarm_{sd}"][0]
+            sx = 1.0 if s0.x > 0 else -1.0
+            cuts.append((Vector((s0.x - sx * 0.005, 0.0, 0.0)), Vector((sx, 0.0, 0.0)),
+                         lambda c, sx=sx: c.x * sx > 0.08 and c.z > waist + 0.05))
+    chest = sh.z - 0.10
+    inner = getattr(ch, "shirt_ease", None)
+
+    def ease_at(c, g):
+        if inner is not None:
+            return inner(c, g) + gap
+        a = min(sum(w for b, w in g.items() if b[len(P):].split("_")[0] in ("upperarm", "forearm", "hand")), 1.0)
+        t = min(max((c.z - waist) / max(chest - waist, 1e-6), 0.0), 1.0)
+        t = t * t * (3.0 - 2.0 * t)
+        return (ease[1] + (ease[0] - ease[1]) * t) * (1.0 - a) + ease[2] * a
+
+    keep = TORSO | {"neck", "upperarm_l", "upperarm_r"} | (ARMS if sleeves else set())
+    pos, _org, faces, groups, loops = _skin_cloth(ch, cuts, keep, ease_at, floor=0.9 if inner else 0.7,
+                                                  neck=(neck, neck.z + 0.03))
+    sv, sf = _solid([tuple(p) for p in pos], faces, thickness)
+    print(f"[{ch.name}] {name}: {len(pos)} points, rims {sorted(loops)} ({[len(loops[k]) for k in sorted(loops)]})")
+    obj = _authored(ch, name, key, sv, sf, groups * 2, "_bodice", symmetric=True, smooth=2 * len(faces))
+    ch.shirt_ease = lambda c, g: ease_at(c, g) + thickness
+    return obj
+
+
+def _wrap(ch, name, key, top, hem, n=64, step=0.025, offset=0.010, thickness=0.004, overlap=0.5, start=-0.25, skip=(),
+          lean=0.03):
+    """A wrapped cloth with a thickness (#523; Pueblo's kilt): one rectangle round the hips
+    from `top` to `hem`, its outer end lying `overlap` rad over the inner one at the left
+    hip (`garments.wrap_ring`). Each column hangs plumb from the furthest thing under it
+    (skin and the clothes laid so far, `offset` m off), the rings loosened round; closed rims
+    all round (a straight top edge for the sash or band to hold, a straight hem); skinned as
+    all free cloth below the belt (`_free_weights`: `garments.flap_follow`), but going with
+    the thighs more (90 %, 76 % at the hem) and standing `lean` m further out at the hem: it
+    is the outermost cloth, and at the shirt skirt's 78-55 % the striding thigh came through."""
+    from . import garments as gm
+
+    P = ch.prefix
+    seg = am.segments(ch.arm)
+    c0 = seg[P + "hips"][0]
+    trees = _trees([ch.flesh, *_under(ch, skip=("flaps", *skip))])
+    ring = gm.wrap_ring(n, overlap=overlap, start=start, lift=thickness + 0.004)
+    dirs = [Vector((math.cos(a), math.sin(a), 0.0)) for a, _l in ring]
+    rows = max(int(math.ceil((top - hem) / step)), 2)
+    cur, verts = [0.0] * (n + 1), []
+    for j in range(rows + 1):
+        z = top + (hem - top) * j / rows
+        c = Vector((c0.x, c0.y, z))
+        for i, d in enumerate(dirs):
+            hit = _from_outside(trees, c + d * 0.34, -d, 0.34)
+            if hit is not None:
+                cur[i] = max(cur[i], (hit - c).length + offset)
+            elif cur[i] == 0.0:
+                cur[i] = 0.14
+        cur = gm.loosen(cur, passes=2)
+        out = lean * (j / rows) ** 2
+        verts += [(c.x + d.x * (r + l + out), c.y + d.y * (r + l + out), z) for d, r, (_a, l) in zip(dirs, cur, ring)]
+    m = n + 1
+    faces = [(j * m + i, (j + 1) * m + i, (j + 1) * m + i + 1, j * m + i + 1) for j in range(rows) for i in range(n)]
+    groups = _free_weights(ch, verts, top, seg[P + "thigh_l"][0].z, most=0.9, fall=0.15)
+    sv, sf = _solid(verts, faces, thickness)
+    rs = [math.hypot(v[0] - c0.x, v[1] - c0.y) for v in verts]
+    print(f"[{ch.name}] {name}: {len(verts)} points, {rows + 1} rings of {m}, z {hem:.3f}..{top:.3f}, radius {min(rs):.3f}..{max(rs):.3f}")
+    return _authored(ch, name, key, sv, sf, groups * 2, "_wrap", symmetric=True, smooth=2 * len(faces))
+
+
+def _cloak(ch, name, key, hem, top=1.10, gap=0.010, thickness=0.005, apex=0.12, open_w=0.035, arm=0.75, step=0.025,
+           offset=0.012, ease=0.016):
+    """A cloak or blanket round both shoulders as one cloth (#523): the skin's surface
+    (`_skin_cloth`) on the closed neck ring (`_yoke`), `gap` m outside the garment under it
+    (else `ease` m off the skin), over the upper arms to `arm` of their length, closed at
+    the neck and open down the front in a V from `apex` m below the neck edge to `open_w` m
+    each side at `top`; from there every point of the lower edge hangs plumb to the `hem`,
+    pushed out by what is under it (kilt, sash), so the opening stays as wide as it is at
+    the waist. `thickness` thick with closed rims."""
+    from . import garments as gm
+
+    P = ch.prefix
+    seg = am.segments(ch.arm)
+    neck = seg[P + "neck"][0]
+    up = Vector((0.0, 0.0, 1.0))
+    za = neck.z + 0.03 - apex
+    cuts = [(Vector((0.0, 0.0, top)), -up, lambda c: abs(c.x) < 0.24 and c.z < top + 0.10),
+            (Vector((0.0, 0.0, neck.z + 0.03)), up,
+             lambda c: c.z > neck.z - 0.02 and c.x * c.x + (c.y - neck.y) ** 2 < 0.15 ** 2)]
+    for sd, sx in (("l", 1.0), ("r", -1.0)):
+        s0, e0 = seg[P + f"upperarm_{sd}"]
+        ax = (e0 - s0).normalized()
+        ln = (e0 - s0).length
+        cuts.append((s0 + ax * (arm * ln), ax, lambda c, s0=s0, ax=ax, ln=ln:
+                     (c - s0).dot(ax) > 0.4 * ln and ((c - s0) - ax * (c - s0).dot(ax)).length < 0.12))
+        # One side of the V: the plane through the apex and (sx * open_w, top), the middle cut away.
+        edge = Vector((sx * open_w, 0.0, top - za)).normalized()
+        no = Vector((-sx * edge.z, 0.0, sx * edge.x))  # towards the middle (and down)
+        if no.x * sx > 0:
+            no = -no
+        cuts.append((Vector((0.0, 0.0, za)), no, lambda c, sx=sx: c.y < neck.y and c.x * sx > -0.02 and c.z < za + 0.01
+                     and abs(c.x) < 0.2))
+    inner = getattr(ch, "shirt_ease", None)
+    ease_at = (lambda c, g: inner(c, g) + gap) if inner is not None else (lambda c, g: ease)
+    pos, _org, faces, groups, loops = _skin_cloth(ch, cuts, TORSO | {"neck", "upperarm_l", "upperarm_r"}, ease_at, floor=0.9,
+                                                 neck=(neck, neck.z + 0.03), split=True)
+    verts = [tuple(p) for p in pos]
+    loop = loops.get(0, [])
+    under = _trees([ch.flesh, *_under(ch)])
+    rows = max(int(math.ceil((top - hem) / step)), 2)
+    cy = sum(pos[i].y for i in loop) / max(len(loop), 1)
+    dirs, cur = [], []
+    for i in loop:
+        d = Vector((pos[i].x, pos[i].y - cy, 0.0))
+        cur.append(d.length)
+        dirs.append(d.normalized())
+    L, base = len(loop), len(verts)
+    for j in range(1, rows + 1):
+        z = top + (hem - top) * j / rows
+        c = Vector((0.0, cy, z))
+        for i, d in enumerate(dirs):
+            hit = _from_outside(under, c + d * 0.34, -d, 0.34)
+            if hit is not None:
+                cur[i] = max(cur[i], (hit - c).length + offset)
+        cur = gm.loosen(cur, passes=2)
+        verts += [(c.x + d.x * r, c.y + d.y * r, z) for d, r in zip(dirs, cur)]
+    idx = lambda j, i: loop[i] if j == 0 else base + (j - 1) * L + i  # noqa: E731
+    faces = faces + [(idx(j, i + 1), idx(j, i), idx(j + 1, i), idx(j + 1, i + 1)) for j in range(rows) for i in range(L - 1)]
+    groups = groups + _free_weights(ch, verts[base:], top, seg[P + "thigh_l"][0].z)
+    sv, sf = _solid(verts, faces, thickness)
+    print(f"[{ch.name}] {name}: {len(verts)} points, lower edge {L}, rims {sorted(loops)} ({[len(loops[k]) for k in sorted(loops)]})")
+    return _authored(ch, name, key, sv, sf, groups * 2, "_cloak", smooth=2 * len(faces))
 
 
 def dress(ch, s):
@@ -1114,7 +1307,11 @@ def kit(ch, s):
             bpy.data.objects.remove(e)
         # On its strap (over the right shoulder, across the chest to the left hip), seated on
         # the back and skinned to the blended back frame (`gear.seat`).
-        straps.carry(ch, f"{name}.quiver_strap", QUIVER_STRAP[0], QUIVER_STRAP[1], key="hide", samples=48)
+        # Over an authored shirt one flat band (#523): the strap that followed the surface lay
+        # torn under the quiver and partly under the cloth.
+        flat = "shirt" in s["dress"]
+        straps.carry(ch, f"{name}.quiver_strap", QUIVER_STRAP[0], QUIVER_STRAP[1], key="hide", samples=28 if flat else 48,
+                     flat=flat)
         gear.seat(ch, q, Matrix.Translation(at) @ rot, (0.0, -1.0, 0.0))
         out["quiver"] = ch.add("gear", q, "hide")
     if "horn" in k:
@@ -1181,7 +1378,18 @@ def make(root, name, s):
     ch.body(shoulders="trade_shirt" not in s["dress"], grip=grip)  # draped cloth tears over the re-meshed shoulders
     dress(ch, s)
     if "belt_l" in s["kit"]:
-        ch.strap_surface, ch.strap_offsets, ch.strap_under = ch.flesh, (0.026 if "shirt" in s["dress"] else 0.010,) * 2, None
+        ch.strap_surface, ch.strap_offsets, ch.strap_under = ch.flesh, (0.010,) * 2, None
+        if "shirt" in s["dress"]:
+            # Over the authored shirt (and matchcoat, kilt, sash) the strap is laid on the
+            # dressed surface as the line infantry's cross belt is (#523): one flat band with
+            # a thickness, taking the weights of the cloth under it. As a shell of the skin
+            # 26 mm out it lay partly under the shirt.
+            from . import drape
+
+            under = [o for o in ch.layers["clothes"] if o.type == "MESH" and o is not getattr(ch, "shoes", None)
+                     and ch.keys.get(o.name) != "flaps"]
+            ch.strap_surface = drape.surface([ch.flesh, *under], f"{name}.strap_surface")
+            ch.strap_offsets, ch.strap_under = (0.004,) * 2, under
         registry.build_gear(["belt_l"], ch, name, s)
     ch.bone_layer()
     ch.caps()

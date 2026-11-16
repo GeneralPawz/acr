@@ -1462,6 +1462,39 @@ breechcloth flap; the flap's outer side lies 8 mm outside the belt (4 mm clear, 
 thick), which leaves 3 mm. `model_layers` uses the same ranks for its poking and crossing
 counts.
 
+**Straps over the authored shirt** (DelKri, DelS15, DelVog, PueS15): the shot-pouch strap
+(`belt_l`) was a skin shell 26 mm out and the quiver strap (`straps.carry`) followed the
+surface row by row; both lay partly under the shirt and torn under the quiver. With a
+`shirt` in the dress `native.make` lays `belt_l` on the dressed surface (`drape.surface` of
+skin and clothes, `ch.strap_under`, 4 mm off) and `native.kit` passes `flat=True` to
+`straps.carry`: one flat band with a thickness, drawn taut (`body.strap(flat=True)`,
+`garments.strap_rows(taut=True)`), as the line infantry's cross belt; horn, pouch and quiver
+are seated on it afterwards (`gear.seat`).
+
+**Pueblo, authored** (`pueblo.dress`; PueVog, PueKri, PueSha, PueLut, PueS15): no shells but
+wraps and the sash end. From the skin out:
+
+- **Jerkin and tunic** (`native._bodice`): the shirt's skin cloth on the closed neck
+  (`_yoke`), closed down the front, cut at the waist (0.99 m, under the kilt's top) and above
+  the wrists, or sleeveless at an upright plane 5 mm inside the shoulder joint (a plane
+  across the arm also slices the flank; confined to the arm it left 47 rim points off the
+  cut). Over a shirt it lies 10 mm outside it.
+- **Kilt** (`native._wrap`, `garments.wrap_ring`): one cloth wrapped once round and 0.5 rad
+  further, the outer end 8 mm over the inner at the left hip; 64 columns hanging plumb from
+  1.035 m to the hem (0.62 m), 10 mm off what is under them, leaning 3 cm out at the hem,
+  4 mm thick with closed rims. Skinned `flap_follow` with `most` 0.9 and `fall` 0.15: at the
+  shirt skirt's 78-55 % the striding thigh came through the front.
+- **Sash** (`native._belt` with `name`, `key`): a closed band 0.972-1.058 m over the kilt's
+  top edge; without a sash (PueSha) a narrow band 0.996-1.042 m holds it.
+- **Cloak and blanket** (`native._cloak`): skin cloth over the layer under it and the upper
+  arms (75 %), closed at the neck ring, open in a V from 12 cm below the neck to 3.5 cm each
+  side at 1.10 m, from where the lower edge hangs plumb to the hem (0.90 / 0.80 m) over
+  kilt and sash. `_skin_cloth(split=True)` returns a loop that runs along several cuts per
+  cut. The bandolier is a flat band over the cloak (`body.strap(flat=True)`).
+
+The audit counts the kilt (rank 2) lying over shirt and jerkin (3, 4) at the waist as poke
+(PueS15 kilt 445 over the shirt); it is the worn order and hidden under the sash.
+
 Open: the matchcoat and the shaman's cloak are still shells (ragged 10 mm, open seam 25 mm);
 the shirt's shoulders are square (the yoke starts at the full shoulder width); the two
 halves of a flap shear at the middle in the stride and the Plains leg fringe comes through
