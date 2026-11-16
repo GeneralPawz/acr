@@ -1383,6 +1383,38 @@ bones. Now:
   solids of the fit (the scabbard crosses the left back skirt); in the stirrups pose the
   front skirts keep the seat's angle.
 
+## Native legwear, authored (#523)
+
+`native.dress` without SPEC `drape` (Woodlands, and Plains and Pueblo through it) no longer
+cuts leggings, belt and breechcloth out of the skin as shells. Each piece is made once, with a
+thickness and closed rims (`native._solid`), and laid on what is already there by ray casts
+with a fixed offset:
+
+- **Leggings** (`native._leggings`): per leg a tube from the ankle to the upper thigh, 28
+  points round, a ring every 2.5 cm, 7 mm off skin and moccasin, loosened over the hollows of
+  the leg (`garments.loosen`), 3 mm thick. The top is cut on the slant
+  (`garments.legging_top`): 3.5 cm below the crotch inside, 10 cm above it at the outer hip,
+  where a flat thong goes up to the belt. Fitted to the left leg and mirrored. The garters
+  are a band round the tube below the knee.
+- **Side seam** (`native._seam_flap`): a 6 mm panel standing out from the tube's outer line,
+  4.4 cm wide at the ankle, 3 cm at the top, ends rounded; each row moves with its point on
+  the leg.
+- **Belt** (`native._belt`): a closed band, 4 mm thick, over skin and shirt.
+- **Breechcloth**: the strip between the legs (`native._breech_strip`, under the belt) and its
+  two ends (`native._apron`) turned over the belt and hanging plumb (`garments.plumb`) from
+  the furthest thing under them (belt, belly or seat, legging tops, the strip), 4 mm clear;
+  the hem follows each thigh by 65 % (`garments.flap_follow`).
+
+The draped variants (SPEC `drape`, eight Woodlands units) and Pueblo's sash ends
+(`native._flap`) are unchanged. DelVog, audit before -> after: ragged 21-23 mm -> 0 (legging
+flaps), open seams 24 mm -> 0, legging skin holes 2 -> 0, flesh poke 52 -> 16 (stand), slivers
+0.24-0.37 -> 0.003-0.17. The audit's poke counts of the new pieces went up (leggings 31 ->
+874, 48 % of the covered vertices): not explained yet. Half the vertices of a thick piece are
+its inner wall, and the flaps hang over the belt although `LAYER_RANK` puts belts (7) above
+the breechcloth (2); `model_layers` was not run. Open: a forward thigh still comes through
+the front flap in the stride, the seam panel's rim renders pale, and the legging tops of a
+shirted unit lie under the ragged shirt shell.
+
 ## Hems (#523)
 
 `drape.hems(ch)` runs in `Character.morphs` (every family; `drape.HEMS = True`) over each

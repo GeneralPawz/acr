@@ -1006,6 +1006,53 @@ def band(m=MEASURE, garment="band", key="sash", width=10.0, ease=6.0, lift=-7.0)
     return P, [Seam([("band", "start", True)], [("band", "end")], garment, close=0.05)]
 
 
+# -- authored native legwear (#523): the shapes `native._leggings`, `_apron` build from ----
+
+def legging_top(theta, inner, outer, power=1.5):
+    """Height (m) of a side-seam legging's top edge at angle `theta` round the leg (0 = the
+    outer side, where it is tied to the belt): cut on the slant from `outer` down to `inner`
+    at the inside of the thigh."""
+    return inner + (outer - inner) * (0.5 + 0.5 * math.cos(theta)) ** power
+
+
+def loosen(r, passes=2, closed=False):
+    """Radii along a line (or round a ring, `closed`) loosened: a value lower than the mean
+    of its neighbours is raised to it, none is lowered, so a tube bridges the hollows of the
+    limb (behind the knee, above the ankle) instead of following them like paint."""
+    r, n = list(r), len(r)
+    for _ in range(passes):
+        prev = r[:]
+        for i in range(n):
+            a = prev[(i - 1) % n] if closed else prev[max(i - 1, 0)]
+            b = prev[(i + 1) % n] if closed else prev[min(i + 1, n - 1)]
+            r[i] = max(prev[i], 0.5 * (a + b))
+    return r
+
+
+def plumb(ys, out=1.0):
+    """A hanging line from top to bottom: each point at least as far out (`out` +1: larger
+    is further out; -1: smaller) as every point above it, so cloth falls straight from the
+    furthest thing it lies on. None (nothing under it) keeps the line."""
+    res, cur = [], None
+    for y in ys:
+        if y is not None:
+            cur = y if cur is None else (max(cur, y) if out > 0 else min(cur, y))
+        res.append(cur)
+    first = next((y for y in res if y is not None), 0.0)
+    return [first if y is None else y for y in res]
+
+
+def flap_follow(x, z, pivot_z, reach=0.14, most=0.65, blend=0.09):
+    """Bone shares of a breechcloth flap vertex at (x across, z up): the hips above the hip
+    joint (`pivot_z`), `most` of it on the thighs from `reach` m below, each half on its own
+    thigh (left = +x), blended over +-`blend` m at the middle."""
+    t = min(max((pivot_z - z) / reach, 0.0), 1.0)
+    k = most * t * t * (3.0 - 2.0 * t)
+    s = min(max(0.5 + 0.5 * x / blend, 0.0), 1.0)
+    s = s * s * (3.0 - 2.0 * s)
+    return {"hips": 1.0 - k, "thigh_l": k * s, "thigh_r": k * (1.0 - s)}
+
+
 def side_leggings(m=MEASURE, garment="nat_leggings", key="leggings", ease=6.0, top=0.4, garter="garter"):
     """Woodland side-seam leggings of trade stroud (#307): a cloth tube from the ankle to
     `top` x the knee-to-waist length above the knee (tied up to the belt), `ease` cm looser

@@ -92,6 +92,41 @@ class Patterns(unittest.TestCase):
         self.assertAlmostEqual(b - a, 3.0, places=6)
 
 
+
+class NativeLegwear(unittest.TestCase):
+    """The authored leggings' and breechcloth's pure shapes (#523), on made-up numbers."""
+
+    def test_legging_top_is_cut_on_the_slant(self):
+        self.assertAlmostEqual(gm.legging_top(0.0, 0.76, 0.90), 0.90)
+        self.assertAlmostEqual(gm.legging_top(math.pi, 0.76, 0.90), 0.76)
+        tops = [gm.legging_top(math.pi * i / 12, 0.76, 0.90) for i in range(13)]
+        self.assertEqual(tops, sorted(tops, reverse=True))
+        self.assertAlmostEqual(gm.legging_top(0.5, 0.76, 0.90), gm.legging_top(-0.5, 0.76, 0.90))
+
+    def test_loosen_fills_hollows_only(self):
+        r = [5.0, 5.0, 3.0, 5.0, 6.0, 4.0]
+        out = gm.loosen(r, passes=1)
+        self.assertEqual(out[2], 5.0)
+        self.assertTrue(all(b >= a for a, b in zip(r, out)))
+        self.assertEqual(gm.loosen([4.0, 4.0, 4.0]), [4.0, 4.0, 4.0])
+        self.assertEqual(gm.loosen([1.0, 5.0, 5.0, 5.0], passes=1, closed=True)[0], 5.0)
+
+    def test_plumb_hangs_from_the_furthest_point(self):
+        self.assertEqual(gm.plumb([1.0, 3.0, 2.0, None, 4.0, 1.0]), [1.0, 3.0, 3.0, 3.0, 4.0, 4.0])
+        self.assertEqual(gm.plumb([-1.0, -3.0, -2.0], out=-1.0), [-1.0, -3.0, -3.0])
+        self.assertEqual(gm.plumb([None, 2.0]), [2.0, 2.0])
+
+    def test_flap_follows_its_own_thigh_below_the_hip(self):
+        top = gm.flap_follow(0.05, 1.0, 0.93)
+        self.assertEqual(top, {"hips": 1.0, "thigh_l": 0.0, "thigh_r": 0.0})
+        left, right, mid = (gm.flap_follow(x, 0.60, 0.93) for x in (0.12, -0.12, 0.0))
+        self.assertAlmostEqual(left["thigh_l"], 0.65)
+        self.assertAlmostEqual(right["thigh_r"], 0.65)
+        self.assertAlmostEqual(mid["thigh_l"], mid["thigh_r"])
+        for w in (left, right, mid, gm.flap_follow(0.01, 0.85, 0.93)):
+            self.assertAlmostEqual(sum(w.values()), 1.0)
+
+
 if __name__ == "__main__":
     unittest.main()
 
