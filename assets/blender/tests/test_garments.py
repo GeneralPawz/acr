@@ -123,6 +123,25 @@ class TailoredPanels(unittest.TestCase):
         # 9 cm wide at the top: held to the widest lapel
         self.assertAlmostEqual(outer[1] - inner[1], 0.085)
 
+    def test_ease_closed_shuts_a_seam_and_stretches_the_cloth_round_it(self):
+        # Two strips of 6 vertices, 9 cm apart at their sewn ends.
+        pts = [(float(i), 0.0, 0.0) for i in range(6)] + [(14.0 + i, 0.0, 0.0) for i in range(6)]
+        edges = [(i, i + 1) for i in range(5)] + [(6 + i, 7 + i) for i in range(5)]
+        out = gm.ease_closed(pts, edges, [[5, 6]], passes=3)
+        self.assertEqual(out[5], out[6])
+        self.assertAlmostEqual(out[5][0], 9.5)
+        xs = [p[0] for p in out]
+        self.assertEqual(xs[:6], sorted(xs[:6]))  # no fold
+        self.assertGreater(xs[4], 4.0)
+        self.assertGreater(xs[3], 3.0)
+        self.assertEqual(out[1], pts[1])  # past the rings: untouched
+        held = gm.ease_closed(pts, edges, [[5, 6]], passes=3, fixed=(4,))
+        self.assertEqual(held[4], pts[4])
+
+    def test_trim_line_follows_the_lapel_edge(self):
+        self.assertAlmostEqual(gm.trim_line(1.3, 1.1, 1.5, (0.10, 0.0)), 0.05)
+        self.assertAlmostEqual(gm.trim_line(1.6, 1.1, 1.5, (0.10, 0.0), floor=0.006), 0.006)
+
     def test_strap_rows_bridge_folds_and_cover_every_hit(self):
         hits = [[-0.10, -0.10, -0.10, -0.10, -0.10] for _ in range(9)]
         hits[4] = [-0.10, -0.10, -0.13, -0.10, -0.10]  # a fold standing out in front

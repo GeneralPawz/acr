@@ -48,7 +48,10 @@ CLOTH = {
     # Broadcloth at 1.5 cm (`registry.SPACING`, #523): stiff, every seam shut (`close`), the sim's
     # triangle-sized crumple smoothed away (`smooth`: Taubin passes, `drape.dress`).
     "coat": {"thickness": 0.0030, "mass": 0.45, "tension": 18.0, "bending": 2.0, "shrink": 0.0, "margin": 0.006,
-             "close": 0.13, "smooth": 10},
+             "close": 0.13, "smooth": 10,
+             # the sewing springs stay strong while the cloth settles, and what the sim leaves
+             # open is closed over `ease` rings of cloth before the weld (`ease_closed`, #523)
+             "sew_hold": True, "ease": 16},
     "waistcoat": {"thickness": 0.0020, "mass": 0.30, "tension": 15.0, "bending": 0.8, "shrink": 0.05, "margin": 0.004},
     "breeches": {"thickness": 0.0020, "mass": 0.30, "tension": 15.0, "bending": 0.6, "shrink": 0.08, "margin": 0.003},
     "gaiters": {"thickness": 0.0020, "mass": 0.30, "tension": 20.0, "bending": 1.0, "shrink": 0.04, "margin": 0.003},
@@ -234,6 +237,9 @@ def _circle(cx, cy, r, a0, a1, n):
              cy + r * math.sin(math.radians(a0 + (a1 - a0) * k / n))) for k in range(n + 1)]
 
 
+SCYE_DROP = 3.0  # cm
+
+
 def coat(m=MEASURE):
     """The regimental coat (1768 pattern): fronts with lapels, backs, skirts (front and
     back per side) with turnbacks, two-piece sleeves with round cuffs, a stand collar."""
@@ -241,7 +247,10 @@ def coat(m=MEASURE):
     q_chest = (m["chest"] + e) / 4.0
     q_waist = (m["waist"] + e) / 4.0
     back_len = m["nape_to_waist"]
-    ah = back_len * 0.5  # armhole depth below the shoulder line
+    # Armhole depth below the shoulder line: 3 cm under the half back length, so the side seam
+    # ends under the armpit and closes there (#523: at half the back length its top stood
+    # either side of the arm, 99 mm apart).
+    ah = back_len * 0.5 + SCYE_DROP
     fw_c, bw_c = q_chest + 3.5, q_chest - 3.5  # side seams set to the back
     fw_w, bw_w = q_waist + 4.0, q_waist - 6.0  # the backs narrow into the side pleats
     top = back_len + 2.0  # neck point above the waist (over the shoulder)
@@ -382,6 +391,41 @@ def lapel_edges(pts, width=(0.050, 0.085), bins=10):
     return z0, z1, inner, outer
 
 
+def ease_closed(points, edges, groups, passes=16, fixed=()):
+    """`points` [(x, y, z)] with every group of sewn vertices `groups` [[index]] brought to
+    its mean, and that move handed on to the cloth round it: `passes` Jacobi rounds over
+    `edges` [(a, b)] (each vertex takes the mean move of its neighbours; the seam vertices
+    keep theirs, `fixed` ones stay), so a seam the sim left open closes by stretching
+    `passes` rings of cloth instead of folding the row next to it (#523). Returns the points."""
+    move = {}
+    for g in groups:
+        c = [sum(points[i][k] for i in g) / len(g) for k in range(3)]
+        for i in g:
+            move[i] = tuple(c[k] - points[i][k] for k in range(3))
+    for i in fixed:
+        move[i] = (0.0, 0.0, 0.0)
+    nb = {}
+    for a, b in edges:
+        nb.setdefault(a, []).append(b)
+        nb.setdefault(b, []).append(a)
+    cur = dict(move)
+    for _ in range(passes):
+        nxt = dict(move)
+        todo = {n for i in cur for n in nb.get(i, ())} - set(move)
+        for i in sorted(todo):
+            ns = nb[i]
+            nxt[i] = tuple(sum(cur.get(n, (0.0, 0.0, 0.0))[k] for n in ns) / len(ns) for k in range(3))
+        cur = nxt
+    return [tuple(p[k] + cur[i][k] for k in range(3)) if i in cur else tuple(p) for i, p in enumerate(points)]
+
+
+def trim_line(z, z0, z1, inner, floor=0.0):
+    """x of a lapel's inner edge at height `z` (`lapel_edges`: `inner` = x at z0 and z1),
+    carried on straight past both ends and never under `floor`."""
+    f = (z - z0) / ((z1 - z0) or 1.0)
+    return max(floor, inner[0] + (inner[1] - inner[0]) * f)
+
+
 def strap_rows(hits, offset, sign, passes=4):
     """Edge depths (y) of a flat strap from the surface depths `hits` (rows along the run,
     each the y of the rays across the width, None where a ray missed): per row the straight
@@ -420,13 +464,13 @@ def waistcoat(m=MEASURE):
     q_waist = (m["waist"] + e) / 4.0
     back_len = m["nape_to_waist"]
     top = back_len + 1.0
-    below = 14.0  # below the waist
+    below = 17.0  # below the waist: over the breeches' waistband (no skin at the belly, #523)
     ah = back_len * 0.48
     neck_r = m["neck"] / (2 * math.pi) + 0.3
     sh = m["shoulder"] - 2.0
     P = {}
     fr = [(0.0, -below + 4.0), (6.0, -below), (q_waist + 2.0, -below + 2.0), (q_chest + 1.5, top - ah),
-          (q_chest - 4.0, top - ah + 9.0), (neck_r + sh, top - 2.0), (neck_r, top), (0.0, top - 16.0)]
+          (q_chest - 4.0, top - ah + 9.0), (neck_r + sh, top - 2.0), (neck_r, top), (0.0, top - 11.0)]  # buttoned to the pit of the throat (no skin under the stock, #523)
     P["wc_front"] = Panel("wc_front", "waistcoat", "waistcoat", fr,
                           {"side": (2, 3), "armhole": (3, 5), "shoulder": (5, 6), "cf": (7, 0)},
                           {"region": "torso", "theta": 0.0, "dir": 1, "u0": 0.0, "at": "waist", "gap": 1.2})

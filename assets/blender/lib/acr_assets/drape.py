@@ -711,7 +711,10 @@ def simulate(obj, settings, sew=(), frames=None):
     base = 'modifiers["acr_cloth"].settings.'
     s1 = SEW_FRAMES
     _key(obj, base + "effector_weights.gravity", [(1, 0.0), (s1, 0.0), (s1 + 8, 1.0)])
-    _key(obj, base + "sewing_force_max", [(1, 5.0), (s1 // 3, SEW_FORCE), (s1, SEW_FORCE), (s1 + 8, 15.0)])
+    # `sew_hold`: the seams stay pulled shut while the cloth settles (a fitted coat's side and
+    # armhole seams opened again under gravity at the weaker force).
+    _key(obj, base + "sewing_force_max", [(1, 5.0), (s1 // 3, SEW_FORCE), (s1, SEW_FORCE),
+                                          (s1 + 8, SEW_FORCE if settings.get("sew_hold") else 15.0)])
     _key(obj, base + "shrink_min", [(1, 0.0), (s1, 0.0), (s1 + 8, settings["shrink"])])
     old = sc.frame_current
     t0 = time.time()
@@ -772,6 +775,35 @@ def weld(obj, sew, limit=0.02, limits=None, fixed=()):
     bm.to_mesh(obj.data)
     bm.free()
     obj.data.update()
+
+
+def ease_seams(obj, sew, limits, passes, fixed=()):
+    """Before the weld: every group of sewn pairs within its limit is brought together and
+    the cloth round it follows (`garments.ease_closed`), so the weld merges coincident
+    points. Returns the widest remaining gap of those pairs (m)."""
+    V = obj.data.vertices
+    parent = {}
+
+    def find(x):
+        while parent.get(x, x) != x:
+            x = parent[x]
+        return x
+
+    for (a, b), lim in zip(sew, limits):
+        if (V[a].co - V[b].co).length < lim:
+            ra, rb = find(a), find(b)
+            if ra != rb:
+                parent[max(ra, rb)] = min(ra, rb)
+    groups = {}
+    for v in sorted({x for pr in sew for x in pr}):
+        groups.setdefault(find(v), []).append(v)
+    groups = [g for g in groups.values() if len(g) > 1]
+    edges = sorted({tuple(sorted(k)) for p in obj.data.polygons for k in p.edge_keys})
+    pts = gm.ease_closed([tuple(v.co) for v in V], edges, groups, passes, fixed)
+    for v, p in zip(V, pts):
+        v.co = p
+    obj.data.update()
+    return max(((V[a].co - V[b].co).length for (a, b), lim in zip(sew, limits) if find(a) == find(b)), default=0.0)
 
 
 def solidify(obj, thickness):
@@ -1601,6 +1633,9 @@ def dress(ch, garments=gm.ORDER, report=None, patterns=None, over=(), post_weld=
         base = max(base, gm.CLOTH.get(g, {}).get("close", 0.0))
         limits = [getattr(seams[k], "close", None) or base for k in pieces["_sew_id"]]
         welded = sum(1 for (a, b), lim in zip(sew, limits) if (ev.vertices[a].co - ev.vertices[b].co).length < lim)
+        eased = 0.0
+        if gm.CLOTH.get(g, {}).get("ease"):
+            eased = ease_seams(obj, sew, limits, gm.CLOTH[g]["ease"], set(pins))
         weld(obj, sew, limit=base, limits=limits, fixed=set(pins))
         if not g.startswith("shirt") and bare:
             # Cut level inside the shoes: no ragged edge over them.
@@ -1735,7 +1770,9 @@ def dress(ch, garments=gm.ORDER, report=None, patterns=None, over=(), post_weld=
                     "gap_mm_max_after_sewing": mm(gs, 1.0), "within_5mm": sum(1 for x in gaps if x < 0.005),
                     "worst_seams_mm": {k: round(v * 1000) for k, v in sorted(per_seam.items(), key=lambda kv: -kv[1])[:5]},
                     # the widest pair's midpoint (cm, rest pose, model axes: -Y the front, +Z up)
-                    "worst_gap_at_cm": worst_at[1]}
+                    "worst_gap_at_cm": worst_at[1],
+                    # the widest pair left for the weld after `ease_seams` (0: not eased)
+                    "gap_mm_at_weld": round(1000 * eased, 1)}
         for o in ch.layers["clothes"]:
             if o.name in made:
                 _collision(o, thickness=gm.CLOTH.get(g, gm.CLOTH["waistcoat"]).get("margin", 0.004))
@@ -2425,7 +2462,9 @@ TRIM_N = 32  # points round a band
 COLLAR = {"height": (0.022, 0.030), "top": (0.030, 0.105), "over": 0.014, "out": 0.007, "gap": 0.011, "thickness": 0.003}
 STOCK = {"gap": 0.004, "below": 0.028, "above": 0.010, "thickness": 0.0015}
 CUFF = {"depth": 0.105, "past": -0.010, "clear": 0.007, "flare": 0.006, "thickness": 0.004, "round": 0.004, "ramp": 0.05}
-LAPEL = {"width": (0.050, 0.085), "middle": 0.006, "reach": 0.08, "rows": 24, "cols": 6, "off": 0.004, "thickness": 0.003, "smooth": 6}
+LAPEL = {"width": (0.050, 0.085), "middle": 0.006, "reach": 0.08, "rows": 24, "cols": 6, "off": 0.004, "thickness": 0.003, "smooth": 6,
+         # the coat front cut straight `inset` inside the lapel's inner edge, up to `above` over its top
+         "inset": 0.014, "above": 0.10}
 
 
 def _band(ch, label, key, rings, thickness, weights, closed=True):
@@ -2674,9 +2713,40 @@ def tailored(ch, made):
             lp = _band(ch, f"lapel_{side}", key, rings, k["thickness"], _weights_from(sleeves), closed=False)
             made[lp.name] = key
             rows[side] = {"missed_rays": miss, "lift_mm_max": round(1000 * float((raw - k["off"] - Y).max()), 1)}
+        cut = sum(_trim_front(o, body, z0, z1, inner, k) for o in sleeves)
         rep["lapels"] = {"z": [round(z0, 3), round(z1, 3)], "inner_x": [round(x, 3) for x in inner],
-                         "outer_x": [round(x, 3) for x in outer], **rows}
+                         "outer_x": [round(x, 3) for x in outer], "front_faces_cut": cut, **rows}
     return rep
+
+
+def _trim_front(obj, body, z0, z1, inner, k):
+    """The coat front's free edge as a straight line under the lapel: the cloth of `obj`
+    inside the lapel's inner edge (`inset` in from it, front half of the trunk, from the
+    lapel's foot to `above` over its top) is cut away and the edge left laid on that line.
+    The sim leaves this edge crumpled; it showed as shreds beside the lapels and as a red V
+    under the collar. Returns the faces removed."""
+    mw, inv = obj.matrix_world, obj.matrix_world.inverted()
+    bm = bmesh.new()
+    bm.from_mesh(obj.data)
+    lim = {}
+    for v in bm.verts:
+        p = mw @ v.co
+        if z0 <= p.z <= z1 + k["above"] and p.y < body.ellipse(p.z)[0] and abs(p.x) < 0.2:
+            x = gm.trim_line(p.z, z0, z1, inner, k["middle"]) + k["inset"]
+            if abs(p.x) < x:
+                lim[v] = (p, x)
+    dead = [f for f in bm.faces if all(v in lim for v in f.verts)
+            or any(v in lim and abs(lim[v][0].x) < 0.004 for v in f.verts)]
+    n = len(dead)
+    bmesh.ops.delete(bm, geom=dead, context="FACES")
+    for v, (p, x) in lim.items():
+        if v.is_valid and v.link_faces:
+            v.co = inv @ Vector((math.copysign(x, p.x), p.y, p.z))
+    bmesh.ops.delete(bm, geom=[v for v in bm.verts if not v.link_faces], context="VERTS")
+    bm.to_mesh(obj.data)
+    bm.free()
+    obj.data.update()
+    return n
 
 
 def inherit_weights(obj, ch, under):

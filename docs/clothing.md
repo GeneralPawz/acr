@@ -1234,10 +1234,35 @@ shoulders.
   whose straps lie on garments): 5 rays across the width, the belt straight across them and
   lifted over every hit, both edges low-passed along the run, one band from hip over the
   shoulder to hip, 3 mm thick with rims. It bridges folds instead of following them.
-- Open: the coat's side and armhole seams are still closed by the weld, not the sim (pairs
-  up to 97 mm apart at the end of the sim: puckers at the back's side seams); the fronts'
-  free edge below the lapels and the skirts' front edge at the hip are not straightened;
-  the belt stands off the waist where it bridges from the chest to the hip.
+- Open after this slice (see the third): the skirts' front edge at the hip is not
+  straightened; the belt stands off the waist where it bridges from the chest to the hip.
+
+### Seams shut before the weld, cut front edge, deeper armhole (#523, third slice)
+
+- **Armhole:** `garments.SCYE_DROP` = 3 cm: the coat's armhole is `nape_to_waist / 2 + 3` deep.
+  At half the back length the side seam's top stood either side of the arm (99 mm apart at
+  the end of the sim); now it ends under the armpit.
+- **Sewing:** `CLOTH["coat"]["sew_hold"]`: `simulate` keeps `SEW_FORCE` while the cloth settles
+  (it fell to 15 and the sleeve seams opened again: `sleeve_top.fwd` 97 -> 27 mm with the
+  hold alone).
+- **Eased closing:** `CLOTH["coat"]["ease"]` = 16: `drape.ease_seams` (`garments.ease_closed`)
+  brings every sewn group to its mean before the weld and hands that move on over 16 rings
+  of cloth (Jacobi), so the weld merges coincident points (`drape.coat.gap_mm_at_weld` = 0)
+  and a seam the sim left open stretches the cloth round it instead of folding one row.
+- **Front edge:** `drape._trim_front` (in `tailored`, `LAPEL["inset"]`, `"above"`): the coat
+  cloth inside the lapel's inner edge is cut away 14 mm in from it, from the lapel's foot to
+  10 cm over its top, and the edge laid on that straight line
+  (`drape.tailored.lapels.front_faces_cut`). No shreds beside the lapels, no red V at the hook.
+- **Waistcoat:** 17 cm below the waist (was 14) and buttoned to 11 cm under the neck point
+  (was 16): no skin at the belly or under the stock. Every unit that drapes `waistcoat`.
+- EngF18 (= FrnF18), sim seam gaps: max 97 -> 49 mm, side seam 92 -> 43, armholes 74 -> 49 / 46,
+  sleeve front seam 97 -> 44 (the sim is not repeatable to the millimetre: 57 and 49 in two
+  builds). Audit: coat poke 318 -> 312, holes 4 -> 2, score 20.4 -> 10.0; coat skirts poke
+  309 -> 44; waistcoat 39 -> 25; worse: flesh 84 -> 106 (over the skirts), lapel_r 6 -> 22.
+- Open: dark nicks on the front of the shoulders and coat cloth through the lapels in
+  places (the eased cloth is not re-collided); the back waist still bunches above the
+  skirts; the belt bridges from chest to hip; the stock's 67 poking vertices are its rim
+  shown 10 mm over the collar by design (`STOCK["above"]`): an audit case, not a defect.
 
 ## Hems (#523)
 
