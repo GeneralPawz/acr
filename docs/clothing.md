@@ -1332,6 +1332,35 @@ shoulders.
   plane); waistcoat and breeches are not mirrored (they have no skirt tangle; their seams
   at the centre would need the same treatment and `close` is set for neither).
 
+### Riders: the same coat, draped standing (#523, seventh slice)
+
+The 18th-century riders (`cavalry.make`, `dress` "coat": 12 units) built their clothes as
+`ch.shell` offsets of the rider's skin plus a `body.tube` skirt, because `drape` works in the
+standing man's frame (`Body.waist_z` = 1.04, the slices, the mirror plane x = 0,
+`skirt_weights`) and the rider's rest pose stands at his saddle's ground point with prefixed
+bones. Now:
+
+- **`cavalry.tailor`** builds a standing man of the rider's build at the world origin (no
+  prefix), drapes `RIDER_DRAPE` (breeches, shirt, waistcoat, coat) on him as `line.make` does
+  (`drape.dress`, `drape.tailored`, `hide_under`, `buttons`, the shoulder belt of
+  `straps.belt` for units without a kit, the officers' sash) and throws him away.
+- **`cavalry.wear`** moves the clothes to the rider's origin, renames their vertex groups to
+  `rider.*`, binds them to the unit's armature and pushes his skin in (`hide_skin`). The seat
+  is skinning only: each garment is draped once. Without `facings` the trim is coat cloth.
+  The high boots stay a shell. `stats.json` has the `drape` block now.
+- **`cavalry.SKIRT_SEAT`** (in every seated pose, draped riders only): the skirt bones are
+  posed with the seat, the front columns with the thighs (-66 degrees), the back ones
+  thrown back over the cantle (84, the lower segment -14).
+- `ACR_RIDER_SHELLS=1` builds the shells as before.
+- EngKOf18, shells -> draped: man 11 041 -> 28 709 triangles, glb 6.7 -> 7.9 MB; coat 595 of
+  595 pairs welded, hems 45.2 / 45.2 cm; audit coat holes 7 -> 0, cuffs ragged 29 -> 0 mm,
+  lapels 10 -> 0 mm; worse: audit score 53.2 -> 75.4, `model_layers` poking 596 -> 2 240,
+  crossing 332 -> 912 (EngD18 525 -> 825, 386 -> 830).
+- Open: seated, the back skirts cut through the saddle's cantle and the turnbacks tear on
+  the thighs; the skirts' sides are stretched between the front and back columns; the
+  officers' lace shells on cuffs and lapels are gone; the dragoons' kit belts
+  (`cavalry_kit.straps`) come out shredded on the draped coat's chest.
+
 ## Hems (#523)
 
 `drape.hems(ch)` runs in `Character.morphs` (every family; `drape.HEMS = True`) over each

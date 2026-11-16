@@ -143,11 +143,23 @@ def main(argv):
             if check is None:
                 print(f"ACR warning: {clip} frame {frame} not checked (no dump of that frame)")
             poser.play(clip, frame, check=check)
-        target = arm.matrix_world @ arm.pose.bones[focus].head if focus else (0.0, 0.0, 1.0)
+        target = arm.matrix_world @ arm.pose.bones[focus_bone(arm, focus)].head if focus else (0.0, 0.0, 1.0)
         aim(cam, target, view, size)
         sc.render.filepath = os.path.join(out, name + ".png")
         bpy.ops.render.render(write_still=True)
         print("ACR rendered", name, clip, frame, "legacy" if legacy else "exact")
+
+
+def focus_bone(arm, focus):
+    """The bone a job's FOCUS names: the same bone of a prefixed rig when there is one (a
+    rider's `rider.spine2`, a gun crew's `c0.spine2`: mounted and crewed units share one
+    armature with the horse or the gun), else the bone itself."""
+    bones = arm.pose.bones
+    names = sorted(b.name for b in bones)
+    for b in [x for x in names if x.endswith("." + focus) and not x.startswith("socket.")] + [focus]:
+        if b in bones:  # the man's bone before a horse's or a gun's of the same name
+            return b
+    raise KeyError(f"no bone {focus!r} (nor a prefixed one) in {arm.name}")
 
 
 if __name__ == "__main__":
