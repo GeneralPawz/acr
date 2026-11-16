@@ -23,8 +23,10 @@ with the `#STAND` sprites (`line`'s `mix`); belts, armour, match and scabbard fi
 
 - Everything goes through `line.make` with the period's own drape set (`build["drape"]`,
   docs/clothing.md "17th century"): musketeers, drummers and standard bearers
-  `MUSKETEER_DRAPE` (breeches, stockings, linen cuffs, a **doublet** with tabbed skirts in
-  the coat colour); pikemen `PIKEMAN_DRAPE` (`stockings17`, then `breeches17`: full breeches
+  `MUSKETEER_DRAPE` (the pikemen's `stockings17` and `breeches17`, linen cuffs, a
+  **doublet** in the coat colour whose skirt tabs, shoulder wings and wristbands are
+  authored: `drape.doublet17`, docs/clothing.md "Doublets of about 1640");
+  pikemen `PIKEMAN_DRAPE` (`stockings17`, then `breeches17`: full breeches
   of about 1640 gathered into a band below the knee over stockings that run into the shoe
   (#523, docs/clothing.md "17th century"); a **buff coat** with cloth sleeves in the coat
   colour, skirts to above the knee, under the corselet: on EngPik and FrnPik the buff
@@ -32,9 +34,7 @@ with the `#STAND` sprites (`line`'s `mix`); belts, armour, match and scabbard fi
   read from `ACR_SOURCES/patterns`; `None` gives the drafted `garments.buffcoat`), its
   one-piece sleeves shaped by `drape.sleeve_shape`). All wear the **falling band**
   (`falling_band` gear, laid over the doublet or buff coat; on pikemen it is built after
-  the corselet and lies over its neck edge). Musketeers, drummers and standard bearers
-  still wear the 18th-century `breeches` and `gaiters` drafts: they can take
-  `stockings17` and `breeches17` by changing `MUSKETEER_DRAPE` alone.
+  the corselet and lies over its neck edge).
 - **Musketeers** carry the **matchlock** (`held.matchlock`: fishtail butt, lock plate, the
   serpentine holding a length of match over the pan; it replaces the line's flintlock
   mesh in the hand and on the sling, same frame and sockets) and the **forked rest**

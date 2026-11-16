@@ -3010,6 +3010,194 @@ def tailored(ch, made, lace=False):
     return rep
 
 
+# --------------------------------------------------------------------------- doublet trim
+# (docs/clothing.md "Doublets of about 1640", #523): what a 2 cm lattice cannot carry is
+# authored on the draped doublet as closed pieces with a thickness.
+TABS = {"n": 4, "lap": 5.0, "drop": 0.135, "over": 0.010, "off": 0.006, "top": 0.0015, "tilt": 0.003, "rows": 7, "cols": 7,
+        "thickness": 0.003, "round": 0.10, "swing": 0.5}
+WING = {"width": 0.042, "lift": 0.010, "n": 20, "reach": 100.0, "thickness": 0.003, "off": 0.004}
+WRISTBAND = {"in": 0.003, "past": 0.022, "under": 0.003, "flare": 0.004, "thickness": 0.002}
+
+
+def doublet17(ch, made):
+    """The doublet's skirt tabs, the shoulder wings and the shirt's wristbands as closed
+    pieces (after `dress(drop=garments.TABS17)`):
+
+    - Tabs (`doublet`): `TABS["n"]` per half round the waist seam as draped (`ch.trim_seams`,
+      a cosine series: smooth and symmetric), each lying `lap` degrees under the next one
+      towards the back and tilted `tilt` m so it clears it; `drop` m long, its top row `top` m
+      on the body, the rest `off` m over the breeches (rays towards the trunk's axis), never
+      narrower below than above, the lower corners rounded. They start `over` m above the seam, over the body's cut edge.
+      Weights: the doublet's at the top, blended with the breeches' below (`swing`).
+    - Wings (`doublet`): a crescent over the upper half of each armscye (the sleeves' open
+      edge), `width` m down the arm and `lift` m proud on top (`garments.wing_rise`), moving
+      with the doublet's body.
+    - Wristbands (`shirt`): a band from inside the sleeve's end to `past` m beyond it, rigid
+      on the forearm.
+    Works on every `dsleeve` (the buff coat's cloth sleeves too). Adds the objects to `made`;
+    returns the report."""
+    P = ch.prefix
+    rep = {}
+    objs = [o for o in ch.layers["clothes"] if o.name in made]
+    bodies = [o for o in objs if made[o.name] in ("doublet", "buff") and not o.name.endswith("_skirts")]
+    sleeves = [o for o in objs if made[o.name] == "dsleeve"]
+    seg = am.segments(ch.arm)
+    new = []
+    seam = [p for n in gm.TABS17 for p in ch.trim_seams.get(n, ())]
+    if len(seam) >= 12 and bodies:
+        k = TABS
+        pts = np.array(seam + [(-x, y, z) for x, y, z in seam])
+        cy = float((pts[:, 1].max() + pts[:, 1].min()) / 2)
+        t = np.arctan2(pts[:, 0], -(pts[:, 1] - cy))
+        M = np.stack([np.ones_like(t), np.cos(t), np.cos(2 * t), np.cos(3 * t)], axis=1)
+        cr = np.linalg.lstsq(M, np.hypot(pts[:, 0], pts[:, 1] - cy), rcond=None)[0]
+        cz = np.linalg.lstsq(M, pts[:, 2], rcond=None)[0]
+
+        def fit(c, a):
+            return float(c[0] + c[1] * math.cos(a) + c[2] * math.cos(2 * a) + c[3] * math.cos(3 * a))
+
+        under = [o for o in objs if not o.name.endswith("_skirts") and made[o.name] != "dsleeve"]
+        tree = _cloth_tree([ch.flesh] + under)
+        legs = [o for o in objs if made[o.name] == "breeches"] or [ch.flesh]
+        w_top, w_leg = _weights_from(bodies), _weights_from(legs)
+        z_seam = float(np.mean(pts[:, 2]))
+        R, C = k["rows"], k["cols"]
+        lifts = []
+        for sx in (1.0, -1.0):
+            for ti, (a0, a1) in enumerate(gm.tab_spans(k["n"], k["lap"])):
+                rings = []
+                r_prev = None
+                for j in range(R + 1):
+                    f = j / R
+                    # the lower corners rounded: the last rows narrower
+                    pinch = k["round"] * max(0.0, (f - 0.75) / 0.25) ** 2
+                    row = []
+                    for i in range(C + 1):
+                        g = pinch + (1.0 - 2.0 * pinch) * i / C
+                        a = math.radians(a0 + (a1 - a0) * g)
+                        z = fit(cz, a) + k["over"] - (k["drop"] + k["over"]) * f
+                        r0 = fit(cr, a)
+                        d = Vector((sx * math.sin(a), -math.cos(a), 0.0))
+                        o = Vector((0.0, cy, z))
+                        hit = tree.ray_cast(o + d * 0.34, -d, 0.34)[0] if tree is not None else None
+                        # the top row lies close on the body's edge, the rest clear of the breeches
+                        r = max(r0, (hit - o).dot(d) if hit is not None else r0) + (k["top"] if j == 0 else k["off"])
+                        row.append([a, z, r, d, g])
+                    # stiff cloth: one tab is even across (the mean and its slope, no dents)
+                    rs = np.array([q[2] for q in row])
+                    gs = np.array([q[4] for q in row])
+                    line = np.polyval(np.polyfit(gs, rs, 1), gs)
+                    line += max(0.0, float((rs - line).max()))
+                    if r_prev is not None:
+                        line = np.maximum(line, r_prev)  # never narrower below
+                    r_prev = line
+                    lifts.append(float((line - rs).max()))
+                    # tilted: the edge towards the front lies over the tab before it
+                    rings.append([Vector((0.0, cy, q[1])) + q[3] * (float(line[i]) + k["tilt"] * (1.0 - q[4]))
+                                  for i, q in enumerate(row)])
+                if sx > 0:
+                    rings = [row[::-1] for row in rings]  # faces out
+
+                def weights(ob, top=w_top, leg=w_leg):
+                    a_, b_ = top(ob), leg(ob)
+                    out = []
+                    for v, wa, wb in zip(ob.data.vertices, a_, b_):
+                        f_ = k["swing"] * min(1.0, max(0.0, (z_seam - v.co.z) / k["drop"])) ** 1.5
+                        w = {b: x * (1.0 - f_) for b, x in wa.items()}
+                        for b, x in wb.items():
+                            w[b] = w.get(b, 0.0) + x * f_
+                        out.append(w)
+                    return out
+
+                tab = _band(ch, f"doublet_tab_{'l' if sx > 0 else 'r'}{ti}", "doublet", rings, k["thickness"], weights,
+                            closed=False)
+                new.append((tab, "doublet"))
+        rep["tabs"] = {"count": 2 * k["n"], "seam_points": len(seam), "seam_z_cm": round(100 * z_seam, 1),
+                       "radius_cm": [round(100 * fit(cr, math.radians(a)), 1) for a in (0, 90, 180)],
+                       "bridged_mm_max": round(1000 * max(lifts), 1)}
+    for side in "lr" if sleeves else "":
+        sh, el = seg[P + f"upperarm_{side}"]
+        _e, wr = seg[P + f"forearm_{side}"]
+        au, af = (el - sh).normalized(), (wr - el).normalized()
+        lu = (el - sh).length
+        V = [o.matrix_world @ v.co for o in sleeves for v in o.data.vertices]
+        V = [p for p in V if (p.x > 0) == (side == "l")]
+        if not V:
+            continue
+        row = {}
+        # Wing: over the sleeve's open top edge (the armscye seam).
+        edge = []
+        for o in sleeves:
+            bm = bmesh.new()
+            bm.from_mesh(o.data)
+            edge += [o.matrix_world @ v.co for v in bm.verts if v.is_boundary]
+            bm.free()
+        edge = [p for p in edge if (p.x > 0) == (side == "l") and (p - sh).dot(au) < 0.4 * lu]
+        if len(edge) >= 8 and bodies:
+            k = WING
+            zv = Vector((0.0, 0.0, 1.0))
+            up = (zv - au * zv.dot(au)).normalized()
+            e2 = au.cross(up)
+            pol = []
+            for p in edge:
+                d = p - sh
+                tt = d.dot(au)
+                rad = d - au * tt
+                pol.append((math.degrees(math.atan2(rad.dot(e2), rad.dot(up))), tt, rad.length))
+            n = k["n"]
+            cols = []
+            for i in range(n + 1):
+                a = -k["reach"] + 2.0 * k["reach"] * i / n
+                # the seam here: its points within 25 degrees, the nearer the heavier
+                ws = [(max(0.0, 1.0 - abs((q[0] - a + 180.0) % 360.0 - 180.0) / 25.0), q) for q in pol]
+                tot = sum(w for w, _q in ws)
+                if tot < 1e-6:
+                    q = min(pol, key=lambda q: abs((q[0] - a + 180.0) % 360.0 - 180.0))
+                    tt, r = q[1], q[2]
+                else:
+                    tt, r = sum(w * q[1] for w, q in ws) / tot, sum(w * q[2] for w, q in ws) / tot
+                cols.append((a, tt, r))
+            rings = []
+            for g, wide, high in ((0.0, -0.15, 0.0), (0.33, 0.25, 1.0), (0.66, 0.65, 0.8), (1.0, 1.0, 0.15)):
+                ring = []
+                for a, tt, r in cols:
+                    h = gm.wing_rise(a, k["reach"])
+                    ar = math.radians(a)
+                    rad = up * math.cos(ar) + e2 * math.sin(ar)
+                    ring.append(sh + au * (tt + k["width"] * wide * h) + rad * (r + k["off"] + k["lift"] * high * h))
+                rings.append(ring)
+            wing = _band(ch, f"doublet_wing_{side}", "doublet", rings, k["thickness"], _weights_from(bodies), closed=False)
+            wing["acr_no_strap"] = 1
+            new.append((wing, "doublet"))
+            row["wing"] = {"seam_points": len(edge), "seam_radius_mm": round(1000 * float(np.mean([c[2] for c in cols])), 1)}
+        # Wristband: the shirt's cuff out of the sleeve's end.
+        k = WRISTBAND
+        along = [(p - el).dot(af) for p in V]
+        end = max(along)
+        rr = [((p - el) - af * s).length for p, s in zip(V, along) if s > end - 0.015]
+        if rr and end > 0.5 * (wr - el).length:
+            r = float(np.median(rr))
+            front = Vector((0.0, -1.0, 0.0))
+            u = (front - af * front.dot(af)).normalized()
+            w = af.cross(u)
+            ts = [2.0 * math.pi * i / TRIM_N for i in range(TRIM_N)]
+            rings = [[el + af * (end + t_) + (u * math.cos(a) + w * math.sin(a)) * (r + dr) for a in ts]
+                     for t_, dr in ((-k["in"], -k["under"] - 0.002), (0.003, -k["under"]),
+                                    (k["past"] * 0.5, -k["under"] + k["flare"] * 0.4), (k["past"], -k["under"] + k["flare"]))]
+            bone = P + f"forearm_{side}"
+            band = _band(ch, f"wristband_{side}", "shirt", rings, k["thickness"],
+                         lambda ob, bone=bone: [{bone: 1.0} for _ in ob.data.vertices])
+            band["acr_no_strap"] = 1
+            new.append((band, "shirt"))
+            row["wristband"] = {"sleeve_end_mm": round(1000 * end), "radius_mm": round(1000 * r, 1)}
+        rep[side] = row
+    for o, key in new:
+        o["acr_garment"] = "tailored:doublet"
+        made[o.name] = key
+    return rep
+
+
+
 def _trim_front(obj, body, z0, z1, inner, k):
     """The coat front's free edge as a straight line under the lapel: the cloth of `obj`
     inside the lapel's inner edge (`inset` in from it, front half of the trunk, from the
@@ -3054,7 +3242,7 @@ def inherit_weights(obj, ch, under):
     return obj
 
 
-BUTTON = {"lapel": 0.0095, "cuff": 0.0085, "gaiter": 0.0065}  # radius (m)
+BUTTON = {"lapel": 0.0095, "cuff": 0.0085, "gaiter": 0.0065, "doublet": 0.0055}  # radius (m)
 
 
 def _weights_at(obj, face):
@@ -3132,6 +3320,15 @@ def buttons(ch, cloth, name):
             for k in range(3):
                 q = h + axis * (a0 + (a1 - a0) * (0.25 + 0.25 * k))
                 cast(facings, q + back * 0.3, -back, BUTTON["cuff"], "brass")
+    # The doublet: a close row of small buttons down the centre front (#523).
+    dbl = [o for o in by_key.get("doublet", []) if o.get("acr_garment", "draped:doublet").startswith("draped")
+           and not o.name.endswith("_skirts")]
+    for o in dbl:
+        V = np.array([v.co[:] for v in o.data.vertices])
+        mid = V[(V[:, 1] < -0.04) & (np.abs(V[:, 0]) < 0.03) & (V[:, 2] > 0.95)] if len(V) else V
+        if len(mid) > 6:
+            for z in np.arange(mid[:, 2].min() + 0.015, mid[:, 2].max() - 0.03, 0.028):
+                cast([o], Vector((0.003, -0.6, float(z))), Vector((0, 1, 0)), BUTTON["doublet"], "brass")
     for side, sx in (("l", 1.0), ("r", -1.0)):
         h, t = seg.get(P + f"shin_{side}", (None, None))
         gs = by_key.get("gaiters", [])

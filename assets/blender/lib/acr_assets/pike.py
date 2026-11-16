@@ -163,7 +163,9 @@ FIXED = ("belts", "match", "armour", "plate", "scabbard", "brass", "cartridge", 
 # breeches, stockings (the gaiter slot) and linen cuffs under a doublet with tabbed skirts
 # (musketeers) or a buff coat with cloth sleeves (pikemen, under the armour); the falling
 # band is modelled over them (`drape.falling_band`, gear).
-MUSKETEER_DRAPE = ("breeches", "gaiters", "shirt17", "doublet")
+# Since #523 the legs are the pikeman's (below) and the tabs, wings and shirt cuffs are
+# authored (`drape.doublet17`).
+MUSKETEER_DRAPE = ("stockings17", "breeches17", "shirt17", "doublet")
 # The pikeman's legs (#523): stockings first, then the full breeches of about 1640 gathered
 # into a band below the knee over them (`garments.breeches17`, `stockings17`).
 PIKEMAN_DRAPE = ("stockings17", "breeches17", "shirt17", "buffcoat")
@@ -226,10 +228,10 @@ def musketeer_spec(md, palette=None, hat="pike_broad", **kw):
     # `coat_pattern` "waugh/doublet_1635", `breeches_pattern` "waugh/breeches_1640": traced
     # garments instead of the drafted doublet or breeches.
     swap = {}
-    for key, slot in (("coat_pattern", "doublet"), ("breeches_pattern", "breeches")):
+    for key, slot in (("coat_pattern", "doublet"), ("breeches_pattern", "breeches17")):
         rel = kw.pop(key, None)
         if rel:
-            swap[slot] = traced_garment(rel, slot)
+            swap[slot] = traced_garment(rel, slot.rstrip("17"))
     if "doublet" in swap:
         kw["build"] = dict({"strap_offsets": TRACED_STRAP_OFFSETS}, **(kw.get("build") or {}))
     _drape(kw, tuple(swap.get(g, g) for g in MUSKETEER_DRAPE))

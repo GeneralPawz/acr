@@ -1500,6 +1500,48 @@ the shirt's shoulders are square (the yoke starts at the full shoulder width); t
 halves of a flap shear at the middle in the stride and the Plains leg fringe comes through
 the back flap; the seam panel's rim renders pale; two slits at the seat of the back flap.
 
+## Doublets of about 1640 (#523)
+
+The 17th-century foot (`pike.MUSKETEER_DRAPE`: musketeers, drummers, standard bearers) wears
+the pikeman's legs (`stockings17`, `breeches17`) under a doublet tailored like the 18th-century
+coat, with its edge pieces authored:
+
+- **Body and sleeves**: `garments.doublet` at 2 cm (`registry.SPACING`), `CLOTH["doublet"]`
+  with the coat's `close`, `sew_hold`, `ease`, `smooth`, `mirror` and `weightless`; the
+  sleeves through `drape.sleeve_shape` (one cut, level wrist edge, a soft elbow).
+  `doublet_slashed` (frontier, conquistadors) keeps the plain 3.5 cm drape.
+- **Tabs** (`drape.doublet17`, `garments.TABS17`, `tab_spans`): the tab panels are sewn and
+  draped (the seam shapes the waist), dropped (`dress(drop=)`) and built again as eight
+  closed panels 3 mm thick round the waist seam as draped (a cosine series), each 5 degrees
+  under the next towards the back, 13.5 cm long, laid 6 mm over the breeches by rays, even
+  across and never narrower below; weights from the doublet at the top, half the breeches'
+  at the hem.
+- **Wings** (`garments.wing_rise`): a closed crescent over the upper 200 degrees of each
+  armscye (the sleeves' open edge), 4.2 cm down the arm, 10 mm proud on top, moving with the
+  body. On every `dsleeve`: the buff coat's cloth sleeves too (`sleeve_shape`'s `wing` strip
+  is gone).
+- **Wristbands** (`shirt`): a closed band from the sleeve's end 22 mm on, rigid on the forearm.
+- **Buttons** (`drape.buttons`): a row every 28 mm down the centre front.
+
+`line.make` calls it wherever a `dsleeve` was draped (`build["tailored"] = False` switches it
+off); wings and wristbands are left out of the straps' surface (`acr_no_strap`).
+`stats.json` -> `drape.doublet17`.
+
+EngMus, audit (rebuild 2026-11-15 -> now): `doublet_skirts` ragged 22.7 mm, seam 49 cm ->
+eight tabs, ragged 0, poke 0 to 20 per tab (the apostles hang into them); `doublet` poke
+14 -> 8, ragged 16 -> 14 mm, holes 6 -> 12; `dsleeve` 749 -> 9008 triangles, poke 0;
+`fallband` poke 1 -> 0; legs: the old tube and gaiters -> `breeches17` 501 / 501 welded
+(poke 194 stand, 251 walk of 18.5k triangles, mostly under the tabs) and `stockings17`.
+Doublet welded 359 / 359, `gap_mm_max` 64. `model_layers` 1621 poking, 598 crossing (the
+October build of 12k triangles: 258 / 202; now 47k). Build 1 min 52 s.
+
+Open: both shoulder straps break into shards where they cross the shoulder top beside the
+falling band; folded faces at the front of the armpit; the tabs' top still reads as a ledge
+from behind (they start 1.5 mm on the body and flare to clear the breeches); the wristbands
+count as poking through the sleeve end (46 and 67: they come out of it); on the buff coat
+the wings cross its armhole edge (EngOf17: 20 and 29); the pikemen's wings under the corslet
+are not rebuilt yet.
+
 ## Hems (#523)
 
 `drape.hems(ch)` runs in `Character.morphs` (every family; `drape.HEMS = True`) over each

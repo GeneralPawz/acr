@@ -65,13 +65,21 @@ CLOTH = {
     "shirt": {"thickness": 0.0012, "mass": 0.15, "tension": 10.0, "bending": 0.2, "shrink": 0.0, "margin": 0.002},
     # 17th century: the doublet's wool, the buff coat's thick oiled leather (stiff and heavy:
     # it stands off the body in few broad folds), knitted hose, full slops.
-    "doublet": {"thickness": 0.0025, "mass": 0.35, "tension": 18.0, "bending": 1.5, "shrink": 0.02, "margin": 0.005},
+    # The doublet at 2 cm (`registry.SPACING`, #523), tailored like the coat: every seam shut
+    # and eased, smoothed, resolved off the shirt, the better half mirrored; the sleeves cut
+    # level at the wrist with a soft elbow (`drape.sleeve_shape`; the wings are authored:
+    # `drape.doublet17`).
+    "doublet": {"thickness": 0.0025, "mass": 0.35, "tension": 18.0, "bending": 1.5, "shrink": 0.02, "margin": 0.005,
+                "close": 0.13, "smooth": 10, "sew_hold": True, "ease": 16, "mirror": True, "weightless": 12,
+                "sleeve_shape": {"cuts": 1, "full": 0.012, "elbow": 0.008, "crease": 0.004, "pitch": 0.036,
+                                 "taper": 0.06, "cuff": 0.012, "turn": 0.002, "show": 0.015, "reach": 0.08,
+                                 "skin": 0.005}},
     "buffcoat": {"thickness": 0.0045, "mass": 0.90, "tension": 40.0, "bending": 14.0, "shrink": 0.0, "margin": 0.007,
                  "close": 0.13,  # m: no seam pair is left open (`drape.dress`)
                  # the cloth sleeves of about 1640 (`drape.sleeve_shape`)
                  "sleeve_shape": {"cuts": 2, "full": 0.022, "elbow": 0.012, "crease": 0.007, "pitch": 0.036,
                                   "taper": 0.10, "cuff": 0.012, "turn": 0.002, "show": 0.015, "reach": 0.08,
-                                  "skin": 0.005, "wing": (0.035, 0.012)}},
+                                  "skin": 0.005}},  # the wings are authored (`drape.doublet17`)
     "hose": {"thickness": 0.0015, "mass": 0.20, "tension": 15.0, "bending": 0.4, "shrink": 0.06, "margin": 0.003},
     "slops": {"thickness": 0.0025, "mass": 0.30, "tension": 12.0, "bending": 1.2, "shrink": 0.0, "margin": 0.004},
     "shirt17": {"thickness": 0.0012, "mass": 0.15, "tension": 10.0, "bending": 0.2, "shrink": 0.0, "margin": 0.002},
@@ -109,7 +117,10 @@ CLOTH["frn_sash"] = {"thickness": 0.0025, "mass": 0.30, "tension": 15.0, "bendin
 CLOTH["nat_leggings"] = {"thickness": 0.0025, "mass": 0.35, "tension": 18.0, "bending": 1.2, "shrink": 0.03,
                          "margin": 0.004}
 CLOTH["nat_breechcloth"] = dict(CLOTH["nat_leggings"], margin=0.005, bending=0.8, self=True, self_gap=0.004)
-CLOTH["doublet_slashed"] = CLOTH["doublet"]
+# The slashed doublet (frontier, conquistadors) keeps the plain drape: its inlays are not
+# tried with the eased, mirrored cloth yet.
+CLOTH["doublet_slashed"] = {"thickness": 0.0025, "mass": 0.35, "tension": 18.0, "bending": 1.5, "shrink": 0.02,
+                            "margin": 0.005}
 CLOTH["buffcoat_bare"] = CLOTH["buffcoat"]
 
 # Order in which the garments are draped (each collides with the body and those before).
@@ -686,6 +697,28 @@ def _tabbed(width, drop, tab=8.0, slit=None, flare=3.0):
     pts = hem + [(width, drop), (0.0, drop)]
     k = len(hem) - 1
     return pts, {"hem": (0, k), "side": (k, k + 1), "waist": (k + 1, k + 2), "front": (k + 2, 0)}
+
+
+# The doublet's tabs (#523): sewn and draped with the body (the seam shapes its waist),
+# dropped (`dress(drop=TABS17)`) and built again as closed overlapping panels
+# (`drape.doublet17`).
+TABS17 = ("tabs_front", "tabs_back")
+
+
+def tab_spans(n=4, lap=4.0, gap=0.0):
+    """The tabs of one half of the skirt as angle spans in degrees round the waist, 0 at the
+    centre front, 180 at the centre back: `n` tabs, each reaching `lap` degrees under the
+    next one towards the back (none past the centre back), the first `gap` off the centre
+    front. Returns [(from, to)]."""
+    step = (180.0 - gap) / n
+    return [(gap + k * step, min(180.0, gap + (k + 1) * step + (lap if k < n - 1 else 0.0))) for k in range(n)]
+
+
+def wing_rise(a, reach=100.0):
+    """How far a shoulder wing stands out at `a` degrees round the armscye from its top:
+    1 on top, 0 from `reach` degrees on (a crescent)."""
+    x = min(1.0, abs(a) / reach)
+    return math.cos(x * math.pi / 2) ** 0.7
 
 
 def _body17(m, garment, key, sleeve_key, chest, waist, collar):

@@ -357,7 +357,7 @@ class Pikeman1640(unittest.TestCase):
         sl = gm.CLOTH["buffcoat"]["sleeve_shape"]
         self.assertGreaterEqual(sl["full"], 0.015)  # a fuller upper arm
         self.assertTrue(0.01 <= sl["show"] <= 0.02)  # the shirt cuff shows 1-2 cm beyond the hem
-        self.assertIn("wing", sl)
+        self.assertNotIn("wing", sl)  # authored: `drape.doublet17`
         # The breeches: calm legs, the top kept under the coat, no folds there, the band closed.
         pl = gm.CLOTH["breeches17"]["pleats"]
         self.assertGreater(pl["calm"]["round"], pl["calm"]["along"])  # even round the leg first
@@ -400,6 +400,33 @@ class Pikeman1640(unittest.TestCase):
         # `lift` moves it off the surface along the normal.
         up = gm.lay_over([(0.0, 0.0), (1.0, 0.0)], [0.5], lift=0.1)
         self.assertAlmostEqual(up[0][1], 0.1)
+
+
+class DoubletTrim(unittest.TestCase):
+    """The authored tabs and wings of the doublet (#523): pure layout numbers."""
+
+    def test_tabs_cover_the_half_and_overlap(self):
+        spans = gm.tab_spans(4, lap=5.0)
+        self.assertEqual(len(spans), 4)
+        self.assertEqual(spans[0][0], 0.0)
+        self.assertEqual(spans[-1][1], 180.0)  # none past the centre back
+        for (a0, a1), (b0, _b1) in zip(spans, spans[1:]):
+            self.assertAlmostEqual(a1 - b0, 5.0)  # each lies under the next
+            self.assertLess(a0, b0)
+
+    def test_tabs_are_dropped_from_the_drape(self):
+        panels, seams = gm.doublet(gm.MEASURE)
+        self.assertTrue(set(gm.TABS17) <= set(panels))
+        for n in gm.TABS17:  # each is sewn to the body by its waist: the seam the tabs hang from
+            self.assertTrue(any(x[0] == n and x[1] == "waist" for sm in seams for x in sm.b))
+        self.assertTrue(gm.CLOTH["doublet"]["mirror"] and gm.CLOTH["doublet"]["ease"])
+        self.assertNotIn("mirror", gm.CLOTH["doublet_slashed"])
+
+    def test_wing_is_a_crescent(self):
+        self.assertAlmostEqual(gm.wing_rise(0.0), 1.0)
+        self.assertAlmostEqual(gm.wing_rise(100.0), 0.0)
+        self.assertAlmostEqual(gm.wing_rise(-40.0), gm.wing_rise(40.0))
+        self.assertGreater(gm.wing_rise(30.0), gm.wing_rise(60.0))
 
 
 class DrapePilot(Period17):

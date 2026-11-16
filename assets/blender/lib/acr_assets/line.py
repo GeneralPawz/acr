@@ -152,6 +152,7 @@ def make(root, name, s):
     if build.get("garments"):
         # Sewing patterns draped on the body (docs/clothing.md); shoes over a last.
         from . import drape, mbody
+        from . import garments as gm
 
         ch.shoes = ch.add("clothes", mbody.shoes(ch.arm, ch.flesh, f"{name}.footwear", ch.prefix, key="shoes"),
                           "shoes", symmetric=True)
@@ -159,9 +160,14 @@ def make(root, name, s):
         patterns = {"coat": _coat_with(s["lapels"])} if s["lapels"] != "facings" else None
         # The stand collar, stock and cuffs as closed bands (`drape.tailored`, #523).
         trim = build.get("tailored", True) and "coat" in (build.get("drape") or gm_order())
-        made = drape.dress(ch, report=ch.drape_report, patterns=patterns, drop=drape.TRIM_PANELS if trim else ())
+        # The doublet's tabs, wings and the shirt's wristbands as closed pieces (`drape.doublet17`, #523).
+        trim17 = build.get("tailored", True)
+        made = drape.dress(ch, report=ch.drape_report, patterns=patterns,
+                           drop=(drape.TRIM_PANELS if trim else ()) + (gm.TABS17 if trim17 else ()))
         if trim:
             ch.drape_report["tailored"] = drape.tailored(ch, made)
+        if trim17 and "dsleeve" in made.values():
+            ch.drape_report["doublet17"] = drape.doublet17(ch, made)
         cloth = [o for o in ch.layers["clothes"] if o.name in made]
         drape.hide_skin(ch, cloth)
         # Covered under-layers keep a margin below the layers on them (docs/clothing.md, "Layers").
@@ -178,7 +184,7 @@ def make(root, name, s):
             for o in fixed:
                 if made[o.name] == inner:
                     drape.hide_under(ch, o, [x for x in fixed if made[x.name] in outer], depth)
-        surf = drape.surface(cloth, f"{name}.belt_surface")
+        surf = drape.surface([o for o in cloth if not o.get("acr_no_strap")], f"{name}.belt_surface")
         drape.buttons(ch, cloth, name)
         offsets = tuple(build.get("strap_offsets", (0.014, 0.018)))
     else:
