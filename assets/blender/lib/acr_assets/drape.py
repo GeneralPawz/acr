@@ -1513,7 +1513,7 @@ def dress(ch, garments=gm.ORDER, report=None, patterns=None, over=(), post_weld=
         garments = tuple(plan)
     body = Body(ch)
     ch.drape_body = body
-    ch.trim_seams = {}
+    ch.trim_seams, ch.trim_keys = {}, {}
     uni = gm.uniform(body.m, garments, patterns)
     colliders = [ch.flesh] + ([ch.shoes] if getattr(ch, "shoes", None) else []) + list(over)
     for o in colliders:
@@ -1647,11 +1647,22 @@ def dress(ch, garments=gm.ORDER, report=None, patterns=None, over=(), post_weld=
             bm = bmesh.new()
             bm.from_mesh(obj.data)
             lay = bm.faces.layers.int.get("panel")
+            ids = set()
             for n in dropped:
                 i = names.index(n)
+                if panels[n].tack:
+                    # An inlay (the lapel) stays in its base panel's cloth; its place (every
+                    # vertex) and its material key are kept for the authored panel.
+                    ch.trim_seams[n] = [tuple(v.co) for v in bm.verts if any(f[lay] == i for f in v.link_faces)]
+                    ch.trim_keys[n] = panels[n].key
+                    base_i = names.index(panels[n].tack)
+                    for f in bm.faces:
+                        if f[lay] == i:
+                            f[lay] = base_i
+                    continue
                 ch.trim_seams[n] = [tuple(v.co) for v in bm.verts
                                     if any(f[lay] == i for f in v.link_faces) and any(f[lay] != i for f in v.link_faces)]
-            ids = {names.index(n) for n in dropped}
+                ids.add(i)
             bmesh.ops.delete(bm, geom=[f for f in bm.faces if f[lay] in ids], context="FACES")
             bmesh.ops.delete(bm, geom=[v for v in bm.verts if not v.link_faces], context="VERTS")
             bm.to_mesh(obj.data)
@@ -2413,7 +2424,8 @@ TRIM_PANELS = gm.TRIM_PANELS
 TRIM_N = 32  # points round a band
 COLLAR = {"height": (0.022, 0.030), "top": (0.030, 0.105), "over": 0.014, "out": 0.007, "gap": 0.011, "thickness": 0.003}
 STOCK = {"gap": 0.004, "below": 0.028, "above": 0.010, "thickness": 0.0015}
-CUFF = {"depth": 0.105, "past": 0.008, "clear": 0.004, "flare": 0.007, "thickness": 0.004}
+CUFF = {"depth": 0.105, "past": -0.010, "clear": 0.007, "flare": 0.006, "thickness": 0.004, "round": 0.004, "ramp": 0.05}
+LAPEL = {"width": (0.050, 0.085), "middle": 0.006, "reach": 0.08, "rows": 24, "cols": 6, "off": 0.004, "thickness": 0.003, "smooth": 6}
 
 
 def _band(ch, label, key, rings, thickness, weights, closed=True):
@@ -2578,9 +2590,26 @@ def tailored(ch, made):
                         ds.append((loc - c0).length)
             if not ds:
                 continue
-            r = min(max(ds), float(np.median(ds)) + 0.008) + k["clear"]
+            # The sleeve end made round inside the cuff (no fold of it wider than the median
+            # + `round`, eased in over `ramp` above the cuff) and ending at the cuff's end.
+            med = float(np.median(ds))
+            end = (wrist - head).length + k["past"]
+            for o in sleeves:
+                for v in o.data.vertices:
+                    rel = o.matrix_world @ v.co - head
+                    t = rel.dot(axis)
+                    if t < end - k["depth"] - k["ramp"] or t > end + 0.08:
+                        continue
+                    rad = rel - axis * t
+                    if rad.length > 0.12:
+                        continue
+                    lim = med + k["round"] + 0.03 * max(0.0, (end - k["depth"] - t) / k["ramp"])
+                    rn = rad * (min(rad.length, lim) / rad.length) if rad.length > 1e-6 else rad
+                    v.co = o.matrix_world.inverted() @ (head + axis * min(t, end - 0.003) + rn)
+                o.data.update()
+            r = med + k["clear"]
             rings = [[wrist + axis * t + (u * math.cos(a) + w * math.sin(a)) * (r + k["flare"] * f) for a in ts]
-                     for t, f in ((k["past"], 0.0), (-k["depth"] * 0.5, 0.5), (-k["depth"], 1.0))]
+                     for t, f in ((k["past"], 0.0), (k["past"] - k["depth"] * 0.5, 0.5), (k["past"] - k["depth"], 1.0))]
             bone = P + f"forearm_{side}"
             cuff = _band(ch, f"cuff_{side}", "facings", rings, k["thickness"],
                          lambda ob, bone=bone: [{bone: 1.0} for _ in ob.data.vertices])
@@ -2588,6 +2617,65 @@ def tailored(ch, made):
             rows[side] = {"radius_mm": round(1000 * r, 1), "sleeve_max_mm": round(1000 * max(ds), 1),
                           "sleeve_median_mm": round(1000 * float(np.median(ds)), 1)}
         rep["cuffs"] = rows
+    lap = ch.trim_seams.get("lapel") or []
+    if len(lap) >= 12 and sleeves:
+        # Lapels: authored panels with straight edges on the coat front as draped.
+        k = LAPEL
+        verts, polys = [], []
+        for o in sleeves:
+            base = len(verts)
+            verts += [o.matrix_world @ v.co for v in o.data.vertices]
+            polys += [[base + i for i in p.vertices] for p in o.data.polygons]
+        tree = BVHTree.FromPolygons(verts, polys)
+        z0, z1, inner, outer = gm.lapel_edges([(abs(x), y, z) for x, y, z in lap], k["width"])
+        # Hooked at the top of the chest, the fronts meet: neither lapel crosses the middle.
+        outer = tuple(o + max(0.0, k["middle"] - i) for i, o in zip(inner, outer))
+        inner = tuple(max(i, k["middle"]) for i in inner)
+        R, C = k["rows"], k["cols"]
+        key = ch.trim_keys.get("lapel", "facings")
+        rows = {}
+        for side, sx in (("l", 1.0), ("r", -1.0)):
+            X, Z, Y = np.zeros((R + 1, C + 1)), np.zeros((R + 1, C + 1)), np.full((R + 1, C + 1), np.nan)
+            # Rays start just in front of the lapel's place as draped: not on the sleeve or cuff.
+            own = np.array([p for p in lap if p[0] * sx > 0.0] or lap)
+            y_from = []
+            for j in range(R + 1):
+                near = own[np.abs(own[:, 2] - (z0 + (z1 - z0) * j / R)) < 0.03]
+                y_from.append(float((near if len(near) else own)[:, 1].min()) - 0.03)
+            for j in range(R + 1):
+                f = j / R
+                for i in range(C + 1):
+                    g = i / C
+                    xi, xo = inner[0] + (inner[1] - inner[0]) * f, outer[0] + (outer[1] - outer[0]) * f
+                    X[j, i], Z[j, i] = sx * (xi + (xo - xi) * g), z0 + (z1 - z0) * f
+                    hit = tree.ray_cast(Vector((X[j, i], y_from[j], Z[j, i])), Vector((0.0, 1.0, 0.0)))[0]
+                    # A ray through the open front finds the coat's back: a miss.
+                    if hit is not None and hit.y < y_from[j] + k["reach"]:
+                        Y[j, i] = hit.y
+            if np.isnan(Y).all():
+                continue
+            miss = int(np.isnan(Y).sum())
+            for _ in range(R + C):  # rays past the front edge: from their neighbours
+                hole = np.isnan(Y)
+                if not hole.any():
+                    break
+                pad = np.pad(Y, 1, constant_values=np.nan)
+                nb = np.stack([pad[:-2, 1:-1], pad[2:, 1:-1], pad[1:-1, :-2], pad[1:-1, 2:]])
+                ok = ~np.isnan(nb)
+                fill = hole & ok.any(axis=0)
+                Y[fill] = (np.where(ok, nb, 0.0).sum(axis=0) / np.maximum(ok.sum(axis=0), 1))[fill]
+            raw = Y.copy()
+            for _ in range(k["smooth"]):  # even, and never under the cloth
+                pad = np.pad(Y, 1, mode="edge")
+                Y = np.minimum((pad[:-2, 1:-1] + pad[2:, 1:-1] + pad[1:-1, :-2] + pad[1:-1, 2:] + 4.0 * Y) / 8.0, raw)
+            Y -= k["off"]
+            cols = range(C + 1) if sx > 0 else range(C, -1, -1)  # faces out (-y)
+            rings = [[(X[j, i], Y[j, i], Z[j, i]) for i in cols] for j in range(R + 1)]
+            lp = _band(ch, f"lapel_{side}", key, rings, k["thickness"], _weights_from(sleeves), closed=False)
+            made[lp.name] = key
+            rows[side] = {"missed_rays": miss, "lift_mm_max": round(1000 * float((raw - k["off"] - Y).max()), 1)}
+        rep["lapels"] = {"z": [round(z0, 3), round(z1, 3)], "inner_x": [round(x, 3) for x in inner],
+                         "outer_x": [round(x, 3) for x in outer], **rows}
     return rep
 
 

@@ -45,7 +45,10 @@ EASE = {"waistcoat": 8.0, "coat": 20.0, "breeches": 0.5, "gaiters": 1.0, "shirt"
 
 # Wool broadcloth, linen and canvas: thickness (m) of the solidified cloth, sim settings.
 CLOTH = {
-    "coat": {"thickness": 0.0030, "mass": 0.45, "tension": 18.0, "bending": 2.0, "shrink": 0.0, "margin": 0.006},
+    # Broadcloth at 1.5 cm (`registry.SPACING`, #523): stiff, every seam shut (`close`), the sim's
+    # triangle-sized crumple smoothed away (`smooth`: Taubin passes, `drape.dress`).
+    "coat": {"thickness": 0.0030, "mass": 0.45, "tension": 18.0, "bending": 2.0, "shrink": 0.0, "margin": 0.006,
+             "close": 0.13, "smooth": 10},
     "waistcoat": {"thickness": 0.0020, "mass": 0.30, "tension": 15.0, "bending": 0.8, "shrink": 0.05, "margin": 0.004},
     "breeches": {"thickness": 0.0020, "mass": 0.30, "tension": 15.0, "bending": 0.6, "shrink": 0.08, "margin": 0.003},
     "gaiters": {"thickness": 0.0020, "mass": 0.30, "tension": 20.0, "bending": 1.0, "shrink": 0.04, "margin": 0.003},
@@ -349,8 +352,65 @@ def coat(m=MEASURE):
 
 
 # Coat panels sewn and draped with the coat, then replaced by closed bands
-# (`drape.tailored`, #523): nothing may be tacked onto them.
-TRIM_PANELS = ("collar", "cuff")
+# (`drape.tailored`, #523): nothing may be tacked onto them. The lapel, an inlay of the
+# front, stays there as coat cloth under the authored lapel.
+TRIM_PANELS = ("collar", "cuff", "lapel")
+
+
+def lapel_edges(pts, width=(0.050, 0.085), bins=10):
+    """The straight edges of a lapel from its draped place `pts` [(x, y, z)] (one side, x > 0):
+    least-squares lines x(z) through the innermost and the outermost point of each of `bins`
+    height bands, the width kept within `width` (m). Returns (z0, z1, inner, outer), `inner`
+    and `outer` as (x at z0, x at z1)."""
+    z0, z1 = min(p[2] for p in pts), max(p[2] for p in pts)
+    h = (z1 - z0) or 1.0
+    lo, hi = {}, {}
+    for x, _y, z in pts:
+        b = min(bins - 1, int((z - z0) / h * bins))
+        lo[b], hi[b] = min(lo.get(b, x), x), max(hi.get(b, x), x)
+
+    def line(d):
+        ks = sorted(d)
+        t = [(k + 0.5) / bins for k in ks]
+        mt, mx = sum(t) / len(t), sum(d[k] for k in ks) / len(ks)
+        den = sum((a - mt) ** 2 for a in t)
+        sl = sum((a - mt) * (d[k] - mx) for a, k in zip(t, ks)) / den if den else 0.0
+        return mx - sl * mt, mx + sl * (1.0 - mt)
+
+    inner, outer = line(lo), line(hi)
+    outer = tuple(i + min(max(o - i, width[0]), width[1]) for i, o in zip(inner, outer))
+    return z0, z1, inner, outer
+
+
+def strap_rows(hits, offset, sign, passes=4):
+    """Edge depths (y) of a flat strap from the surface depths `hits` (rows along the run,
+    each the y of the rays across the width, None where a ray missed): per row the straight
+    line through the hits, lifted until no hit stands out of it; then both edges low-passed
+    along the run (`passes`) without ever sinking under that line. `sign`: -1 the front (out
+    is -y), 1 the back. Returns [(y at the first ray, y at the last ray) or None] per row."""
+    rows = []
+    for row in hits:
+        pts = [(k, y) for k, y in enumerate(row) if y is not None]
+        if len(pts) < 2:
+            rows.append(None)
+            continue
+        n, m = len(row) - 1, len(pts)
+        mk, my = sum(k for k, _ in pts) / m, sum(y for _, y in pts) / m
+        den = sum((k - mk) ** 2 for k, _ in pts)
+        slope = sum((k - mk) * (y - my) for k, y in pts) / den if den else 0.0
+        lift = max(sign * (y - (my + slope * (k - mk))) for k, y in pts)
+        y0, y1 = (my + slope * (e - mk) + sign * (lift + offset) for e in (0, n))
+        rows.append((y0, y1))
+    for e in (0, 1):
+        idx = [i for i, r in enumerate(rows) if r is not None]
+        raw = [rows[i][e] for i in idx]
+        cur = list(raw)
+        for _ in range(passes):
+            blur = [(cur[max(i - 1, 0)] + 2.0 * cur[i] + cur[min(i + 1, len(cur) - 1)]) / 4.0 for i in range(len(cur))]
+            cur = [sign * max(sign * b, sign * r) for b, r in zip(blur, raw)]
+        for i, y in zip(idx, cur):
+            rows[i] = (y, rows[i][1]) if e == 0 else (rows[i][0], y)
+    return rows
 
 
 def waistcoat(m=MEASURE):

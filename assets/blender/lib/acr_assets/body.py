@@ -19,6 +19,7 @@ from mathutils.bvhtree import BVHTree
 from mathutils.geometry import intersect_point_line
 
 from . import armature as am
+from . import garments
 from . import rig
 
 
@@ -815,15 +816,39 @@ def orient_outward(obj, arm_obj, bones=rig.BODY_BONES):
     me.update()
 
 
-def strap(arm_obj, name, surface, a, b, width, offset, samples=12, bones=rig.BODY_BONES):
+def strap(arm_obj, name, surface, a, b, width, offset, samples=12, bones=rig.BODY_BONES, flat=False, thickness=0.003):
     """A belt over `surface` (rest mesh) along the line a-b in the XZ plane, front and back:
-    rays along Y find the surface, the ribbon sits `offset` above it; smooth weights."""
+    rays along Y find the surface, the ribbon sits `offset` above it; smooth weights.
+    `flat` (#523, over draped cloth): the belt is straight across its width and even along
+    its run (`strap_rows`: it bridges folds instead of following them, so its edges are
+    straight and no cloth comes through), one band over the shoulder from hip to hip,
+    `thickness` m thick with closed rims."""
     me = surface.data
     tree = BVHTree.FromPolygons([v.co for v in me.vertices], [p.vertices for p in me.polygons])
     along = (b - a).normalized()
     side = along.cross(Vector((0, 1, 0))).normalized() * (width / 2)
     verts, faces = [], []
-    for sign in (-1, 1):  # front (-Y), back (+Y)
+    if flat:
+        across = 5
+        runs = {}
+        for sign in (-1, 1):
+            hits = []
+            for i in range(samples + 1):
+                c = a + (b - a) * (i / samples)
+                row = []
+                for k in range(across):
+                    p = c + side * (2.0 * k / (across - 1) - 1.0)
+                    hit = tree.ray_cast(Vector((p.x, sign * 1.0, p.z)), Vector((0, -sign, 0)))[0]
+                    row.append(None if hit is None else hit.y)
+                hits.append(row)
+            ys = garments.strap_rows(hits, offset, sign)
+            runs[sign] = [(a + (b - a) * (i / samples), y) for i, y in enumerate(ys) if y is not None]
+        # Up the back, over the shoulder (`a`), down the front.
+        band = [(c, y) for c, y in reversed(runs[1])] + runs[-1]
+        for c, (y0, y1) in band:
+            verts += [(c.x - side.x, y0, c.z - side.z), (c.x + side.x, y1, c.z + side.z)]
+        faces = [(2 * i, 2 * i + 1, 2 * i + 3, 2 * i + 2) for i in range(len(band) - 1)]
+    for sign in (() if flat else (-1, 1)):  # front (-Y), back (+Y)
         row = []
         for i in range(samples + 1):
             c = a + (b - a) * (i / samples)
@@ -847,8 +872,18 @@ def strap(arm_obj, name, surface, a, b, width, offset, samples=12, bones=rig.BOD
     m = bpy.data.meshes.new(name)
     m.from_pydata(verts, [], faces)
     obj = link(bpy.data.objects.new(name, m))
+    if flat and thickness:
+        mod = obj.modifiers.new("acr_strap", "SOLIDIFY")
+        mod.thickness, mod.offset, mod.use_rim, mod.use_even_offset = thickness, 1.0, True, True
+        solid = bpy.data.meshes.new_from_object(obj.evaluated_get(bpy.context.evaluated_depsgraph_get()))
+        obj.modifiers.remove(mod)
+        obj.data = solid
+        bpy.data.meshes.remove(m)
+        m = solid
+        m.name = name
     hs = skin_weights(obj, arm_obj, bones)
-    orient_outward(obj, arm_obj, bones)
+    if not flat:
+        orient_outward(obj, arm_obj, bones)
     attr = m.attributes.new("part", "INT", "POINT")
     for i, d in enumerate(attr.data):
         d.value = rig.part_of_bone(hs[i])

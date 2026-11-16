@@ -95,13 +95,49 @@ class TailoredTrim(unittest.TestCase):
         for n in gm.TRIM_PANELS:
             self.assertIn(n, panels)
             self.assertFalse(panels[n].skirt)
-            self.assertIsNone(panels[n].tack)
+            if panels[n].tack:
+                # An inlay stays as cloth of its base panel, which is kept (`drape.dress`).
+                self.assertNotIn(panels[n].tack, gm.TRIM_PANELS)
+                continue
             # Each is sewn to a kept panel: that seam is what the band is fitted to.
             self.assertTrue(any({l[0] for l in s.a} == {n} and not {l[0] for l in s.b} & set(gm.TRIM_PANELS)
                                 for s in seams), n)
         self.assertFalse([p.name for p in panels.values() if p.tack in gm.TRIM_PANELS])
-        # The lapel keeps the facings key alive without them (the default coat).
-        self.assertIn("facings", {p.key for n, p in panels.items() if n not in gm.TRIM_PANELS})
+
+
+class TailoredPanels(unittest.TestCase):
+    """Synthetic data: the authored lapel's edges and the flat strap (#523)."""
+
+    def test_lapel_edges_are_straight_through_a_ragged_trace(self):
+        pts = []
+        for j in range(41):
+            z = 1.0 + 0.4 * j / 40
+            jag = 0.004 * (-1) ** j
+            pts += [(0.02 + 0.05 * (z - 1.0) + max(jag, 0.0), -0.1, z), (0.09 + 0.10 * (z - 1.0) - max(jag, 0.0), -0.1, z)]
+        z0, z1, inner, outer = gm.lapel_edges(pts)
+        self.assertAlmostEqual(z0, 1.0)
+        self.assertAlmostEqual(z1, 1.4)
+        self.assertAlmostEqual(inner[0], 0.02, delta=0.004)
+        self.assertAlmostEqual(inner[1], 0.04, delta=0.004)
+        self.assertAlmostEqual(outer[0], 0.09, delta=0.004)
+        # 9 cm wide at the top: held to the widest lapel
+        self.assertAlmostEqual(outer[1] - inner[1], 0.085)
+
+    def test_strap_rows_bridge_folds_and_cover_every_hit(self):
+        hits = [[-0.10, -0.10, -0.10, -0.10, -0.10] for _ in range(9)]
+        hits[4] = [-0.10, -0.10, -0.13, -0.10, -0.10]  # a fold standing out in front
+        hits[7] = [None, None, None, None, -0.10]
+        rows = gm.strap_rows(hits, 0.004, -1)
+        self.assertIsNone(rows[7])
+        for row, r in zip(hits, rows):
+            if r is not None:
+                for k, y in enumerate(row):
+                    self.assertLessEqual(r[0] + (r[1] - r[0]) * k / 4, y - 0.004 + 1e-9)
+        self.assertAlmostEqual(rows[4][0], -0.134)
+        self.assertLess(rows[3][0], -0.104)  # eased in along the run
+        back = gm.strap_rows([[0.10, 0.12, 0.14]], 0.004, 1)
+        self.assertAlmostEqual(back[0][0], 0.104)
+        self.assertAlmostEqual(back[0][1], 0.144)
 
 
 class Period17(unittest.TestCase):

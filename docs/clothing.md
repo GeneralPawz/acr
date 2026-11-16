@@ -1214,6 +1214,31 @@ the lapels are still inlays of the crumpled coat front (ragged), the cuff button
 wristbands are hidden by the cuff, and the coat's neck edge shows beside the collar at the
 shoulders.
 
+### Coat at 1.5 cm, authored lapels, fitted cuffs, flat belt (#523, second slice)
+
+- **Coat body:** `registry.SPACING["coat"]` 3.5 -> 1.5 cm (the HD path's spacing; 1 610 ->
+  7 834 sim vertices, sim 3.9 -> 16.5 s), `CLOTH["coat"]["close"] = 0.13` (every seam pair
+  merged: 250 -> 578 of 263 -> 578 welded) and `"smooth": 10` (Taubin after the weld). Shared
+  by every unit that drapes `coat` (the line family and the officers' coats).
+- **Lapels:** `TRIM_PANELS` now holds `lapel`. A dropped inlay stays as coat cloth in its
+  base panel (`dress`), its vertices go to `ch.trim_seams["lapel"]` and its key to
+  `ch.trim_keys`. `tailored` builds `lapel_l` / `lapel_r`: straight edges fitted through the
+  draped place (`garments.lapel_edges`, width 50-85 mm, not across the middle), a 24 x 6
+  grid laid 4 mm over the coat front (rays from just in front of the place, low-passed,
+  never under the cloth), 3 mm thick. `buttons` finds them like the inlays before.
+- **Cuffs:** the sleeve end is made round inside the cuff (no fold wider than the median
+  radius + 4 mm, eased in over 5 cm above it) and ends with it; the cuff's radius is the
+  median + 7 mm (EngF18: 59.5 / 57.3 -> 52.3 / 52.6 mm) and it ends 10 mm above the wrist,
+  so the shirt's wristband shows.
+- **Belts over draped cloth** (`body.strap(flat=True)`, `garments.strap_rows`; every family
+  whose straps lie on garments): 5 rays across the width, the belt straight across them and
+  lifted over every hit, both edges low-passed along the run, one band from hip over the
+  shoulder to hip, 3 mm thick with rims. It bridges folds instead of following them.
+- Open: the coat's side and armhole seams are still closed by the weld, not the sim (pairs
+  up to 97 mm apart at the end of the sim: puckers at the back's side seams); the fronts'
+  free edge below the lapels and the skirts' front edge at the hip are not straightened;
+  the belt stands off the waist where it bridges from the chest to the hip.
+
 ## Hems (#523)
 
 `drape.hems(ch)` runs in `Character.morphs` (every family; `drape.HEMS = True`) over each
