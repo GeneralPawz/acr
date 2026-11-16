@@ -157,6 +157,20 @@ class Geometry(unittest.TestCase):
         # The far side of a tube faces the other way: not a poke.
         self.assertFalse(ca.poke(pts[:1], -nrm[:1], pos, tri, np.zeros(len(tri), int))[0][0])
 
+    def test_inner_wall_of_a_thick_garment_is_no_poke(self):
+        # A tube with a thickness round a bone along z: the inner wall faces the bone.
+        ang = np.linspace(0.0, 2 * np.pi, 12, endpoint=False)
+        d = np.stack([np.cos(ang), np.sin(ang), np.zeros(12)], axis=1)
+        z = np.array([0.0, 0.0, 0.2])
+        outer, inner = d * 0.06 + z, d * 0.057 + z
+        a, b = np.array([[0.0, 0.0, 0.0]]), np.array([[0.0, 0.0, 0.4]])
+        self.assertFalse(ca.inner_wall(outer, d, a, b).any())
+        self.assertTrue(ca.inner_wall(inner, -d, a, b).all())
+        # A panel standing off the limb (a seam flap) faces neither way.
+        side = np.tile([0.0, 1.0, 0.0], (1, 1))
+        self.assertFalse(ca.inner_wall(np.array([[0.08, 0.0, 0.2]]), side, a, b).any())
+        self.assertEqual(ca.inner_wall(np.zeros((0, 3)), np.zeros((0, 3)), a, b).tolist(), [])
+
     def test_turned_hem_is_no_cover(self):
         # Two cloths 3 mm apart, each with its +x edge turned under by 4 mm (`drape.hems`);
         # the lower one shows 6 mm past the upper one's edge (a waistcoat in the coat's

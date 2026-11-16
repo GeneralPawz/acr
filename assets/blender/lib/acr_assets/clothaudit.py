@@ -190,6 +190,15 @@ class Model:
     def mesh_nodes(self):
         return [(i, n) for i, n in enumerate(self.nodes) if "mesh" in n]
 
+    def bone_segments(self, world):
+        """(heads, tails) of the skins' bones in a pose: each joint to its parent joint."""
+        joints = sorted({j for sk in self.doc.get("skins", []) for j in sk["joints"]})
+        js = set(joints)
+        pairs = [(self.parent[j], j) for j in joints if self.parent.get(j) in js]
+        if not pairs:
+            return np.zeros((0, 3)), np.zeros((0, 3))
+        return (np.array([world[a][:3, 3] for a, _b in pairs]), np.array([world[b][:3, 3] for _a, b in pairs]))
+
     def geometry(self, ni):
         """(raw positions, triangles, joints, weights, material keys) of a mesh node, its
         primitives joined. Positions are as stored (quantised or float)."""
@@ -533,6 +542,29 @@ def vertex_normals(pos, tri):
     for c in range(3):
         np.add.at(out, tri[:, c], n)
     return out / np.maximum(np.linalg.norm(out, axis=1, keepdims=True), 1e-15)
+
+
+def inner_wall(points, normals, seg_a, seg_b, facing=0.3):
+    """Mask of the vertices that face the body: the normal points at the nearest point of the
+    skeleton (segments `seg_a` -> `seg_b`, one per bone). On a garment with a thickness
+    (closed walls and rims) these are its inner wall, which lies under its own outer wall:
+    it is not seen and cannot poke (#523: a legging's inner wall lies "outside" the inner
+    wall of the garter round it along their shared inward normal)."""
+    if len(points) == 0 or len(seg_a) == 0:
+        return np.zeros(len(points), bool)
+    ab = seg_b - seg_a
+    den = np.maximum(np.sum(ab * ab, axis=1), 1e-12)
+    out = np.zeros(len(points), bool)
+    for i in range(0, len(points), 2048):
+        p = points[i:i + 2048]
+        t = np.clip(np.einsum("nsk,sk->ns", p[:, None, :] - seg_a[None], ab) / den, 0.0, 1.0)
+        foot = seg_a[None] + t[..., None] * ab[None]
+        d = foot - p[:, None, :]
+        best = np.sum(d * d, axis=2).argmin(axis=1)
+        to = d[np.arange(len(p)), best]
+        to /= np.maximum(np.linalg.norm(to, axis=1, keepdims=True), 1e-12)
+        out[i:i + 2048] = np.sum(to * normals[i:i + 2048], axis=1) > facing
+    return out
 
 
 def poke(points, normals, pos, tri, owner):
@@ -889,6 +921,7 @@ def audit(path, unit=None, shape=None):
         row["seam_cm"], row["seam_gap_mm"] = round(seam[0] * 100.0, 1), round(seam[1] * 1000.0, 1)
 
     # Layers: every garment, the skin and the caps against what lies above them.
+    segs = {"stand": m.bone_segments(stand_w), "walk": m.bone_segments(walk_w)}
     for pose in ("stand", "walk"):
         cover = [p for p in parts if p["role"] in ("garment", "cover")]
         for p in parts:
@@ -911,6 +944,9 @@ def audit(path, unit=None, shape=None):
             row = rows[p["key"]]
             mask, mm, own, covered = poke(p[pose], nrm, pos, tri, owner)
             mask, covered = mask & ~p["rim_vert"], covered & ~p["rim_vert"]
+            if p["role"] == "garment":  # the inner wall of a thick garment is under its own cloth
+                inner = inner_wall(p[pose], nrm, *segs[pose])
+                mask, covered = mask & ~inner, covered & ~inner
             mm = np.where(mask, mm, 0.0)
             row["poke_" + pose] = int(mask.sum())
             row["poke_mm"] = round(max(row["poke_mm"], float(mm.max()) if len(mm) else 0.0), 1)

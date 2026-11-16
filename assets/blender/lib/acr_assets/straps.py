@@ -100,17 +100,20 @@ def clear_folds(strap, surf, offset, k=5):
     strap.data.update()
 
 
-def carry(ch, obj_name, frm, to, width=0.035, key="belts", offset=CARRY_OFFSET, samples=24):
+def carry(ch, obj_name, frm, to, width=0.035, key="belts", offset=CARRY_OFFSET, samples=24, flat=False):
     """A carrying strap from `frm` to `to` (XZ line, front and back like `belt`) laid over the
     outermost surface: the skin, the clothes and the belts on them, `offset` off it; it takes
     the weights of the surface under it and joins the gear layer (the item seated on it
-    afterwards rests on it)."""
+    afterwards rests on it). `flat` (#523, over authored or draped cloth): one flat band with
+    a thickness and straight edges over the shoulder `frm` (`bd.strap(flat=True)`), drawn
+    taut over what is under it instead of following it."""
     from . import drape
 
     under = [o for o in ch.layers["clothes"] if o.type == "MESH" and ch.keys.get(o.name) != "shoes"]
     surf = drape.surface([ch.flesh, *under], f"{obj_name}.surface")
     a, b = Vector((frm[0], 0.0, frm[-1])), Vector((to[0], 0.0, to[-1]))  # (x, z) or (x, y, z)
-    b = bd.strap(ch.arm, obj_name, surf, a, b, width, offset, samples=samples)
-    clear_folds(b, surf, offset)
+    b = bd.strap(ch.arm, obj_name, surf, a, b, width, offset, samples=samples, flat=flat)
+    if not flat:
+        clear_folds(b, surf, offset)
     drape.inherit_weights(b, ch, under)
     return ch.add("gear", b, key, symmetric=True)

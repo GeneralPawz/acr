@@ -3,9 +3,10 @@ pueblo.md), built on `native.py`: the same body, skin, legging and moccasin pipe
 the Southwest dress added by wrapping native's `dress`, `hair` and `kit` for the call,
 never by editing native.
 
-Southwest dress (all shells of the MakeHuman skin or modelled panels, deforming with it):
-- `kilt`: a woven cotton kilt wrapped round the hips to above the knee (a tube on the
-  skirt bones), white with a black, green and red stepped border at the hem (painter
+Southwest dress (authored cloth with a thickness since #523, docs/clothing.md "Pueblo,
+authored": `native._bodice`, `_wrap`, `_cloak`, `_belt`; shells only the wraps):
+- `kilt`: a woven cotton kilt wrapped round the hips to above the knee (`native._wrap`,
+  overlapping at the left hip, its top held by the sash or a band), white with a black, green and red stepped border at the hem (painter
   `pue_kilt`); the colour of the ground is the palette's `pue_kilt`;
 - `sash`: a woven sash at the waist (red ground, a black and green diamond band; painter
   `pue_sash`) with its end hanging at the right front;
@@ -211,36 +212,41 @@ def dress(ch, s):
     """The Southwest garments of SPEC `s` (after native's)."""
     d = s["pdress"]
     knee = ch.arm.data.bones[ch.prefix + "shin_l"].head_local.z
-    shirt = "shirt" in s["dress"]
     if "wraps" in d:
         ch.shell("wraps", "pue_wraps", lambda c, n, h, p: h in {"shin_l", "shin_r", "foot_l", "foot_r"}
                  and 0.07 < c.z < knee - 0.02, 0.011)
+    # Authored (#523; the shells left an arch-shaped hole at the jerkin's belly, a jagged kilt
+    # top with skin at the hips and a cloak open over the belly). From the skin out: tunic or
+    # jerkin (closed, ending at the waist), the kilt wrapped over its lower edge, the sash
+    # (or a narrow band) holding the kilt's top, the cloak or blanket over all, the bandolier
+    # as a flat band on top.
     if "tunic" in d:
-        ch.shell("tunic", "pue_tunic", lambda c, n, h, p: h in native.TORSO and 0.90 < c.z < 1.50
-                 and not (h in {"clavicle_l", "clavicle_r"} and abs(c.x) > 0.17), 0.012)
+        native._bodice(ch, "tunic", "pue_tunic", sleeves=False)
     if "jerkin" in d:
-        sleeves = s["sleeves"]
-        ch.shell("jerkin", "pue_jerkin", lambda c, n, h, p: (h in native.TORSO and 0.86 < c.z < 1.50
-                                                              and not (c.y < -0.05 and abs(c.x) < 0.035 and c.z < 1.40))
-                 or (sleeves and h in native.ARMS and c.z > 1.02), 0.026 if shirt else 0.014)
+        native._bodice(ch, "jerkin", "pue_jerkin", sleeves=s["sleeves"])
     if "kilt" in d:
-        kilt = bd.tube(ch.arm, f"{ch.name}.kilt", 1.01, KILT_HEM, (0.158, 0.122), (0.205, 0.165),
-                       columns=rig.SKIRT_COLUMNS, prefix=ch.prefix)
-        ch.add("clothes", kilt, "pue_kilt", symmetric=True)
+        native._wrap(ch, "kilt", "pue_kilt", 1.035, KILT_HEM)
     if "sash" in d:
-        off = 0.040 if "kilt" in d else (0.026 if shirt else 0.014)
-        ch.shell("sash", "pue_sash", lambda c, n, h, p: h in {"hips", "spine"} and 0.96 < c.z < 1.06, off)
+        native._belt(ch, 0.008, over=native._under(ch), z=(0.972, 1.000, 1.030, 1.058), thickness=0.005,
+                     name="sash", key="pue_sash")
         ch.add("clothes", _strip(ch, "sash_end", -0.07, -0.135 - (0.03 if "kilt" in d else 0.0), 1.00, 0.66, 0.07, 0.04),
                "pue_sash")
-    if "bandolier" in d:
-        ch.shell("bandolier", "pue_sash", lambda c, n, h, p: h in native.TORSO | {"upperarm_l"}
-                 and abs((c.z - 1.0) - 0.75 * (c.x + 0.17)) < 0.045 and c.z > 0.94, 0.040)
+    elif "kilt" in d:
+        native._belt(ch, 0.006, over=native._under(ch), z=(0.996, 1.018, 1.042), thickness=0.004,
+                     name="kilt_band", key="pue_sash")
+    if "cloak" in s["dress"]:
+        native._cloak(ch, "cloak", "pelt", 0.90, thickness=0.008)
     if "blanket" in d:
-        # A blanket round the shoulders and down the back to the knee, open in front.
-        ch.shell("blanket", "pue_blanket", lambda c, n, h, p: (h in native.TORSO and 0.80 < c.z < 1.55
-                                                                and (c.y > -0.03 or abs(c.x) > 0.15 or c.z > 1.42))
-                 or (h in {"upperarm_l", "upperarm_r"}) or (h in {"thigh_l", "thigh_r"} and c.y > 0.0 and c.z > 0.55),
-                 0.040)
+        native._cloak(ch, "blanket", "pue_blanket", 0.80)
+    if "bandolier" in d:
+        from . import drape, straps
+
+        under = native._under(ch)
+        surf = drape.surface([ch.flesh, *under], f"{ch.name}.bandolier_surface")
+        b = bd.strap(ch.arm, f"{ch.name}.bandolier", surf, straps.LEFT_SHOULDER, straps.RIGHT_HIP, 0.09, 0.004,
+                     samples=28, flat=True, thickness=0.004)
+        drape.inherit_weights(b, ch, under)
+        ch.add("clothes", b, "pue_sash", symmetric=True)
 
 
 def _bead_string(bm, n, half_w, drop, y0, z0, size):
@@ -333,7 +339,8 @@ class hooks:
         dress0, hair0, kit0 = self.saved[:3]
 
         def d(ch, s):
-            dress0(ch, s)
+            # The cloak is Pueblo's own (`native._cloak`, over the kilt), not native's shell.
+            dress0(ch, dict(s, dress=tuple(x for x in s["dress"] if x != "cloak")))
             dress(ch, s)
 
         def h(ch, s):

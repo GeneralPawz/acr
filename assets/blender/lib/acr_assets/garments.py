@@ -1006,6 +1006,96 @@ def band(m=MEASURE, garment="band", key="sash", width=10.0, ease=6.0, lift=-7.0)
     return P, [Seam([("band", "start", True)], [("band", "end")], garment, close=0.05)]
 
 
+# -- authored native legwear (#523): the shapes `native._leggings`, `_apron` build from ----
+
+def legging_top(theta, inner, outer, power=1.5):
+    """Height (m) of a side-seam legging's top edge at angle `theta` round the leg (0 = the
+    outer side, where it is tied to the belt): cut on the slant from `outer` down to `inner`
+    at the inside of the thigh."""
+    return inner + (outer - inner) * (0.5 + 0.5 * math.cos(theta)) ** power
+
+
+def loosen(r, passes=2, closed=False):
+    """Radii along a line (or round a ring, `closed`) loosened: a value lower than the mean
+    of its neighbours is raised to it, none is lowered, so a tube bridges the hollows of the
+    limb (behind the knee, above the ankle) instead of following them like paint."""
+    r, n = list(r), len(r)
+    for _ in range(passes):
+        prev = r[:]
+        for i in range(n):
+            a = prev[(i - 1) % n] if closed else prev[max(i - 1, 0)]
+            b = prev[(i + 1) % n] if closed else prev[min(i + 1, n - 1)]
+            r[i] = max(prev[i], 0.5 * (a + b))
+    return r
+
+
+def plumb(ys, out=1.0):
+    """A hanging line from top to bottom: each point at least as far out (`out` +1: larger
+    is further out; -1: smaller) as every point above it, so cloth falls straight from the
+    furthest thing it lies on. None (nothing under it) keeps the line."""
+    res, cur = [], None
+    for y in ys:
+        if y is not None:
+            cur = y if cur is None else (max(cur, y) if out > 0 else min(cur, y))
+        res.append(cur)
+    first = next((y for y in res if y is not None), 0.0)
+    return [first if y is None else y for y in res]
+
+
+def wrap_ring(n, overlap=0.5, start=-0.25, lift=0.008, ramp=0.35):
+    """The run of a wrapped cloth round the body (a kilt): `n` + 1 points [(angle, lift)]
+    from `start` (rad; 0 is the wearer's left, -pi/2 the front) once round and `overlap`
+    rad further, so the outer end lies over the inner one at one hip. `lift` m is how far
+    the cloth stands off what it lies on: 0 on the first turn, rising smoothly over the
+    last `ramp` rad before the turn is full, `lift` over the whole overlap."""
+    out = []
+    for i in range(n + 1):
+        a = (2.0 * math.pi + overlap) * i / n
+        t = min(max((a - (2.0 * math.pi - ramp)) / max(ramp, 1e-6), 0.0), 1.0)
+        out.append((start + a, lift * t * t * (3.0 - 2.0 * t)))
+    return out
+
+
+def flap_follow(x, z, pivot_z, half=0.12, drop=0.36, reach=0.12, most=0.78, fall=0.3, blend=0.8):
+    """Bone shares of free-hanging cloth below the belt (a breechcloth flap, a shirt's skirt)
+    at (x across, z up): the hips above the hip joint (`pivot_z`); from `reach` m below it
+    `most` of the cloth goes with the thighs, falling off by `fall` down to `drop` m below
+    the joint (a hem swings less than the thigh), shared between the two thighs (left = +x)
+    by one cosine blend over `blend` of the `half` width, so a flap bends as one cloth in
+    the stride instead of shearing into two boards. One field for every such cloth: a flap
+    and the skirt under it move alike and cannot cross."""
+    t = min(max((pivot_z - z) / reach, 0.0), 1.0)
+    k = most * t * t * (3.0 - 2.0 * t) * (1.0 - fall * min(max((pivot_z - reach - z) / max(drop - reach, 1e-6), 0.0), 1.0))
+    s = 0.5 - 0.5 * math.cos(math.pi * min(max(0.5 + 0.5 * x / max(blend * half, 1e-6), 0.0), 1.0))
+    return {"hips": 1.0 - k, "thigh_l": k * s, "thigh_r": k * (1.0 - s)}
+
+
+def fill_ring(r, default=0.1):
+    """Radii round a closed ring with its gaps (None: the ray met nothing) filled from the
+    nearest known neighbours on both sides, linearly; `default` when none is known."""
+    n = len(r)
+    known = [i for i, x in enumerate(r) if x is not None]
+    if not known:
+        return [default] * n
+    out = list(r)
+    for i in range(n):
+        if out[i] is None:
+            a = next(k for k in range(1, n + 1) if r[(i - k) % n] is not None)
+            b = next(k for k in range(1, n + 1) if r[(i + k) % n] is not None)
+            out[i] = (r[(i - a) % n] * b + r[(i + b) % n] * a) / (a + b)
+    return out
+
+
+def hang(col, from_row):
+    """A column of radii (bottom to top) hanging free below row `from_row`: no row below it
+    is narrower than the one above, so a shirt's skirt falls from the hips instead of
+    following the thighs in."""
+    out = list(col)
+    for j in range(min(from_row, len(out) - 1) - 1, -1, -1):
+        out[j] = max(out[j], out[j + 1])
+    return out
+
+
 def side_leggings(m=MEASURE, garment="nat_leggings", key="leggings", ease=6.0, top=0.4, garter="garter"):
     """Woodland side-seam leggings of trade stroud (#307): a cloth tube from the ankle to
     `top` x the knee-to-waist length above the knee (tied up to the belt), `ease` cm looser

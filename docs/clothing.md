@@ -1383,6 +1383,123 @@ bones. Now:
   solids of the fit (the scabbard crosses the left back skirt); in the stirrups pose the
   front skirts keep the seat's angle.
 
+## Native legwear, authored (#523)
+
+`native.dress` without SPEC `drape` (Woodlands, and Plains and Pueblo through it) no longer
+cuts leggings, belt and breechcloth out of the skin as shells. Each piece is made once, with a
+thickness and closed rims (`native._solid`), and laid on what is already there by ray casts
+with a fixed offset:
+
+- **Leggings** (`native._leggings`): per leg a tube from the ankle to the upper thigh, 28
+  points round, a ring every 2.5 cm, 7 mm off skin and moccasin, loosened over the hollows of
+  the leg (`garments.loosen`), 3 mm thick. The top is cut on the slant
+  (`garments.legging_top`): 3.5 cm below the crotch inside, 10 cm above it at the outer hip,
+  where a flat thong goes up to the belt. Fitted to the left leg and mirrored. The garters
+  are a band round the tube below the knee.
+- **Side seam** (`native._seam_flap`): a 6 mm panel standing out from the tube's outer line,
+  4.4 cm wide at the ankle, 3 cm at the top, ends rounded; each row moves with its point on
+  the leg.
+- **Belt** (`native._belt`): a closed band, 4 mm thick, over skin and shirt.
+- **Breechcloth**: the strip between the legs (`native._breech_strip`, under the belt) and its
+  two ends (`native._apron`) turned over the belt and hanging plumb (`garments.plumb`) from
+  the furthest thing under them (belt, belly or seat, legging tops, the strip), 4 mm clear;
+  skinned by `garments.flap_follow` (below).
+
+The draped variants (SPEC `drape`, eight Woodlands units) and Pueblo's sash ends
+(`native._flap`) are unchanged. DelVog, audit before -> after: ragged 21-23 mm -> 0 (legging
+flaps), open seams 24 mm -> 0, legging skin holes 2 -> 0, flesh poke 52 -> 16 (stand), slivers
+0.24-0.37 -> 0.003-0.17.
+
+**Shirts** (`native._shirt`; `shirt` in Woodlands and Pueblo dress, the Plains `war_shirt`): no
+longer a skin shell (slits along the sleeves, loops at the neck), and no longer a tube with a
+yoke and sleeve tubes (a box: flat planes, square shoulders, a step at the armhole). Above the
+waist (1.02 m) the shirt is the skin's own surface (`native._skin_cloth`: the flesh welded,
+cut by planes at the waist, the neck and 3.5 cm above the wrists, the faces of trunk and arm
+bones kept), pushed out along smoothed normals by an ease that varies smoothly (1 cm at
+shoulders and chest, 3.6 cm at the waist, 1.3 cm on the sleeves), relaxed six passes and never
+closer than 0.7 of its ease; it keeps the skin's weights. Below the waist every vertex of the
+waist edge hangs plumb to the hem, pushed out only by the legwear under it. 3-4 mm thick with
+closed rims (`_solid`), the two sides shaded smooth. The war shirt's lower edge is cut into a
+fringe: strands (`plains._strands`) hanging from the clean hem ring.
+
+**The neck edge** (`native._yoke`, shirt and matchcoat): round the neck the skin is not one
+surface. The hull ends in a ragged open rim (z 1.446-1.472 on DelVog), the head's neck sinks
+into it with its own open rim, and a coarse seam of 19 edges runs over the shoulder tops
+(x to +-0.151) and the nape; a plane through that leaves teeth and a notch whichever bones
+are kept. `_yoke` cuts everything inside an upturned 16-sided pyramid round those seams away
+(1.2 cm outside and below them, widening 0.58 m per m upwards, so its sides cross shoulders,
+nape and chest and never run along them; an upright prism ran along the nape and down the
+spine's furrow) and joins each point of the clean edge left by four quads to the neck's
+surface at the cut height (neck joint + 3 cm): one closed ring. DelVog: 55 edge segments, 55
+columns; the shirt's open rims are the four cuts and nothing else (before: 59 rim points off
+every cut plane).
+
+**Matchcoat over a shirt** (`native._matchcoat`, DelVog): the same skin cloth, 1.6 cm outside
+the shirt and 6 mm thick, cut along the diagonal from the right armpit to the right of the
+neck, along the slanted lower edge above the belt and above the left elbow, on the same closed
+neck (`_yoke`), so the diagonal runs into the neck ring without a step. Without a shirt the
+matchcoat is still the shell.
+
+**Flaps in the stride:** `garments.flap_follow` is one field for all cloth hanging free below
+the belt (both flaps and the shirt's skirt, so they move alike and do not cross): the hips
+above the hip joint, from 12 cm below it 78 % with the thighs falling to 55 % at 36 cm, shared
+between the thighs by one cosine blend over 80 % of a 12 cm half width. The flaps have 16
+columns and 18 rows, hang 12 mm clear and lean 4 cm out at the hem, and no leg fringe is
+placed on the inner 15 cm of the thigh above 0.52 m. Known limit of fixed weights: the flap's
+middle follows neither thigh, so the inner side of the striding thigh still comes through it
+(DelVog, MOTION_L frame 4: a hole in the back flap, a notch in the front one).
+
+**The audit and thick pieces:** `clothaudit.inner_wall` leaves the inner wall of a garment
+(vertices whose normal points at the nearest bone) out of the poke count: along the shared
+inward normal a legging's inner wall lies "outside" the garter's. DelVog leggings 874 -> 501
+on the same glb; what is left is real layer order against `LAYER_RANK`: the legging over the
+moccasin's cuff (rank 2 over 1), the shirt (3) under the legging tops, the flaps (2) over
+the belt (7). On the build side `LAYER_RANK` decides which layer `drape.settle` pushes under
+which, and feeds the audit. The game reads its own copy (`acr_render::layers::layer_rank`,
+kept equal by `test_layer_ranks_match_the_game`): `model.rs` gives every material a depth
+bias of `LAYER_BIAS` (1 mm) x rank, so the belt draws 5 mm nearer the camera than a
+breechcloth flap; the flap's outer side lies 8 mm outside the belt (4 mm clear, 4 mm
+thick), which leaves 3 mm. `model_layers` uses the same ranks for its poking and crossing
+counts.
+
+**Straps over the authored shirt** (DelKri, DelS15, DelVog, PueS15): the shot-pouch strap
+(`belt_l`) was a skin shell 26 mm out and the quiver strap (`straps.carry`) followed the
+surface row by row; both lay partly under the shirt and torn under the quiver. With a
+`shirt` in the dress `native.make` lays `belt_l` on the dressed surface (`drape.surface` of
+skin and clothes, `ch.strap_under`, 4 mm off) and `native.kit` passes `flat=True` to
+`straps.carry`: one flat band with a thickness, drawn taut (`body.strap(flat=True)`,
+`garments.strap_rows(taut=True)`), as the line infantry's cross belt; horn, pouch and quiver
+are seated on it afterwards (`gear.seat`).
+
+**Pueblo, authored** (`pueblo.dress`; PueVog, PueKri, PueSha, PueLut, PueS15): no shells but
+wraps and the sash end. From the skin out:
+
+- **Jerkin and tunic** (`native._bodice`): the shirt's skin cloth on the closed neck
+  (`_yoke`), closed down the front, cut at the waist (0.99 m, under the kilt's top) and above
+  the wrists, or sleeveless at an upright plane 5 mm inside the shoulder joint (a plane
+  across the arm also slices the flank; confined to the arm it left 47 rim points off the
+  cut). Over a shirt it lies 10 mm outside it.
+- **Kilt** (`native._wrap`, `garments.wrap_ring`): one cloth wrapped once round and 0.5 rad
+  further, the outer end 8 mm over the inner at the left hip; 64 columns hanging plumb from
+  1.035 m to the hem (0.62 m), 10 mm off what is under them, leaning 3 cm out at the hem,
+  4 mm thick with closed rims. Skinned `flap_follow` with `most` 0.9 and `fall` 0.15: at the
+  shirt skirt's 78-55 % the striding thigh came through the front.
+- **Sash** (`native._belt` with `name`, `key`): a closed band 0.972-1.058 m over the kilt's
+  top edge; without a sash (PueSha) a narrow band 0.996-1.042 m holds it.
+- **Cloak and blanket** (`native._cloak`): skin cloth over the layer under it and the upper
+  arms (75 %), closed at the neck ring, open in a V from 12 cm below the neck to 3.5 cm each
+  side at 1.10 m, from where the lower edge hangs plumb to the hem (0.90 / 0.80 m) over
+  kilt and sash. `_skin_cloth(split=True)` returns a loop that runs along several cuts per
+  cut. The bandolier is a flat band over the cloak (`body.strap(flat=True)`).
+
+The audit counts the kilt (rank 2) lying over shirt and jerkin (3, 4) at the waist as poke
+(PueS15 kilt 445 over the shirt); it is the worn order and hidden under the sash.
+
+Open: the matchcoat and the shaman's cloak are still shells (ragged 10 mm, open seam 25 mm);
+the shirt's shoulders are square (the yoke starts at the full shoulder width); the two
+halves of a flap shear at the middle in the stride and the Plains leg fringe comes through
+the back flap; the seam panel's rim renders pale; two slits at the seat of the back flap.
+
 ## Hems (#523)
 
 `drape.hems(ch)` runs in `Character.morphs` (every family; `drape.HEMS = True`) over each

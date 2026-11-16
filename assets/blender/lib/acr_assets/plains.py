@@ -5,8 +5,8 @@ pipeline with two hooks (`native.dress` and `native.hair` are wrapped for the ca
 restored).
 
 Plains SPEC keys (over `native.spec`'s):
-- `warshirt`: a buckskin war shirt (a shell over the trunk to the hip and the arms to the
-  wrist, key `war_shirt`) with quilled strips over the shoulders (`beads`) and down the
+- `warshirt`: a buckskin war shirt (authored, `native._shirt`: body, yoke and sleeves, the
+  lower edge cut into a fringe; key `war_shirt`) with quilled strips over the shoulders (`beads`) and down the
   top of each sleeve (`quill`);
 - `fringe`: fringe as strands (narrow hanging cards, key `fringe`), not a band: along the
   underside of the sleeves (with `warshirt`) and the outer seam of the leggings;
@@ -123,12 +123,13 @@ def fringe(ch, s):
                 pts = _seam(ch, bone, lambda c: -c.z, bins=n, t1=0.80 if bone.startswith("fore") else 0.94)
                 if pts:
                     made.append(ch.add("clothes", _strands(ch, f"fringe_{bone}", pts, Vector((0, 0.15, -1)), 0.10,
-                                                           Vector((0, 0, -0.016)), seed=len(made)), "fringe"))
+                                                           Vector((0, 0, -0.020)), seed=len(made)), "fringe"))
     if "leggings" in s["dress"]:
         for sd, side in (("l", 1.0), ("r", -1.0)):
             for bone, n in ((f"thigh_{sd}", 7), (f"shin_{sd}", 9)):
                 pts = _seam(ch, bone, lambda c, side=side: c.x * side, bins=n, t0=0.25 if bone.startswith("thigh") else 0.05)
-                pts = [(c, gs) for c, gs in pts if 0.12 < c.z < 0.78]
+                # None where the breechcloth's flaps hang (the inner and back thigh, #523).
+                pts = [(c, gs) for c, gs in pts if 0.12 < c.z < 0.78 and not (c.z > 0.52 and abs(c.x) < 0.15)]
                 if pts:
                     made.append(ch.add("clothes", _strands(ch, f"fringe_{bone}", pts, Vector((side * 0.9, 0, -1)), 0.08,
                                                            Vector((side * 0.040, 0, 0)), per=2, seed=len(made) + 7), "fringe"))
@@ -140,11 +141,14 @@ def fringe(ch, s):
 def dress(ch, s):
     """The war shirt with its quilled strips, then native's dress."""
     if s["warshirt"]:
-        ch.shell("war_shirt", "war_shirt", lambda c, n, h, p: (h in native.TORSO and 0.86 < c.z < 1.50) or h in native.ARMS
-                 and c.z > 0.0, 0.014)
+        # Authored (#523): the hide shirt as a body, yoke and sleeves with clean edges, and its
+        # lower edge cut into a fringe (strips hanging from the hem).
+        _obj, hem = native._shirt(ch, "war_shirt", "war_shirt", hem=0.86, thickness=0.004)
+        ch.add("clothes", _strands(ch, "fringe_hem", hem + hem[:1], Vector((0, 0, -1)), 0.075, Vector((0, 0, 0.004)),
+                                   per=3, width=0.009, seed=23), "fringe")
         # Quilled strips: over each shoulder (front and back) and along the top of each sleeve.
         ch.shell("shoulder_strips", "beads", lambda c, n, h, p: h in native.TORSO and 1.28 < c.z < 1.50
-                 and abs(abs(c.x) - 0.105) < 0.022, 0.019)
+                 and abs(abs(c.x) - 0.105) < 0.022, 0.024)
         ch.shell("sleeve_strips", "quill", lambda c, n, h, p: h in native.ARMS and n.z > 0.80, 0.019)
     native_dress(ch, s)
     fringe(ch, s)
