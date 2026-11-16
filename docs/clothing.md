@@ -1349,17 +1349,39 @@ bones. Now:
   is skinning only: each garment is draped once. Without `facings` the trim is coat cloth.
   The high boots stay a shell. `stats.json` has the `drape` block now.
 - **`cavalry.SKIRT_SEAT`** (in every seated pose, draped riders only): the skirt bones are
-  posed with the seat, the front columns with the thighs (-66 degrees), the back ones
-  thrown back over the cantle (84, the lower segment -14).
+  posed with the seat, the front chains forward and out with the thighs (-52, 20 degrees
+  out), each back chain out and down beside the cantle (48 degrees out, 18 back; its lower
+  segment 30 back towards the vertical along the flank).
+- **`cavalry.seat_skirts`** (eighth slice) fits skirts and turnbacks to that pose:
+  `garments.seat_weights` puts each vertex's skirt share on the chains of its own side only
+  (no blend across the front opening or the back vent; front chain before the side seam,
+  back chain behind it, blended over 8 cm; behind the seam the thigh's share goes to the
+  back chain), then every skirt vertex that, skinned into the seat, lies inside the saddle,
+  the saddlecloth, the horse or the posed thighs is moved out along the ray from the
+  saddle's axis to 20 mm over the outermost surface, the moves smoothed (3 rounds) and
+  taken back through the vertex's skinning matrix into the rest mesh. The turnbacks take
+  weights and moves from the three nearest skirt vertices. `stats.json`: `drape.seat` =
+  {`inside`, `moved_mm_max`, `turnback_inside`} (EngKOf18: 484 vertices, 146 mm, 24). The
+  kit on the saddle (portmanteau, roll, scabbard) is placed later and is not a solid here.
+- The dragoons' carbine belt is the flat strap of the foot units (`straps.belt`, 7 cm wide)
+  laid by `tailor` on the standing man; `cavalry_kit.straps` takes it over and lays only
+  the waist belt itself.
+- Officers' lace (`spec["lace"]`): `drape.tailored(lace=True)` adds a band (`drape.LACE`,
+  13 mm) round the top of each cuff and down each lapel's outer edge, key `lace`.
 - `ACR_RIDER_SHELLS=1` builds the shells as before.
 - EngKOf18, shells -> draped: man 11 041 -> 28 709 triangles, glb 6.7 -> 7.9 MB; coat 595 of
   595 pairs welded, hems 45.2 / 45.2 cm; audit coat holes 7 -> 0, cuffs ragged 29 -> 0 mm,
   lapels 10 -> 0 mm; worse: audit score 53.2 -> 75.4, `model_layers` poking 596 -> 2 240,
   crossing 332 -> 912 (EngD18 525 -> 825, 386 -> 830).
-- Open: seated, the back skirts cut through the saddle's cantle and the turnbacks tear on
-  the thighs; the skirts' sides are stretched between the front and back columns; the
-  officers' lace shells on cuffs and lapels are gone; the dragoons' kit belts
-  (`cavalry_kit.straps`) come out shredded on the draped coat's chest.
+- Seat fitted (eighth slice), previous draped build -> now: EngKOf18 `model_layers` poking
+  2 240 -> 2 461, crossing 912 -> 813; EngD18 825 -> 995, 830 -> 562. Audit `coat_skirts`
+  score 9.0 -> 25.6 (ragged 9.8 -> 12.7 mm, new flag `seam`); the lace bands count as
+  slivers (4-6 points each).
+- Open: the front skirts' front corners (with the turnbacks) bunch up on the pommel and
+  holsters instead of falling inside the knees; the skirts stand out wide from the hips
+  (stiff, 20 mm off every solid); the dragoon's scabbard, portmanteau and roll are not
+  solids of the fit (the scabbard crosses the left back skirt); in the stirrups pose the
+  front skirts keep the seat's angle.
 
 ## Hems (#523)
 

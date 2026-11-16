@@ -2787,7 +2787,10 @@ def _weights_from(objs):
     return weights
 
 
-def tailored(ch, made):
+LACE = {"width": 0.013, "off": 0.0015, "thickness": 0.002}  # officers' braid on cuff tops and lapel edges
+
+
+def tailored(ch, made, lace=False):
     """The coat's stand collar, the stock and the round cuffs as closed bands
     (docs/clothing.md "Tailored trim"), after `dress(drop=TRIM_PANELS)`.
 
@@ -2799,6 +2802,8 @@ def tailored(ch, made):
       replaces the draped strip. Moves with the skin.
     - Cuffs (`facings`): round the forearm's axis, `clear` outside the sleeve as draped
       over `depth` from the wrist, `flare` wider at the top, rigid on the forearm.
+    - `lace` (officers, palette key `lace`): a band `LACE["width"]` wide round the top of
+      each cuff and down each lapel's outer edge, `off` over them.
     Adds the objects to `made` and returns the measured report."""
     body, P = ch.drape_body, ch.prefix
     rep = {}
@@ -2920,6 +2925,14 @@ def tailored(ch, made):
             cuff = _band(ch, f"cuff_{side}", "facings", rings, k["thickness"],
                          lambda ob, bone=bone: [{bone: 1.0} for _ in ob.data.vertices])
             made[cuff.name] = "facings"
+            if lace:
+                ro = r + k["flare"] + k["thickness"] + LACE["off"]
+                top = k["past"] - k["depth"]
+                braid = _band(ch, f"cuff_lace_{side}", "lace",
+                              [[wrist + axis * t + (u * math.cos(a) + w * math.sin(a)) * ro for a in ts]
+                               for t in (top + LACE["width"], top - 0.001)], LACE["thickness"],
+                              lambda ob, bone=bone: [{bone: 1.0} for _ in ob.data.vertices])
+                made[braid.name] = "lace"
             rows[side] = {"radius_mm": round(1000 * r, 1), "sleeve_max_mm": round(1000 * max(ds), 1),
                           "sleeve_median_mm": round(1000 * float(np.median(ds)), 1)}
         rep["cuffs"] = rows
@@ -2979,6 +2992,17 @@ def tailored(ch, made):
             rings = [[(X[j, i], Y[j, i], Z[j, i]) for i in cols] for j in range(R + 1)]
             lp = _band(ch, f"lapel_{side}", key, rings, k["thickness"], _weights_from(sleeves), closed=False)
             made[lp.name] = key
+            if lace:
+                # Down the outer edge: the last strip of the lapel's grid, narrowed to the braid.
+                edge = []
+                for j in range(R + 1):
+                    a_, b_ = np.array(rings[j][-1 if sx > 0 else 0]), np.array(rings[j][-2 if sx > 0 else 1])
+                    step = np.linalg.norm(b_ - a_)
+                    b_ = a_ + (b_ - a_) * min(1.0, LACE["width"] / max(step, 1e-6))
+                    lift = np.array((0.0, -(k["thickness"] + LACE["off"]), 0.0))
+                    edge.append([tuple(b_ + lift), tuple(a_ + lift)] if sx > 0 else [tuple(a_ + lift), tuple(b_ + lift)])
+                braid = _band(ch, f"lapel_lace_{side}", "lace", edge, LACE["thickness"], _weights_from(sleeves), closed=False)
+                made[braid.name] = "lace"
             rows[side] = {"missed_rays": miss, "lift_mm_max": round(1000 * float((raw - k["off"] - Y).max()), 1)}
         cut = sum(_trim_front(o, body, z0, z1, inner, k) for o in sleeves)
         rep["lapels"] = {"z": [round(z0, 3), round(z1, 3)], "inner_x": [round(x, 3) for x in inner],

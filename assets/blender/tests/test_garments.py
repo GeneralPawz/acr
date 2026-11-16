@@ -449,6 +449,36 @@ def synthetic_pattern():
     }
 
 
+class SeatWeights(unittest.TestCase):
+    """`seat_weights`: a rider's skirt on the chains of its own side (synthetic weights)."""
+
+    W = {"rider.hips": 0.2, "rider.skirt_fl_01": 0.3, "rider.skirt_bl_01": 0.2, "rider.skirt_br_02": 0.1, "rider.thigh_l": 0.2}
+
+    def test_front_stays_on_the_front_chain_of_its_side(self):
+        w = gm.seat_weights(self.W, 0.1, -0.10, "rider.")
+        self.assertAlmostEqual(sum(w.values()), 1.0)
+        self.assertEqual({b for b in w if "skirt" in b}, {"rider.skirt_fl_01", "rider.skirt_fl_02"})
+        self.assertAlmostEqual(w["rider.thigh_l"], 0.2)
+
+    def test_back_splits_at_the_vent_and_drops_the_thigh(self):
+        for x, side in ((0.01, "l"), (-0.01, "r")):
+            w = gm.seat_weights(self.W, x, 0.12, "rider.")
+            self.assertAlmostEqual(sum(w.values()), 1.0)
+            self.assertEqual(set(w), {"rider.hips", f"rider.skirt_b{side}_01", f"rider.skirt_b{side}_02"})
+            self.assertAlmostEqual(w[f"rider.skirt_b{side}_01"], 0.7)
+
+    def test_side_seam_blends_and_keeps_four(self):
+        w = gm.seat_weights(self.W, 0.2, 0.01, "rider.")
+        self.assertLessEqual(len(w), 4)
+        self.assertAlmostEqual(sum(w.values()), 1.0)
+        self.assertIn("rider.skirt_fl_01", w)
+        self.assertIn("rider.skirt_bl_01", w)
+
+    def test_waist_seam_vertices_are_left_alone(self):
+        w = {"rider.hips": 0.6, "rider.spine": 0.4}
+        self.assertEqual(gm.seat_weights(w, 0.1, 0.1, "rider."), w)
+
+
 class Traced(unittest.TestCase):
     """`garments.traced`: acr-pattern/1 JSON graded to the body (docs/clothing.md "Traced
     patterns"), on a synthetic pattern."""

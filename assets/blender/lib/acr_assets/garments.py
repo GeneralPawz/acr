@@ -1302,3 +1302,33 @@ def pattern_path(rel):
     if not root:
         raise RuntimeError(f"traced pattern {rel!r}: ACR_SOURCES is not set (the patterns are local sources)")
     return os.path.join(root, "patterns", rel + ".json")
+
+
+def seat_weights(w, x, y, prefix="", seam_y=-0.03, blend=0.08):
+    """A skirt vertex's weights for the seat (pure): its share on the skirt bones goes to the
+    chains of its own side only (no blend across the front opening or the back vent), front
+    chain before the side seam, back chain behind it, blended over `blend` m from `seam_y`;
+    behind the seam the thigh's share goes to the back chain too (the thigh turns forward
+    under the seated man, the back skirt stays behind it). At most 4 bones, summed to 1.
+    `x`, `y`: the vertex in the rider's frame. Vertices without a skirt share are returned
+    unchanged (the waist seam stays shut)."""
+    sk = {b: v for b, v in w.items() if b[len(prefix):].startswith("skirt_")}
+    if sum(sk.values()) < 1e-4:
+        return dict(w)
+    t = min(max((y - seam_y) / blend, 0.0), 1.0)
+    fb = t * t * (3.0 - 2.0 * t)
+    side = "l" if x > 0 else "r"
+    out = {b: v for b, v in w.items() if b not in sk}
+    seg = {k: sum(v for b, v in sk.items() if b.endswith(k)) for k in ("_01", "_02")}
+    for b in [b for b in out if b[len(prefix):].startswith("thigh_")]:
+        seg["_01"] += out[b] * fb
+        out[b] *= 1.0 - fb
+    for k, v in seg.items():
+        for col, share in (("f", 1.0 - fb), ("b", fb)):
+            if v * share > 0.005:
+                out[f"{prefix}skirt_{col}{side}{k}"] = v * share
+    out = {b: v for b, v in out.items() if v > 1e-4}
+    for b in sorted(out, key=out.get)[:-4]:
+        del out[b]
+    tot = sum(out.values())
+    return {b: v / tot for b, v in out.items()}

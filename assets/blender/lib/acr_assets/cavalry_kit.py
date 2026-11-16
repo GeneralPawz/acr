@@ -278,6 +278,11 @@ def straps(ch, name, kit, origin):
     if "waist_belt" in kit:
         specs.append(("waist_belt", None, None, WAIST_W, "ring"))
     for suffix, a, b, w, kind in specs:
+        # Draped riders: the belt came with the coat, flat over it (`cavalry.tailor`).
+        worn = next((c for c in ch.layers["clothes"] if c.name == f"{name}.{suffix}"), None)
+        if worn is not None:
+            laid.append(worn)
+            continue
         # Round the waist the hanging arms (A-pose) are left out (`kit_hd.trunk_tree`).
         tree = (kit_hd.trunk_tree if kind == "ring" else kit_hd.surface_tree)([*cloth, *laid])
         path = kit_hd.ring_path(tree, (o.x, o.y), o.z + WAIST_Z) if kind == "ring" else None
@@ -288,7 +293,8 @@ def straps(ch, name, kit, origin):
         am.bind(s, ch.arm)
         laid.append(s)
     for s in laid:
-        ch.add("clothes", s, "belts", symmetric=True)
+        if s not in ch.layers["clothes"]:
+            ch.add("clothes", s, "belts", symmetric=True)
     ch.cav_kit = {"straps": {s.name.rsplit(".", 1)[-1]: s for s in laid}, "items": {}, "saddle": {}}
     ch.cav_kit_stats = {"straps_tris": {s.name.rsplit(".", 1)[-1]: gear_hd._tris(s) for s in laid}, "items": {}}
     return laid

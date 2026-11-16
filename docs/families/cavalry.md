@@ -13,7 +13,7 @@ written as ranges of the same length) and a spec for `cavalry.build`.
 | `hat` | new: `"tricorne"` (now the line's `gear.tricorn` instead of a box), `"bonnet"` (dragoon's stocking cap on a fur turban, the bag falling back), `"helmet"` (light dragoon's leather helmet, brass comb, horsehair crest), `"broad"` (17th-c. broad-brimmed hat, brim up on the left, an ostrich plume) |
 | `plume` | tricorne: a feather edging round the brim (`crest`) |
 | `facings` | collar, cuffs and lapels in `palette["facings"]` (18th-c. coat: the tailored trim of the draped coat, `cavalry.tailor`; without it they are coat cloth) |
-| `lace` | officers: a braid round the tricorne's brim (`palette["lace"]`). The lace shells on cuffs and lapel edges went with the coat shells (#523); lace on the draped coat is open |
+| `lace` | officers: a braid round the tricorne's brim (`palette["lace"]`). On the draped coat (#523) a 13 mm band round the top of each cuff and down each lapel's outer edge (`drape.tailored(lace=True)`, `drape.LACE`) |
 | `sash` | officers: a waist sash (`sash`) |
 | `blade` | the drawn blade (`drawn`): `"sabre"` (dragoons) or `"sword"` (officers, `held.officer_sword` on `socket.blade_r`) |
 | `gun` | `"pistol"` is now `held.pistol` (officers: index 1 is `VISTREL`); the carbine is unchanged |
