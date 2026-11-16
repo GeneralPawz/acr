@@ -1420,14 +1420,25 @@ shoulders and chest, 3.6 cm at the waist, 1.3 cm on the sleeves), relaxed six pa
 closer than 0.7 of its ease; it keeps the skin's weights. Below the waist every vertex of the
 waist edge hangs plumb to the hem, pushed out only by the legwear under it. 3-4 mm thick with
 closed rims (`_solid`), the two sides shaded smooth. The war shirt's lower edge is cut into a
-fringe: strands (`plains._strands`) hanging from the clean hem ring. Open: the neck edge has a
-notch in front (faces weighted to the head are dropped below the cut plane; keep `head` too).
+fringe: strands (`plains._strands`) hanging from the clean hem ring.
+
+**The neck edge** (`native._yoke`, shirt and matchcoat): round the neck the skin is not one
+surface. The hull ends in a ragged open rim (z 1.446-1.472 on DelVog), the head's neck sinks
+into it with its own open rim, and a coarse seam of 19 edges runs over the shoulder tops
+(x to +-0.151) and the nape; a plane through that leaves teeth and a notch whichever bones
+are kept. `_yoke` cuts everything inside an upturned 16-sided pyramid round those seams away
+(1.2 cm outside and below them, widening 0.58 m per m upwards, so its sides cross shoulders,
+nape and chest and never run along them; an upright prism ran along the nape and down the
+spine's furrow) and joins each point of the clean edge left by four quads to the neck's
+surface at the cut height (neck joint + 3 cm): one closed ring. DelVog: 55 edge segments, 55
+columns; the shirt's open rims are the four cuts and nothing else (before: 59 rim points off
+every cut plane).
 
 **Matchcoat over a shirt** (`native._matchcoat`, DelVog): the same skin cloth, 1.6 cm outside
 the shirt and 6 mm thick, cut along the diagonal from the right armpit to the right of the
-neck, along the slanted lower edge above the belt and above the left elbow. Open: its neck
-edge is ragged (the `neck` bone's faces are not kept) and the diagonal has a step at the right
-shoulder. Without a shirt the matchcoat is still the shell.
+neck, along the slanted lower edge above the belt and above the left elbow, on the same closed
+neck (`_yoke`), so the diagonal runs into the neck ring without a step. Without a shirt the
+matchcoat is still the shell.
 
 **Flaps in the stride:** `garments.flap_follow` is one field for all cloth hanging free below
 the belt (both flaps and the shirt's skirt, so they move alike and do not cross): the hips

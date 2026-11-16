@@ -623,20 +623,23 @@ def _apron(ch, name, z1, w0, w1, over, back=False, lean=0.04, clear=0.012, rows=
     return _authored(ch, name, "breechcloth", sv, sf, groups * 2, "_apron", smooth=2 * len(faces))
 
 
-def _skin_cloth(ch, cuts, keep, ease, passes=6, floor=0.7):
+def _skin_cloth(ch, cuts, keep, ease, passes=6, floor=0.7, neck=None):
     """Cloth cut out of the skin's own surface (#523): the flesh cut clean by the planes
     `cuts` [(point, normal towards the side cut away, region(co) -> bool the cut is confined
     to)], the faces of the bones `keep` kept, every vertex pushed out along its (smoothed) normal by
     `ease(co, groups)` m and the surface relaxed (`passes`), never closer to the skin than
     `floor` of its ease; rim vertices stay in their plane. Returns the cloth points, the skin
     points under them, the faces, the skin's weights per vertex and the rims {cut: [vertex,
-    ...] in face order}."""
+    ...] in face order}. `neck` (the neck joint, the height of the neck edge): the skin round
+    the neck is first made one surface up to that height (`_yoke`)."""
     cuts = [(co, no.normalized(), inside) for co, no, inside in cuts]
     bm = bmesh.new()
     bm.from_mesh(ch.flesh.data)
     n0 = len(bm.verts)
     bmesh.ops.remove_doubles(bm, verts=bm.verts, dist=1e-5)  # the skin's split seams
     print(f"[{ch.name}] skin cloth: {n0} skin points, {n0 - len(bm.verts)} welded")
+    if neck is not None:
+        _yoke(ch, bm, *neck)
     for co, no, inside in cuts:
         fs = [f for f in bm.faces if inside(f.calc_center_median())]
         geom = list({x for f in fs for x in (f, *f.edges, *f.verts)})
@@ -705,6 +708,67 @@ def _skin_cloth(ch, cuts, keep, ease, passes=6, floor=0.7):
     return pos, org, faces, groups, loops
 
 
+def _yoke(ch, bm, neck, zc, planes=16, rows=4, margin=0.012, flare=0.58):
+    """The skin round the neck made one surface (#523): hull and head are two open pieces
+    there (the head's neck sinks into the hull's, both with a ragged open rim, and the hull
+    has a coarse seam over the shoulders), so a cloth cut out of them at the neck has teeth.
+    Everything inside an upturned pyramid round those seams (`planes` sides, `margin` m
+    outside and below them, widening `flare` m per m upwards, so its sides cross the
+    shoulders, the upright nape and the chest and never run along them) is cut away, and each point of the clean edge left on shoulders, chest
+    and back is joined by `rows` quads to the neck's surface at the height `zc`: a closed
+    ring there, the cloth's neck edge. New points lie on the skin where it is near and carry
+    their edge point's weights."""
+    seam = [v.co for e in bm.edges if len(e.link_faces) == 1 for v in e.verts if v.co.z > neck.z - 0.06 and abs(v.co.x) < 0.2]
+    if not seam:
+        return
+    a = max(abs(c.x) for c in seam) + margin
+    y0, y1 = min(c.y for c in seam) - margin, max(c.y for c in seam) + margin
+    cy, b, ze = 0.5 * (y0 + y1), 0.5 * (y1 - y0), min(c.z for c in seam) - margin
+    side = []
+    for k in range(planes):
+        t = 2.0 * math.pi * (k + 0.5) / planes
+        r = Vector((math.cos(t) / a, math.sin(t) / b, 0.0)).normalized()
+        side.append((Vector((a * math.cos(t), cy + b * math.sin(t), ze)), (r - Vector((0.0, 0.0, flare))).normalized()))
+    for co, no in side:
+        fs = [f for f in bm.faces if f.calc_center_median().z > neck.z - 0.2]
+        geom = list({x for f in fs for x in (f, *f.edges, *f.verts)})
+        bmesh.ops.bisect_plane(bm, geom=geom, dist=1e-6, plane_co=co, plane_no=no)
+    within = lambda c, eps=0.0: all((c - co).dot(no) < eps for co, no in side)  # noqa: E731
+    bmesh.ops.delete(bm, geom=[f for f in bm.faces if within(f.calc_center_median())], context="FACES")
+    edge = [e for e in bm.edges if len(e.link_faces) == 1
+            and all(v.co.z < zc and within(v.co, 2e-4) and not within(v.co, -2e-4) for v in e.verts)]
+    skin = _trees([ch.flesh])
+    dl = bm.verts.layers.deform.verify()
+    cols = {}
+
+    def column(v):
+        if v not in cols:
+            d = Vector((v.co.x, v.co.y - neck.y, 0.0)).normalized()
+            c = Vector((0.0, neck.y, zc))
+            top = _from_outside(skin, c + d * 0.11, -d, 0.11) or c + d * 0.055
+            col = [v]
+            for j in range(1, rows + 1):
+                q = v.co.lerp(top, j / rows)
+                if j < rows:
+                    hit = skin[0].find_nearest(q, 0.04)
+                    if hit[0] is not None and hit[0].z < zc:
+                        q = q.lerp(hit[0], 0.7)
+                w = bm.verts.new(q)
+                for g, x in v[dl].items():
+                    w[dl][g] = x
+                col.append(w)
+            cols[v] = col
+        return cols[v]
+
+    for e in edge:
+        lp = e.link_loops[0]
+        p, q = lp.vert, lp.link_loop_next.vert  # the new face runs the other way along the edge
+        cp, cq = column(p), column(q)
+        for j in range(rows):
+            bm.faces.new((cq[j], cp[j], cp[j + 1], cq[j + 1]))
+    print(f"[{ch.name}] yoke: {a:.3f} x {y0:.3f}..{y1:.3f} at z {ze:.3f}, {len(edge)} edge segments, {len(cols)} columns to z {zc:.3f}")
+
+
 def _shirt(ch, name="shirt", key="shirt", hem=0.76, offset=0.012, thickness=0.003, step=0.025, cuff=0.035, waist=1.02,
            ease=(0.010, 0.036, 0.013)):
     """A shirt that follows the body (#523): above the `waist` it is the skin's own surface
@@ -737,7 +801,7 @@ def _shirt(ch, name="shirt", key="shirt", hem=0.76, offset=0.012, thickness=0.00
         t = t * t * (3.0 - 2.0 * t)
         return (ease[1] + (ease[0] - ease[1]) * t) * (1.0 - a) + ease[2] * a
 
-    pos, org, faces, groups, loops = _skin_cloth(ch, cuts, TORSO | ARMS | {"neck"}, ease_at)
+    pos, org, faces, groups, loops = _skin_cloth(ch, cuts, TORSO | ARMS | {"neck"}, ease_at, neck=(neck, neck.z + 0.03))
     verts, wpts = [tuple(p) for p in pos], [tuple(p) for p in org]
     # The skirt: every vertex of the waist edge hangs plumb to the hem, pushed out by what is
     # under it (never in again), the rings loosened round.
@@ -808,7 +872,8 @@ def _matchcoat(ch, over, thickness=0.006, gap=0.016):
              lambda c: c.z > neck.z - 0.02 and c.x * c.x + (c.y - neck.y) ** 2 < 0.15 ** 2),
             (Vector((0.18, 0.0, 1.05)), Vector((-0.5, 0.0, -1.0)), lambda c: abs(c.x) < 0.26 and c.z < sh.z - 0.06),
             (sh + ax * (0.78 * ln), ax, lambda c: (c - sh).dot(ax) > 0.4 * ln and ((c - sh) - ax * (c - sh).dot(ax)).length < 0.12)]
-    pos, org, faces, groups, loops = _skin_cloth(ch, cuts, TORSO | {"upperarm_l"}, lambda c, g: over(c, g) + gap, floor=0.9)
+    pos, org, faces, groups, loops = _skin_cloth(ch, cuts, TORSO | {"upperarm_l", "neck"}, lambda c, g: over(c, g) + gap, floor=0.9,
+                                                 neck=(neck, neck.z + 0.03))
     sv, sf = _solid([tuple(p) for p in pos], faces, thickness)
     print(f"[{ch.name}] matchcoat: {len(pos)} points, rims {sorted(loops)}")
     return _authored(ch, "matchcoat", "matchcoat", sv, sf, groups * 2, "_matchcoat", smooth=2 * len(faces))
