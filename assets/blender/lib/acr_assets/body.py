@@ -841,7 +841,7 @@ def strap(arm_obj, name, surface, a, b, width, offset, samples=12, bones=rig.BOD
                     hit = tree.ray_cast(Vector((p.x, sign * 1.0, p.z)), Vector((0, -sign, 0)))[0]
                     row.append(None if hit is None else hit.y)
                 hits.append(row)
-            ys = garments.strap_rows(hits, offset, sign)
+            ys = garments.strap_rows(hits, offset, sign, taut=True)
             runs[sign] = [(a + (b - a) * (i / samples), y) for i, y in enumerate(ys) if y is not None]
         # Up the back, over the shoulder (`a`), down the front.
         band = [(c, y) for c, y in reversed(runs[1])] + runs[-1]

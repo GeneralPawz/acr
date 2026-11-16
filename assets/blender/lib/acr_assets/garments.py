@@ -51,7 +51,9 @@ CLOTH = {
              "close": 0.13, "smooth": 10,
              # the sewing springs stay strong while the cloth settles, and what the sim leaves
              # open is closed over `ease` rings of cloth before the weld (`ease_closed`, #523)
-             "sew_hold": True, "ease": 16},
+             "sew_hold": True, "ease": 16,
+             # the skirts' top takes the body's weights at the waist seam (`drape.finish`)
+             "skirt_follow": True},
     "waistcoat": {"thickness": 0.0020, "mass": 0.30, "tension": 15.0, "bending": 0.8, "shrink": 0.05, "margin": 0.004},
     "breeches": {"thickness": 0.0020, "mass": 0.30, "tension": 15.0, "bending": 0.6, "shrink": 0.08, "margin": 0.003},
     "gaiters": {"thickness": 0.0020, "mass": 0.30, "tension": 20.0, "bending": 1.0, "shrink": 0.04, "margin": 0.003},
@@ -426,12 +428,14 @@ def trim_line(z, z0, z1, inner, floor=0.0):
     return max(floor, inner[0] + (inner[1] - inner[0]) * f)
 
 
-def strap_rows(hits, offset, sign, passes=4):
+def strap_rows(hits, offset, sign, passes=4, taut=False):
     """Edge depths (y) of a flat strap from the surface depths `hits` (rows along the run,
     each the y of the rays across the width, None where a ray missed): per row the straight
     line through the hits, lifted until no hit stands out of it; then both edges low-passed
     along the run (`passes`) without ever sinking under that line. `sign`: -1 the front (out
-    is -y), 1 the back. Returns [(y at the first ray, y at the last ray) or None] per row."""
+    is -y), 1 the back. `taut`: each edge is then drawn tight along the run (the upper hull of
+    its depths over the row number), so the belt bridges from chest to hip instead of
+    following the waist in. Returns [(y at the first ray, y at the last ray) or None] per row."""
     rows = []
     for row in hits:
         pts = [(k, y) for k, y in enumerate(row) if y is not None]
@@ -452,6 +456,19 @@ def strap_rows(hits, offset, sign, passes=4):
         for _ in range(passes):
             blur = [(cur[max(i - 1, 0)] + 2.0 * cur[i] + cur[min(i + 1, len(cur) - 1)]) / 4.0 for i in range(len(cur))]
             cur = [sign * max(sign * b, sign * r) for b, r in zip(blur, raw)]
+        if taut and len(cur) > 2:
+            hull = []  # upper hull of (row, depth outwards)
+            for p in ((i, sign * y) for i, y in zip(idx, cur)):
+                while len(hull) > 1 and ((hull[-1][0] - hull[-2][0]) * (p[1] - hull[-2][1])
+                                         >= (hull[-1][1] - hull[-2][1]) * (p[0] - hull[-2][0])):
+                    hull.pop()
+                hull.append(p)
+            k = 0
+            for j, i in enumerate(idx):
+                while hull[k + 1][0] < i:
+                    k += 1
+                (i0, o0), (i1, o1) = hull[k], hull[k + 1]
+                cur[j] = sign * (o0 + (o1 - o0) * (i - i0) / (i1 - i0))
         for i, y in zip(idx, cur):
             rows[i] = (y, rows[i][1]) if e == 0 else (rows[i][0], y)
     return rows

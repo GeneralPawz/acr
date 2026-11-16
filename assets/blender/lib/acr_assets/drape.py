@@ -806,6 +806,105 @@ def ease_seams(obj, sew, limits, passes, fixed=()):
     return max(((V[a].co - V[b].co).length for (a, b), lim in zip(sew, limits) if find(a) == find(b)), default=0.0)
 
 
+def resolve(obj, layers, gap, keep=(), rounds=4, relax=6, reach=0.06, fold=-0.2):
+    """After `ease_seams` and the smoothing (which move cloth without collision): every vertex
+    of `obj` nearer than `gap` m to the layers beneath (`layers`: the skin first; or under
+    them) is put `gap` off along the surface normal (turned to agree with the skin's), its
+    unmoved neighbours follow half the mean move; then the vertices of every folded edge (the
+    two faces' normals more than about 100 degrees apart: the dark nicks at an eased seam,
+    #523) are relaxed to the mean of their neighbours (`relax` passes; cut edges and `keep`
+    stay) and pushed off again, `rounds` times. Returns (vertices pushed off in the first
+    round, folded edges before, folded edges left)."""
+    skin = _cloth_tree(layers[:1])
+    tree = _cloth_tree(layers)
+    bm = bmesh.new()
+    bm.from_mesh(obj.data)
+    bm.verts.ensure_lookup_table()
+    keep = set(keep)
+    nb = [[e.other_vert(v).index for e in v.link_edges if e.link_faces] for v in bm.verts]
+    edge = [v.is_boundary for v in bm.verts]
+
+    def push():
+        moves = {}
+        for v in bm.verts:
+            if v.index in keep or not v.link_faces:
+                continue
+            loc, nrm, _k, _d = tree.find_nearest(v.co, reach)
+            if loc is None:
+                continue
+            s = skin.find_nearest(loc, 0.10)
+            if s[0] is not None and nrm @ s[1] < 0.0:
+                nrm = -nrm
+            d = (v.co - loc) @ nrm
+            if d < gap:
+                moves[v.index] = nrm * (gap - d)
+        for i, m in moves.items():
+            bm.verts[i].co += m
+        for i in sorted({n for j in moves for n in nb[j]} - set(moves) - keep):
+            ms = [moves[n] for n in nb[i] if n in moves]
+            bm.verts[i].co += sum(ms, Vector()) / len(nb[i]) * 0.5
+        return len(moves)
+
+    def folds():
+        bm.normal_update()
+        return [e for e in bm.edges if len(e.link_faces) == 2 and e.link_faces[0].normal @ e.link_faces[1].normal < fold]
+
+    pushed = push()
+    bad = folds()
+    first = len(bad)
+    for _ in range(rounds):
+        if not bad:
+            break
+        ring = {v.index for e in bad for v in e.verts}
+        ring |= {n for i in ring for n in nb[i]}
+        ring = sorted(i for i in ring if i not in keep and not edge[i] and nb[i])
+        for _p in range(relax):
+            new = {i: sum((bm.verts[n].co for n in nb[i]), Vector()) / len(nb[i]) for i in ring}
+            for i, c in new.items():
+                bm.verts[i].co = bm.verts[i].co.lerp(c, 0.6)
+        push()
+        bad = folds()
+    left = len(bad)
+    bm.to_mesh(obj.data)
+    bm.free()
+    obj.data.update()
+    return pushed, first, left
+
+
+def calm_seam(obj, skirt_ids, rings=5, along=10, passes=12):
+    """The waist seam made a calm line (#523): the vertices shared by skirt panels (face
+    attribute `panel` in `skirt_ids`) and body panels are smoothed along the seam (`along`
+    Taubin pass pairs over their seam neighbours), then the cloth within `rings` edges of it
+    is relaxed (`passes` pass pairs, the seam and the cut edges held), so the body ends and
+    the skirts start on one even line instead of a bunched one. Returns the seam vertices."""
+    bm = bmesh.new()
+    bm.from_mesh(obj.data)
+    bm.verts.ensure_lookup_table()
+    lay = bm.faces.layers.int.get("panel")
+    seam = {v.index for v in bm.verts if v.link_faces
+            and any(f[lay] in skirt_ids for f in v.link_faces) and any(f[lay] not in skirt_ids for f in v.link_faces)}
+    if not seam:
+        bm.free()
+        return 0
+    nb = [[e.other_vert(v).index for e in v.link_edges if e.link_faces] for v in bm.verts]
+    sn = {i: [n for n in nb[i] if n in seam] for i in seam}
+    near, front = set(seam), set(seam)
+    for _ in range(rings):
+        front = {n for i in front for n in nb[i]} - near
+        near |= front
+    free = sorted(i for i in near - seam if not bm.verts[i].is_boundary)
+    for group, nbs, n in ((sorted(i for i in seam if len(sn[i]) > 1), sn, along), (free, nb, passes)):
+        for _ in range(n):
+            for f in (0.5, -0.53):
+                new = {i: sum((bm.verts[k].co for k in nbs[i]), Vector()) / len(nbs[i]) for i in group}
+                for i, c in new.items():
+                    bm.verts[i].co += (c - bm.verts[i].co) * f
+    bm.to_mesh(obj.data)
+    bm.free()
+    obj.data.update()
+    return len(seam)
+
+
 def solidify(obj, thickness):
     """Cloth thickness with rims along the cut edges (the pattern outline)."""
     mod = obj.modifiers.new("acr_solid", "SOLIDIFY")
@@ -1163,6 +1262,23 @@ def finish(obj, ch, skirt, weights=None, under=(), cloth=None, skip=(), smooth=0
     elif skirt:
         ws, cl = zip(*(skirt_weights(v.co, P) for v in obj.data.vertices))
         ws = [_follow_thigh(w, v.co, t, P) for w, v, t in zip(ws, obj.data.vertices, cl)]
+        if skirt == "body":
+            # The top of the skirt (its `hips` share) moves like the coat body it is sewn to:
+            # the same transfer as the torso panels, so the waist seam stays shut in every clip.
+            tw = transfer_weights(obj, ch.flesh, ch.arm, under=under, skip=("forearm", "hand", "upperarm", "thigh", "shin"))
+            for w, t in zip(ws, tw):
+                h = w.pop(P + "hips", 0.0)
+                tot = sum(t.values())
+                if h and tot:
+                    for b, x in t.items():
+                        w[b] = w.get(b, 0.0) + h * x / tot
+                elif h:
+                    w[P + "hips"] = h
+                for b in sorted(w, key=w.get)[:-4]:
+                    del w[b]
+                tot = sum(w.values())
+                for b in w:
+                    w[b] /= tot
     else:
         ws = transfer_weights(obj, ch.flesh, ch.arm, under=under, skip=skip)
         cl = [0.0] * len(ws)
@@ -1652,6 +1768,13 @@ def dress(ch, garments=gm.ORDER, report=None, patterns=None, over=(), post_weld=
             pin = obj.vertex_groups.get("acr_pin")
             taubin(obj, gm.CLOTH[g]["smooth"],
                    keep=[v.index for v in obj.data.vertices if pin and any(e.group == pin.index for e in v.groups)])
+        resolved = None
+        if gm.CLOTH.get(g, {}).get("ease"):
+            # The eased and smoothed cloth is off the layers beneath again, its folds relaxed.
+            pin = obj.vertex_groups.get("acr_pin")
+            calm_seam(obj, {names.index(n) for n, pn in panels.items() if pn.skirt and not pn.tack})
+            resolved = resolve(obj, [ch.flesh] + under, gm.CLOTH[g].get("margin", 0.004),
+                               keep=[v.index for v in obj.data.vertices if pin and any(e.group == pin.index for e in v.groups)])
         if gm.CLOTH.get(g, {}).get("pleats"):
             pleat(obj, panels, names, gm.CLOTH[g]["pleats"], ch=ch, under=under)
         if post_weld is not None:
@@ -1751,7 +1874,8 @@ def dress(ch, garments=gm.ORDER, report=None, patterns=None, over=(), post_weld=
             else:
                 # A torso panel takes no weights from the forearm or the shirt cuff on it.
                 torso = all(panels[names[i]].place["region"] == "torso" for i in idx)
-                finish(part, ch, skirt, under=under, skip=("forearm", "hand") if torso else (),
+                finish(part, ch, "body" if skirt and gm.CLOTH.get(g, {}).get("skirt_follow") else skirt, under=under,
+                       skip=("forearm", "hand") if torso else (),
                        smooth=gm.CLOTH.get(g, {}).get("weight_smooth", 0))
             ch.add("clothes", part, key, symmetric=True)
             part["acr_garment"] = f"draped:{g}"
@@ -1773,6 +1897,9 @@ def dress(ch, garments=gm.ORDER, report=None, patterns=None, over=(), post_weld=
                     "worst_gap_at_cm": worst_at[1],
                     # the widest pair left for the weld after `ease_seams` (0: not eased)
                     "gap_mm_at_weld": round(1000 * eased, 1)}
+        if resolved:
+            # `resolve`: vertices pushed off the layers beneath, folded edges before and after
+            stats[g].update(pushed_off=resolved[0], folds=resolved[1], folds_left=resolved[2])
         for o in ch.layers["clothes"]:
             if o.name in made:
                 _collision(o, thickness=gm.CLOTH.get(g, gm.CLOTH["waistcoat"]).get("margin", 0.004))

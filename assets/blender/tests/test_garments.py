@@ -158,6 +158,18 @@ class TailoredPanels(unittest.TestCase):
         self.assertAlmostEqual(back[0][0], 0.104)
         self.assertAlmostEqual(back[0][1], 0.144)
 
+    def test_taut_strap_bridges_the_waist(self):
+        # chest out, waist in, hip out: the taut belt runs straight from chest to hip
+        depth = [-0.10, -0.14, -0.10, -0.08, -0.10, -0.13]
+        rows = gm.strap_rows([[y] * 3 for y in depth], 0.0, -1, passes=0, taut=True)
+        self.assertAlmostEqual(rows[1][0], -0.14)
+        self.assertAlmostEqual(rows[5][0], -0.13)
+        self.assertAlmostEqual(rows[3][0], -0.135)
+        for r, y in zip(rows, depth):
+            self.assertLessEqual(r[0], y + 1e-9)
+        back = gm.strap_rows([[y] * 3 for y in (0.10, 0.06, 0.10)], 0.0, 1, passes=0, taut=True)
+        self.assertAlmostEqual(back[1][1], 0.10)
+
 
 class Period17(unittest.TestCase):
     """The 17th century's garments (docs/clothing.md, "17th century")."""

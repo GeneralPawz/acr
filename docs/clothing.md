@@ -1264,6 +1264,28 @@ shoulders.
   skirts; the belt bridges from chest to hip; the stock's 67 poking vertices are its rim
   shown 10 mm over the collar by design (`STOCK["above"]`): an audit case, not a defect.
 
+### Eased cloth resolved, calm waist seam, taut belt (#523, fourth slice)
+
+- **`drape.resolve`** (garments with `CLOTH[g]["ease"]`, after the weld and the smoothing):
+  vertices nearer than the garment's margin to the skin or the layers beneath are put that
+  far off (normal turned to the skin's), then the vertices of folded edges (face normals
+  more than about 100 degrees apart) are relaxed and pushed off again, 4 rounds. Stats:
+  `drape.coat.pushed_off`, `folds`, `folds_left` (EngF18: 566, 396 -> 103).
+- **`drape.calm_seam`**: the waist seam (vertices shared by skirt and body panels) smoothed
+  along its run, 5 rings of cloth round it relaxed.
+- **`CLOTH["coat"]["skirt_follow"]`**: the `hips` share of a skirt vertex is replaced by the
+  weights transferred from the layers beneath (as the body panels; no arm or leg bones), so
+  both sides of the waist seam move alike (`drape.finish`, `skirt="body"`).
+- **Belt:** `garments.strap_rows(..., taut=True)` (`body.strap`, flat belts): each edge is the
+  upper hull of its depths along the run, so the belt bridges chest to hip.
+- EngF18 audit, slice 3 -> 4: coat holes (stand) 2 -> 0, coat skirts poke 44 -> 30, lapel_r
+  22 -> 15; worse: coat poke 312 -> 324, coat holes (walk) 3 -> 5, waistcoat 25 -> 36,
+  collar 24 -> 33, stock 67 -> 82.
+- Open: 103 folded edges are left (a few dark smudges on the right shoulder); a white patch
+  (shirt or waistcoat through the coat) beside the collar on the right shoulder, new with the
+  relaxing; torn bits remain at the side-back of the waist seam; the belt's front edge is
+  still kinked across its width (per-row slope); lapels are still fitted to the draped trace.
+
 ## Hems (#523)
 
 `drape.hems(ch)` runs in `Character.morphs` (every family; `drape.HEMS = True`) over each
