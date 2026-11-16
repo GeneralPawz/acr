@@ -116,16 +116,24 @@ class NativeLegwear(unittest.TestCase):
         self.assertEqual(gm.plumb([-1.0, -3.0, -2.0], out=-1.0), [-1.0, -3.0, -3.0])
         self.assertEqual(gm.plumb([None, 2.0]), [2.0, 2.0])
 
-    def test_flap_follows_its_own_thigh_below_the_hip(self):
+    def test_flap_bends_as_one_cloth(self):
         top = gm.flap_follow(0.05, 1.0, 0.93)
         self.assertEqual(top, {"hips": 1.0, "thigh_l": 0.0, "thigh_r": 0.0})
-        left, right, mid = (gm.flap_follow(x, 0.60, 0.93) for x in (0.12, -0.12, 0.0))
-        self.assertAlmostEqual(left["thigh_l"], 1.0)
-        self.assertAlmostEqual(right["thigh_r"], 1.0)
+        left, right, mid = (gm.flap_follow(x, 0.70, 0.93) for x in (0.12, -0.12, 0.0))
+        self.assertAlmostEqual(left["thigh_r"], 0.0)
+        self.assertAlmostEqual(right["thigh_l"], 0.0)
         self.assertAlmostEqual(mid["thigh_l"], mid["thigh_r"])
-        # Across the thigh's width the cloth is all on that thigh (#523: the stride).
-        self.assertAlmostEqual(gm.flap_follow(0.07, 0.70, 0.93)["thigh_l"], 1.0)
-        for w in (left, right, mid, gm.flap_follow(0.01, 0.85, 0.93)):
+        # A modest follow, less at the hem than above it (#523: the hem swings less).
+        hem = gm.flap_follow(0.12, 0.57, 0.93)
+        self.assertLess(hem["thigh_l"], left["thigh_l"])
+        self.assertLess(left["thigh_l"], 0.8)
+        self.assertGreater(hem["thigh_l"], 0.4)
+        # One smooth blend across the width: no step between neighbouring columns.
+        xs = [-0.12 + 0.24 * i / 16 for i in range(17)]
+        ws = [gm.flap_follow(x, 0.70, 0.93)["thigh_l"] for x in xs]
+        self.assertEqual(ws, sorted(ws))
+        self.assertLess(max(b - a for a, b in zip(ws, ws[1:])), 0.12)
+        for w in (left, right, mid, hem, gm.flap_follow(0.01, 0.85, 0.93)):
             self.assertAlmostEqual(sum(w.values()), 1.0)
 
     def test_fill_ring_bridges_gaps(self):

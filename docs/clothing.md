@@ -1403,7 +1403,7 @@ with a fixed offset:
 - **Breechcloth**: the strip between the legs (`native._breech_strip`, under the belt) and its
   two ends (`native._apron`) turned over the belt and hanging plumb (`garments.plumb`) from
   the furthest thing under them (belt, belly or seat, legging tops, the strip), 4 mm clear;
-  the hem follows each thigh by 65 % (`garments.flap_follow`).
+  skinned by `garments.flap_follow` (below).
 
 The draped variants (SPEC `drape`, eight Woodlands units) and Pueblo's sash ends
 (`native._flap`) are unchanged. DelVog, audit before -> after: ragged 21-23 mm -> 0 (legging
@@ -1411,19 +1411,32 @@ flaps), open seams 24 mm -> 0, legging skin holes 2 -> 0, flesh poke 52 -> 16 (s
 0.24-0.37 -> 0.003-0.17.
 
 **Shirts** (`native._shirt`; `shirt` in Woodlands and Pueblo dress, the Plains `war_shirt`): no
-longer a skin shell (its outline had slits along the sleeves and a dozen small loops at the
-neck) but a body tube from the hem to the shoulders (36 round, a ring every 3 cm, cast from
-the spine outwards, below 1.0 m from outside over the legwear; the skirt hangs from the hips,
-`garments.hang`), a yoke of five rings in and up to a round neck opening, laid on the
-shoulders from above, and two sleeve tubes square to the arm ending 3.5 cm above the wrist;
-3-4 mm thick with closed rims. The war shirt's lower edge is cut into a fringe: strands
-(`plains._strands`) hanging from the clean hem ring. Audit, shell -> authored: DelVog `shirt`
-ragged 25.5 mm -> 0, open seam 24.3 mm -> 0, skin holes 2/3 -> 0; SiuKri `war_shirt` ragged
-12.8 mm -> 0, open seam 24.8 mm -> 0.
+longer a skin shell (slits along the sleeves, loops at the neck), and no longer a tube with a
+yoke and sleeve tubes (a box: flat planes, square shoulders, a step at the armhole). Above the
+waist (1.02 m) the shirt is the skin's own surface (`native._skin_cloth`: the flesh welded,
+cut by planes at the waist, the neck and 3.5 cm above the wrists, the faces of trunk and arm
+bones kept), pushed out along smoothed normals by an ease that varies smoothly (1 cm at
+shoulders and chest, 3.6 cm at the waist, 1.3 cm on the sleeves), relaxed six passes and never
+closer than 0.7 of its ease; it keeps the skin's weights. Below the waist every vertex of the
+waist edge hangs plumb to the hem, pushed out only by the legwear under it. 3-4 mm thick with
+closed rims (`_solid`), the two sides shaded smooth. The war shirt's lower edge is cut into a
+fringe: strands (`plains._strands`) hanging from the clean hem ring. Open: the neck edge has a
+notch in front (faces weighted to the head are dropped below the cut plane; keep `head` too).
 
-**Flaps in the stride:** `garments.flap_follow` now puts the cloth in front of a thigh fully
-on that thigh from 12 cm below the hip joint (was 65 %), the halves blended over +-6 cm at
-the middle.
+**Matchcoat over a shirt** (`native._matchcoat`, DelVog): the same skin cloth, 1.6 cm outside
+the shirt and 6 mm thick, cut along the diagonal from the right armpit to the right of the
+neck, along the slanted lower edge above the belt and above the left elbow. Open: its neck
+edge is ragged (the `neck` bone's faces are not kept) and the diagonal has a step at the right
+shoulder. Without a shirt the matchcoat is still the shell.
+
+**Flaps in the stride:** `garments.flap_follow` is one field for all cloth hanging free below
+the belt (both flaps and the shirt's skirt, so they move alike and do not cross): the hips
+above the hip joint, from 12 cm below it 78 % with the thighs falling to 55 % at 36 cm, shared
+between the thighs by one cosine blend over 80 % of a 12 cm half width. The flaps have 16
+columns and 18 rows, hang 12 mm clear and lean 4 cm out at the hem, and no leg fringe is
+placed on the inner 15 cm of the thigh above 0.52 m. Known limit of fixed weights: the flap's
+middle follows neither thigh, so the inner side of the striding thigh still comes through it
+(DelVog, MOTION_L frame 4: a hole in the back flap, a notch in the front one).
 
 **The audit and thick pieces:** `clothaudit.inner_wall` leaves the inner wall of a garment
 (vertices whose normal points at the nearest bone) out of the poke count: along the shared

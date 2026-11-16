@@ -1042,16 +1042,17 @@ def plumb(ys, out=1.0):
     return [first if y is None else y for y in res]
 
 
-def flap_follow(x, z, pivot_z, reach=0.12, most=1.0, blend=0.06):
-    """Bone shares of a breechcloth flap vertex at (x across, z up): the hips above the hip
-    joint (`pivot_z`); from `reach` m below it the cloth in front of a thigh lies on that
-    thigh (`most` of it, left = +x) across the thigh's whole width, the two halves blended
-    over +-`blend` m at the middle, so a forward thigh carries the flap instead of coming
-    through it."""
+def flap_follow(x, z, pivot_z, half=0.12, drop=0.36, reach=0.12, most=0.78, fall=0.3, blend=0.8):
+    """Bone shares of free-hanging cloth below the belt (a breechcloth flap, a shirt's skirt)
+    at (x across, z up): the hips above the hip joint (`pivot_z`); from `reach` m below it
+    `most` of the cloth goes with the thighs, falling off by `fall` down to `drop` m below
+    the joint (a hem swings less than the thigh), shared between the two thighs (left = +x)
+    by one cosine blend over `blend` of the `half` width, so a flap bends as one cloth in
+    the stride instead of shearing into two boards. One field for every such cloth: a flap
+    and the skirt under it move alike and cannot cross."""
     t = min(max((pivot_z - z) / reach, 0.0), 1.0)
-    k = most * t * t * (3.0 - 2.0 * t)
-    s = min(max(0.5 + 0.5 * x / blend, 0.0), 1.0)
-    s = s * s * (3.0 - 2.0 * s)
+    k = most * t * t * (3.0 - 2.0 * t) * (1.0 - fall * min(max((pivot_z - reach - z) / max(drop - reach, 1e-6), 0.0), 1.0))
+    s = 0.5 - 0.5 * math.cos(math.pi * min(max(0.5 + 0.5 * x / max(blend * half, 1e-6), 0.0), 1.0))
     return {"hips": 1.0 - k, "thigh_l": k * s, "thigh_r": k * (1.0 - s)}
 
 
