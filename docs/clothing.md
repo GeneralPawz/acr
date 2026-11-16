@@ -1189,6 +1189,31 @@ UVs keep the bands' weave continuous. Weights transfer from skin/sleeve surfaces
 are limited to four. `outfit.collar_cuffs` records profiles, button counts, measured
 thickness ranges, boundary/nonmanifold edge counts, and weight errors per piece.
 
+## Tailored trim (#523)
+
+`drape.tailored(ch, made)` (line family, `line.make`; `build["tailored"] = False` switches it
+off): the coat's stand collar and round cuffs are sewn and draped with the coat (their seams
+shape its neck and wrists) but left out of the result (`dress(drop=garments.TRIM_PANELS)`)
+and built again as closed bands with a thickness: at the coat's 3.5 cm lattice a 4 cm collar
+and an 11 cm cuff are two triangles deep and crumple into teeth.
+
+- **Collar** (`facings`): the base follows the coat's neck seam as draped (a cosine series
+  round the neck, symmetric), 14 mm below and 7 mm outside it; the top 22 mm (front) to
+  30 mm (back) above, leaning in to 11 mm off the neck, and never higher than
+  `Body.neck_z` + 30 mm in front (the jaw). Weights from the nearest coat vertex.
+- **Stock** (`stock`): a band on the neck inside the collar, 10 mm above its top; replaces
+  the draped strip. Weights from the skin.
+- **Cuffs** (`facings`): round the forearm's axis, 4 mm outside the sleeve as draped
+  (largest radius, at most the median + 8 mm), 7 mm wider at the top, rigid on the forearm.
+
+`stats.json` → `drape.tailored` holds the seam fit, the heights and the cuff radii. EngF18,
+audit before → after: coat poke 71 → 42, flesh holes 22 → 9, waistcoat holes 12 → 2, facings
+ragged 34 → 22 mm (lapels only); worse: stock poke 34 → 77 (its rim above the collar counts),
+shirt 6 → 49 (the wristbands inside the cuffs), waistcoat 14 → 30 (under the collar). Open:
+the lapels are still inlays of the crumpled coat front (ragged), the cuff buttons and the
+wristbands are hidden by the cuff, and the coat's neck edge shows beside the collar at the
+shoulders.
+
 ## Hems (#523)
 
 `drape.hems(ch)` runs in `Character.morphs` (every family; `drape.HEMS = True`) over each

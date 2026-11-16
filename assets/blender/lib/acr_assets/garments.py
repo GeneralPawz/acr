@@ -348,6 +348,11 @@ def coat(m=MEASURE):
     return P, seams
 
 
+# Coat panels sewn and draped with the coat, then replaced by closed bands
+# (`drape.tailored`, #523): nothing may be tacked onto them.
+TRIM_PANELS = ("collar", "cuff")
+
+
 def waistcoat(m=MEASURE):
     """Sleeveless waistcoat (1768: to just below the waist, buttoned down the front)."""
     e = EASE["waistcoat"]

@@ -103,6 +103,12 @@ registry.painter("lapels", like="wool", finish=(1.0, 0.45, 0.0))
 registry.material("lapels", "wool", painter="lapels", fallback=(0.86, 0.85, 0.80))
 
 
+def gm_order():
+    from . import garments as gm
+
+    return gm.ORDER
+
+
 def _coat_with(key):
     """The uniform coat's draft with the lapels cut from cloth of material `key`."""
     from . import garments as gm
@@ -151,7 +157,11 @@ def make(root, name, s):
                           "shoes", symmetric=True)
         ch.drape_report = {}
         patterns = {"coat": _coat_with(s["lapels"])} if s["lapels"] != "facings" else None
-        made = drape.dress(ch, report=ch.drape_report, patterns=patterns)
+        # The stand collar, stock and cuffs as closed bands (`drape.tailored`, #523).
+        trim = build.get("tailored", True) and "coat" in (build.get("drape") or gm_order())
+        made = drape.dress(ch, report=ch.drape_report, patterns=patterns, drop=drape.TRIM_PANELS if trim else ())
+        if trim:
+            ch.drape_report["tailored"] = drape.tailored(ch, made)
         cloth = [o for o in ch.layers["clothes"] if o.name in made]
         drape.hide_skin(ch, cloth)
         # Covered under-layers keep a margin below the layers on them (docs/clothing.md, "Layers").

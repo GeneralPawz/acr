@@ -1495,20 +1495,25 @@ def sleeve_shape(obj, ch, spec, under=()):
     obj.data.update()
 
 
-def dress(ch, garments=gm.ORDER, report=None, patterns=None, over=(), post_weld=None, weld_limit=None, hem_even=True):
+def dress(ch, garments=gm.ORDER, report=None, patterns=None, over=(), post_weld=None, weld_limit=None, hem_even=True,
+          drop=()):
     """Drapes the garments `garments` (in order: each rests on those before) on character
     `ch` (rest pose) and adds them to its `clothes` layer. A garment is drafted by
     `patterns[name]` when given (a family's one-off), else by `garments.GARMENTS` (the
     uniform and what families registered with `registry.garment`). `over`: clothes made
     before (shells, modelled flaps) the garments rest on: they collide in the sim and lend
-    their weights like the draped layers beneath (docs/clothing.md, "Layers"). Returns
-    {object name: material key}."""
+    their weights like the draped layers beneath (docs/clothing.md, "Layers"). `drop`: panel
+    names sewn and draped with their garment but left out of the result (the coat's collar
+    and cuffs, replaced by `tailored`); the seam each shared with the kept panels is kept
+    in `ch.trim_seams[panel]` (positions, rest pose). Returns {object name: material key}."""
     # A unit's own set (`build["drape"]`: garment names in drape order, e.g. the 17th
     # century's hose, slops, doublet) replaces the set its family's `make` asks for.
     plan = (getattr(ch, "build", None) or {}).get("drape")
     if plan:
         garments = tuple(plan)
     body = Body(ch)
+    ch.drape_body = body
+    ch.trim_seams = {}
     uni = gm.uniform(body.m, garments, patterns)
     colliders = [ch.flesh] + ([ch.shoes] if getattr(ch, "shoes", None) else []) + list(over)
     for o in colliders:
@@ -1637,11 +1642,26 @@ def dress(ch, garments=gm.ORDER, report=None, patterns=None, over=(), post_weld=
                 body.cape_over(list(over) + [o for o in ch.layers["clothes"] if o.name in made])
         if SOLIDIFY:
             solidify(obj, gm.CLOTH.get(g, gm.CLOTH["waistcoat"])["thickness"])
+        dropped = [n for n in names if n in drop]
+        if dropped:
+            bm = bmesh.new()
+            bm.from_mesh(obj.data)
+            lay = bm.faces.layers.int.get("panel")
+            for n in dropped:
+                i = names.index(n)
+                ch.trim_seams[n] = [tuple(v.co) for v in bm.verts
+                                    if any(f[lay] == i for f in v.link_faces) and any(f[lay] != i for f in v.link_faces)]
+            ids = {names.index(n) for n in dropped}
+            bmesh.ops.delete(bm, geom=[f for f in bm.faces if f[lay] in ids], context="FACES")
+            bmesh.ops.delete(bm, geom=[v for v in bm.verts if not v.link_faces], context="VERTS")
+            bm.to_mesh(obj.data)
+            bm.free()
         # One object per (key, skirt).
         kinds = {}
         new_under = []  # the parts of one garment rest on the layers before it, not on each other
         for n, pnl in panels.items():
-            kinds.setdefault((pnl.key, pnl.skirt), []).append(names.index(n))
+            if n not in drop:
+                kinds.setdefault((pnl.key, pnl.skirt), []).append(names.index(n))
         both = {k for k, sk in kinds if sk} & {k for k, sk in kinds if not sk}
         for (key, skirt), idx in kinds.items():
             part = obj.copy()
@@ -1655,6 +1675,9 @@ def dress(ch, garments=gm.ORDER, report=None, patterns=None, over=(), post_weld=
             bm.to_mesh(part.data)
             bm.free()
             part.data.attributes.remove(part.data.attributes["panel"])
+            if not len(part.data.polygons):
+                bpy.data.objects.remove(part)
+                continue
             if gm.CLOTH.get(g, {}).get("sleeve_shape") and all(panels[names[i]].place["region"] == "arm" for i in idx):
                 sleeve_shape(part, ch, gm.CLOTH[g]["sleeve_shape"], under=under)
             label = {("coat", True): "coat_skirts", ("lining", True): "turnbacks"}.get(
@@ -2379,6 +2402,193 @@ def hems(ch, objs=None, turn=HEM_TURN):
         a, b, c = out.get(k, (0, 0, 0))
         out[k] = (a + spikes, b + moved, c + added)
     return out
+
+
+# -- Tailored trim (#523): the coat's stand collar, the stock and the round cuffs ----------
+# `COLLAR["top"]`: the collar's top edge ends at most this far above `Body.neck_z` (front, back).
+# Draped at the coat's 3.5 cm lattice a 4 cm collar and an 11 cm cuff are two triangles
+# deep: they crumple into teeth. They are sewn and draped with the coat (the seams shape
+# its neck and wrists), dropped (`dress(drop=TRIM_PANELS)`) and built again as closed bands.
+TRIM_PANELS = gm.TRIM_PANELS
+TRIM_N = 32  # points round a band
+COLLAR = {"height": (0.022, 0.030), "top": (0.030, 0.105), "over": 0.014, "out": 0.007, "gap": 0.011, "thickness": 0.003}
+STOCK = {"gap": 0.004, "below": 0.028, "above": 0.010, "thickness": 0.0015}
+CUFF = {"depth": 0.105, "past": 0.008, "clear": 0.004, "flare": 0.007, "thickness": 0.004}
+
+
+def _band(ch, label, key, rings, thickness, weights, closed=True):
+    """A band of quads through `rings` (each `n` points; `closed`: round), `thickness`
+    outwards with closed rims, skinned by `weights(obj)` -> [{bone: weight}] per vertex."""
+    n = len(rings[0])
+    verts = [tuple(p) for row in rings for p in row]
+    m = n if closed else n - 1
+    faces = [(j * n + i, j * n + (i + 1) % n, (j + 1) * n + (i + 1) % n, (j + 1) * n + i)
+             for j in range(len(rings) - 1) for i in range(m)]
+    me = bpy.data.meshes.new(f"{ch.name}.{label}")
+    me.from_pydata(verts, [], faces)
+    obj = bd.link(bpy.data.objects.new(me.name, me))
+    mod = obj.modifiers.new("acr_band", "SOLIDIFY")
+    mod.thickness, mod.offset, mod.use_rim, mod.use_even_offset = thickness, 1.0, True, True
+    dg = bpy.context.evaluated_depsgraph_get()
+    solid = bpy.data.meshes.new_from_object(obj.evaluated_get(dg))
+    obj.modifiers.remove(mod)
+    obj.data = solid
+    solid.name = me.name
+    bpy.data.meshes.remove(me)
+    bm = bmesh.new()
+    bm.from_mesh(obj.data)
+    bmesh.ops.recalc_face_normals(bm, faces=list(bm.faces))
+    bmesh.ops.triangulate(bm, faces=list(bm.faces))
+    bm.to_mesh(obj.data)
+    bm.free()
+    finish(obj, ch, False, weights=weights(obj))
+    ch.add("clothes", obj, key, symmetric=True)
+    obj["acr_garment"] = "tailored:coat"
+    return obj
+
+
+def _weights_from(objs):
+    """weights(obj): each vertex takes the weights of the nearest vertex of `objs`."""
+    from mathutils.kdtree import KDTree
+
+    src = [(o, v) for o in objs for v in o.data.vertices]
+    kd = KDTree(len(src))
+    for i, (o, v) in enumerate(src):
+        kd.insert(o.matrix_world @ v.co, i)
+    kd.balance()
+
+    def weights(obj):
+        out = []
+        for v in obj.data.vertices:
+            o, sv = src[kd.find(obj.matrix_world @ v.co)[1]]
+            w = {o.vertex_groups[g.group].name: g.weight for g in sv.groups if g.weight > 1e-4}
+            t = sum(w.values()) or 1.0
+            out.append({b: x / t for b, x in w.items()})
+        return out
+
+    return weights
+
+
+def tailored(ch, made):
+    """The coat's stand collar, the stock and the round cuffs as closed bands
+    (docs/clothing.md "Tailored trim"), after `dress(drop=TRIM_PANELS)`.
+
+    - Collar (`facings`): its base follows the coat's neck seam as draped (`ch.trim_seams`,
+      a cosine series round the neck: smooth and symmetric), `over` below and `out` outside
+      it, so the coat's cut neck edge ends under the band; its top `height` (front, back)
+      above, leaning in to `gap` off the neck. Moves with the coat's neckline.
+    - Stock (`stock`): a band on the neck inside the collar, showing `above` over its top;
+      replaces the draped strip. Moves with the skin.
+    - Cuffs (`facings`): round the forearm's axis, `clear` outside the sleeve as draped
+      over `depth` from the wrist, `flare` wider at the top, rigid on the forearm.
+    Adds the objects to `made` and returns the measured report."""
+    body, P = ch.drape_body, ch.prefix
+    rep = {}
+    coats = [o for o in ch.layers["clothes"] if made.get(o.name) in ("coat", "lapels", "facings")
+             and not o.name.endswith(("_skirts", "turnbacks"))]
+    sleeves = [o for o in coats if made[o.name] == "coat"]
+    ts = [2.0 * math.pi * i / TRIM_N for i in range(TRIM_N)]
+    seam = ch.trim_seams.get("collar") or []
+    if len(seam) >= 8 and sleeves:
+        zn = body.neck_z + 0.03
+        cy, A, B = body.ellipse(zn)
+        pts = np.array(seam + [(-x, y, z) for x, y, z in seam])
+        t = np.arctan2(pts[:, 0] / A, -(pts[:, 1] - cy) / B)
+        sc = np.hypot(pts[:, 0] / A, (pts[:, 1] - cy) / B)
+        M = np.stack([np.ones_like(t), np.cos(t), np.cos(2 * t)], axis=1)
+        cs, cz = np.linalg.lstsq(M, sc, rcond=None)[0], np.linalg.lstsq(M, pts[:, 2], rcond=None)[0]
+
+        c = COLLAR
+        hf, hb = c["height"]
+
+        def ring(dz_front, dz_back, out, lean):
+            row = []
+            for a in ts:
+                f = (1.0 + math.cos(a)) / 2.0  # 1 in front, 0 at the back
+                m = np.array((1.0, math.cos(a), math.cos(2 * a)))
+                s, z = float(m @ cs), float(m @ cz) + dz_front * f + dz_back * (1.0 - f)
+                # Never up the jaw: the seam as draped rides high at the sides of the neck.
+                z = min(z, body.neck_z + c["top"][1] + (c["top"][0] - c["top"][1]) * f - (hb - dz_back))
+                if lean is not None:
+                    cyz, Az, Bz = body.ellipse(z)
+                    s = min(s, 1.0 + lean / ((A + B) / 2.0))
+                    row.append((math.sin(a) * (A * s + (Az - A)), cyz - math.cos(a) * (B * s + (Bz - B)), z))
+                else:
+                    row.append((math.sin(a) * (A * s + out), cy - math.cos(a) * (B * s + out), z))
+            return row
+
+        rings = [ring(-c["over"], -c["over"], c["out"], None), ring(0.0, 0.0, c["out"] * 0.6, None),
+                 ring(hf * 0.5, hb * 0.5, 0.0, c["gap"] * 1.6), ring(hf, hb, 0.0, c["gap"])]
+        collar = _band(ch, "collar", "facings", rings, c["thickness"], _weights_from(sleeves))
+        made[collar.name] = "facings"
+        rep["collar"] = {"seam_points": len(seam), "seam_fit_mm": round(1000 * float(np.std(M @ cz - pts[:, 2])), 1),
+                         "base_z": round(float(cz[0]), 3), "front_z": round(float(cz.sum()), 3),
+                         "neck_z": round(float(body.neck_z), 3), "top_z": [round(rings[-1][0][2], 3), round(rings[-1][TRIM_N // 2][2], 3)]}
+        old = [o for o in ch.layers["clothes"] if made.get(o.name) == "stock"]
+        if old:
+            k = STOCK
+
+            def neck(row, dz, gap):
+                out = []
+                for a, p in zip(ts, row):
+                    z = p[2] + dz
+                    cyz, Az, Bz = body.ellipse(z)
+                    out.append((math.sin(a) * (Az + gap), cyz - math.cos(a) * (Bz + gap), z))
+                return out
+
+            srings = [neck(rings[-1], -k["below"], k["gap"] + 0.002), neck(rings[-1], 0.0, k["gap"]),
+                      neck(rings[-1], k["above"], k["gap"])]
+            for o in old:
+                ch.layers["clothes"].remove(o)
+                if o in ch.symmetric:
+                    ch.symmetric.remove(o)
+                ch.keys.pop(o.name, None)
+                made.pop(o.name)
+                old_mesh = o.data
+                bpy.data.objects.remove(o)
+                bpy.data.meshes.remove(old_mesh)  # frees the name: the band is `<unit>.stock` again
+            stock = _band(ch, "stock", "stock", srings, k["thickness"],
+                          lambda ob: transfer_weights(ob, ch.flesh, ch.arm))
+            made[stock.name] = "stock"
+            rep["stock"] = {"top_z": round(max(p[2] for p in srings[-1]), 3)}
+    if ch.trim_seams.get("cuff") and sleeves:
+        tree, _ = None, None
+        verts, polys = [], []
+        for o in sleeves:
+            base = len(verts)
+            verts += [o.matrix_world @ v.co for v in o.data.vertices]
+            polys += [[base + i for i in p.vertices] for p in o.data.polygons]
+        tree = BVHTree.FromPolygons(verts, polys)
+        seg = am.segments(ch.arm)
+        k = CUFF
+        rows = {}
+        for side in ("l", "r"):
+            head, wrist = (Vector(x) for x in seg[P + f"forearm_{side}"])
+            axis = (wrist - head).normalized()
+            u = Vector((0.0, 1.0, 0.0))
+            u = (u - axis * u.dot(axis)).normalized()
+            w = axis.cross(u)
+            ds = []
+            for t in np.linspace(-k["depth"], -0.01, 6):
+                c0 = wrist + axis * float(t)
+                for a in ts:
+                    rad = u * math.cos(a) + w * math.sin(a)
+                    loc = tree.ray_cast(c0 + rad * 0.15, -rad, 0.15)[0]
+                    if loc is not None:
+                        ds.append((loc - c0).length)
+            if not ds:
+                continue
+            r = min(max(ds), float(np.median(ds)) + 0.008) + k["clear"]
+            rings = [[wrist + axis * t + (u * math.cos(a) + w * math.sin(a)) * (r + k["flare"] * f) for a in ts]
+                     for t, f in ((k["past"], 0.0), (-k["depth"] * 0.5, 0.5), (-k["depth"], 1.0))]
+            bone = P + f"forearm_{side}"
+            cuff = _band(ch, f"cuff_{side}", "facings", rings, k["thickness"],
+                         lambda ob, bone=bone: [{bone: 1.0} for _ in ob.data.vertices])
+            made[cuff.name] = "facings"
+            rows[side] = {"radius_mm": round(1000 * r, 1), "sleeve_max_mm": round(1000 * max(ds), 1),
+                          "sleeve_median_mm": round(1000 * float(np.median(ds)), 1)}
+        rep["cuffs"] = rows
+    return rep
 
 
 def inherit_weights(obj, ch, under):

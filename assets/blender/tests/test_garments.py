@@ -87,6 +87,23 @@ def _inside(pt, poly):
     return c
 
 
+class TailoredTrim(unittest.TestCase):
+    """`garments.TRIM_PANELS`: dropped after the drape and rebuilt as bands (`drape.tailored`)."""
+
+    def test_trim_panels_can_be_dropped(self):
+        panels, seams = gm.coat()
+        for n in gm.TRIM_PANELS:
+            self.assertIn(n, panels)
+            self.assertFalse(panels[n].skirt)
+            self.assertIsNone(panels[n].tack)
+            # Each is sewn to a kept panel: that seam is what the band is fitted to.
+            self.assertTrue(any({l[0] for l in s.a} == {n} and not {l[0] for l in s.b} & set(gm.TRIM_PANELS)
+                                for s in seams), n)
+        self.assertFalse([p.name for p in panels.values() if p.tack in gm.TRIM_PANELS])
+        # The lapel keeps the facings key alive without them (the default coat).
+        self.assertIn("facings", {p.key for n, p in panels.items() if n not in gm.TRIM_PANELS})
+
+
 class Period17(unittest.TestCase):
     """The 17th century's garments (docs/clothing.md, "17th century")."""
 
