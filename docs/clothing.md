@@ -1230,7 +1230,7 @@ hair, caps (not drawn by the game) and fringes are ignored.
 
 | column | meaning | flag when (`clothaudit.LIMITS`) |
 |---|---|---|
-| `poke_stand`, `poke_walk`, `poke_mm`, `poke_over`, `poke_at` | vertices 2-25 mm outside a same-facing triangle of a layer above; the deepest, the layer, the bone | > 12 (skin: > 4) |
+| `poke_stand`, `poke_walk`, `poke_mm`, `poke_over`, `poke_at` | vertices 2-25 mm outside a same-facing triangle of a layer above; the deepest, the layer, the bone. The turned hem strips (`hem_rim`: boundary triangles under 8 mm wide, and their ring vertices) neither cover nor poke | > 12 (skin: > 4) |
 | `rag_mm`, `teeth_per_m`, `rag_loop_cm`, `rag_at` | the worst open outline: mean distance of its reversal vertices from their neighbours' chord, and reversals of the turning direction per metre (outlines under an upper layer, and seams shared with another object, are skipped) | > 8 mm and > 2 per m |
 | `holes_stand`, `holes_walk` | skin vertices no layer covers although 85 % of the skin within 4 cm is covered, counted for the garment round them | > 4 |
 | `seam_cm`, `seam_gap_mm` | boundary facing other boundary of the same garment within 2.5 cm (a seam left open, a slit) | > 15 cm |

@@ -5,7 +5,7 @@ walk clip the way the game would, and gives each garment numbers for what makes 
 read as buggy mesh:
 
 - **poke**: vertices of an inner layer (or the skin, or a stump cap) that lie outside the
-  layer above them (`poke`);
+  layer above them (`poke`); the turned-under hem strips (`hem_rim`) neither cover nor poke;
 - **ragged edges**: how far the open boundary loops (hems, collars, cuffs, tops) leave their
   own smoothed outline and how many teeth they have per metre (`loop_raggedness`);
 - **holes**: skin not covered inside a covered region (`skin_holes`), and boundary edges of
@@ -55,6 +55,7 @@ SEAM_NEAR = 0.025  # boundary within this distance of other boundary of the same
 SEAM_ARC = 0.06  # ... that lies at least this far along the loop
 DRAPED_MIN_ANGLE = 45.5  # median smallest angle of a draped (Delaunay lattice) garment
 KNN = 16
+HEM_RIM = 0.008  # m: a boundary strip narrower than this is a turned hem (`drape.hems`: 4 mm in, 4 mm back)
 
 # Meshes that are neither garment nor cover.
 IGNORE = ("caps", "fringe", "hair", "beard", "bones", "brow", "eye", "teeth", "tongue", "lash")
@@ -337,6 +338,31 @@ def boundary_loops(tri):
             if (min(v, n), max(v, n)) not in used:
                 loops.append(walk(v, n))
     return loops
+
+
+def hem_rim(pos, tri, inv, width=HEM_RIM):
+    """The turned-under hem of a garment (`drape.hems`, `drape.hem`): (mask of the triangles
+    of the strip, mask of the vertices of its inner ring). A strip triangle touches the open
+    boundary and is narrower than `width` (its height over its longest edge); a ring vertex
+    is a boundary vertex with strip triangles only. The strip lies under its own cloth and
+    faces the body: it covers nothing and cannot poke, so the layer checks leave it out.
+    `inv` welds the split copies (`weld`)."""
+    tmask, vmask = np.zeros(len(tri), bool), np.zeros(len(pos), bool)
+    if len(tri) == 0:
+        return tmask, vmask
+    wt = inv[tri]
+    ok = (wt[:, 0] != wt[:, 1]) & (wt[:, 1] != wt[:, 2]) & (wt[:, 0] != wt[:, 2])
+    u, _inv, cnt = edges_of(wt[ok])
+    edge = np.zeros(int(inv.max()) + 1, bool)
+    edge[u[cnt == 1].ravel()] = True
+    a, b, c = pos[tri[:, 0]], pos[tri[:, 1]], pos[tri[:, 2]]
+    longest = np.maximum(np.maximum(np.linalg.norm(b - a, axis=1), np.linalg.norm(c - b, axis=1)), np.linalg.norm(a - c, axis=1))
+    height = np.linalg.norm(np.cross(b - a, c - a), axis=1) / np.maximum(longest, 1e-12)
+    tmask = ok & edge[wt].any(axis=1) & (height < width)
+    wide = np.zeros(len(edge), bool)
+    wide[wt[ok & ~tmask].ravel()] = True
+    vmask = edge[inv] & ~wide[inv]
+    return tmask, vmask
 
 
 def resample(points, closed, step=0.01):
@@ -778,6 +804,8 @@ def audit(path, unit=None, shape=None):
                       "made": str(ex.get("acr_garment") or ""),
                       "wtri": welded_triangles(tri, inv), "inv": inv, "bones": m.dominant_bones(ni, geo),
                       "stand": m.skinned(ni, geo, stand_w), "walk": m.skinned(ni, geo, walk_w)})
+        # The turned hem covers nothing and cannot poke: out of the layer checks.
+        parts[-1]["rim_tri"], parts[-1]["rim_vert"] = hem_rim(parts[-1]["stand"], tri, inv)
     garm = [p for p in parts if p["role"] == "garment"]
     # Vertices that coincide with another garment's: seams between the objects of one sewn
     # garment (body and sleeves, coat and facings), not open edges.
@@ -838,7 +866,7 @@ def audit(path, unit=None, shape=None):
         if above and loops:
             apos = np.concatenate([q["stand"] for q in above])
             off = np.cumsum([0] + [len(q["stand"]) for q in above])
-            atri = np.concatenate([q["tri"] + off[i] for i, q in enumerate(above)])
+            atri = np.concatenate([q["tri"][~q["rim_tri"]] + off[i] for i, q in enumerate(above)])
             h, _t, _n = cover_heights(wp["stand"], apos, atri)
             hidden = np.isfinite(h) & (h < 0.002) & (h > -COVER_MM / 1000.0)
             loops = [(ch, cl) for ch, cl in loops if hidden[ch].mean() < 0.6]
@@ -871,8 +899,8 @@ def audit(path, unit=None, shape=None):
                 continue
             pos = np.concatenate([q[pose] for q in above])
             off = np.cumsum([0] + [len(q[pose]) for q in above])
-            tri = np.concatenate([q["tri"] + off[i] for i, q in enumerate(above)])
-            owner = np.concatenate([np.full(len(q["tri"]), i) for i, q in enumerate(above)])
+            tri = np.concatenate([q["tri"][~q["rim_tri"]] + off[i] for i, q in enumerate(above)])
+            owner = np.concatenate([np.full(int((~q["rim_tri"]).sum()), i) for i, q in enumerate(above)])
             lo, hi = p[pose].min(axis=0) - 0.08, p[pose].max(axis=0) + 0.08
             cen = pos[tri].mean(axis=1)
             keep = np.all((cen > lo) & (cen < hi), axis=1)
@@ -882,6 +910,8 @@ def audit(path, unit=None, shape=None):
             nrm = vertex_normals(p[pose], p["tri"])
             row = rows[p["key"]]
             mask, mm, own, covered = poke(p[pose], nrm, pos, tri, owner)
+            mask, covered = mask & ~p["rim_vert"], covered & ~p["rim_vert"]
+            mm = np.where(mask, mm, 0.0)
             row["poke_" + pose] = int(mask.sum())
             row["poke_mm"] = round(max(row["poke_mm"], float(mm.max()) if len(mm) else 0.0), 1)
             if mask.any():

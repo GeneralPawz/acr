@@ -157,6 +157,38 @@ class Geometry(unittest.TestCase):
         # The far side of a tube faces the other way: not a poke.
         self.assertFalse(ca.poke(pts[:1], -nrm[:1], pos, tri, np.zeros(len(tri), int))[0][0])
 
+    def test_turned_hem_is_no_cover(self):
+        # Two cloths 3 mm apart, each with its +x edge turned under by 4 mm (`drape.hems`);
+        # the lower one shows 6 mm past the upper one's edge (a waistcoat in the coat's
+        # opening). Both strips face down and out: the lower ring lies "outside" the upper
+        # strip along that normal, which is no poke.
+        pos, tri = grid(4, 4)
+        n = len(pos)
+        turned = np.array([[0.08 - 0.004, y * 0.02, -0.004] for y in range(5)])
+        strip = []
+        for y in range(4):
+            a, b, c, d = y * 5 + 4, y * 5 + 9, n + y + 1, n + y
+            strip += [[a, c, b], [a, d, c]]
+        upper, utri = np.concatenate([pos, turned]), np.concatenate([tri, np.array(strip)])
+        inv, _n = ca.weld(upper)
+        tmask, vmask = ca.hem_rim(upper, utri, inv)
+        self.assertEqual(int(tmask.sum()), 8)
+        self.assertTrue(tmask[len(tri):].all())
+        self.assertEqual(np.nonzero(vmask)[0].tolist(), list(range(n, n + 5)))
+        self.assertLess(ca.face_normals(upper, utri)[0][tmask][:, 2].max(), -0.5)
+        lower = upper + np.array([0.006, 0.0, -0.003])
+        nrm = ca.vertex_normals(lower, utri)
+        owner = np.zeros(len(utri), int)
+        raw = ca.poke(lower, nrm, upper, utri, owner)[0]
+        self.assertGreater(int(raw[vmask].sum()), 0)  # the artefact: ring against strip
+        fixed = ca.poke(lower, nrm, upper, utri[~tmask], owner[~tmask])[0] & ~vmask
+        self.assertEqual(int(fixed.sum()), 0)
+        # A plain grid has no hem, and real poke through the cloth still counts.
+        self.assertFalse(ca.hem_rim(pos, tri, ca.weld(pos)[0])[0].any())
+        through = np.array([[0.04, 0.04, 0.006]])
+        up = np.array([[0.0, 0.0, 1.0]])
+        self.assertTrue(ca.poke(through, up, upper, utri[~tmask], owner[~tmask])[0][0])
+
     def test_skin_holes(self):
         pos, tri = grid(10, 10)
         cover = pos + np.array([0.0, 0.0, 0.01])
