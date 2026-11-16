@@ -52,6 +52,8 @@ CLOTH = {
              # the sewing springs stay strong while the cloth settles, and what the sim leaves
              # open is closed over `ease` rings of cloth before the weld (`ease_closed`, #523)
              "sew_hold": True, "ease": 16,
+             # the better half of the draped coat mirrored onto the other (`drape.mirror_half`)
+             "mirror": True,
              # gravity from frame 12 of the sewing phase: the skirts hang while the seams close
              # (weightless they were flung up and one stayed folded at mid-thigh, `simulate`)
              "weightless": 12,
@@ -243,6 +245,19 @@ def _circle(cx, cy, r, a0, a1, n):
 
 
 SCYE_DROP = 3.0  # cm
+# cm the coat's body is longer than the back length + 2, below the armhole line: its path up
+# the chest, over the gap and the slope of the shoulder. Without it the body jumped 10 cm up
+# as the shoulder seams closed (waist seam at z 1.15, not 1.04; #523). Half of it is below
+# the waist line at the start (`place["lift"]`), so the neck point starts on the shoulder.
+COAT_RISE = 10.0
+MIRROR_HEM = 20.0  # `half_score`: one cm of skirt drawn up counts as this many bad edges
+
+
+def half_score(stretched, folds, hem_up_cm):
+    """Badness of one half of a draped garment (`drape.mirror_half`): edges stretched past 1.5
+    times the lattice spacing, folded edges, and the cm its skirt's lowest point is above
+    the other half's. The lower score is kept and mirrored."""
+    return stretched + folds + MIRROR_HEM * max(0.0, hem_up_cm)
 
 
 def coat(m=MEASURE):
@@ -258,7 +273,7 @@ def coat(m=MEASURE):
     ah = back_len * 0.5 + SCYE_DROP
     fw_c, bw_c = q_chest + 3.5, q_chest - 3.5  # side seams set to the back
     fw_w, bw_w = q_waist + 4.0, q_waist - 6.0  # the backs narrow into the side pleats
-    top = back_len + 2.0  # neck point above the waist (over the shoulder)
+    top = back_len + 2.0 + COAT_RISE  # neck point above the waist (over the shoulder)
     sh = m["shoulder"]
     neck_r = m["neck"] / (2 * math.pi) + 0.6
     P = {}
@@ -273,7 +288,8 @@ def coat(m=MEASURE):
     P["coat_front"] = Panel("coat_front", "coat", "coat", front,
                             {"waist": (0, 1), "side": (1, 2), "armhole": (2, 5), "shoulder": (5, 6),
                              "neck": (6, 8), "cf": (8, 0), "hook": (8, 9)},
-                            {"region": "torso", "theta": 0.0, "dir": 1, "u0": 0.0, "at": "waist", "gap": 2.5})
+                            {"region": "torso", "theta": 0.0, "dir": 1, "u0": 0.0, "at": "waist", "gap": 2.5,
+                             "lift": -COAT_RISE / 2})
     # Lapel (facing colour): sewn along the CF edge, lying back on the chest, wider at the
     # top (the 1768 lapel ran to the waist, 7.5 cm wide at the top).
     lp = [(0.0, 0.0), (6.0, 0.0), (8.0, top - neck_r * 1.3 - 4.0), (7.0, top - neck_r * 1.3),
@@ -287,7 +303,8 @@ def coat(m=MEASURE):
     P["coat_back"] = Panel("coat_back", "coat", "coat", back,
                            {"waist": (0, 1), "side": (1, 2), "armhole": (2, 4), "shoulder": (4, 5),
                             "neck": (5, 6), "cb": (6, 0)},
-                           {"region": "torso", "theta": 180.0, "dir": -1, "u0": 0.0, "at": "waist", "gap": 2.5})
+                           {"region": "torso", "theta": 180.0, "dir": -1, "u0": 0.0, "at": "waist", "gap": 2.5,
+                            "lift": -COAT_RISE / 2})
     # Skirts: waist seam to the knee, flared (the pleats at the side are let out as flare).
     drop = m["waist_to_knee"] + 2.0
     # The front edge curves away below the waist (cutaway); v rises from the hem.

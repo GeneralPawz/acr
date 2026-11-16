@@ -875,6 +875,95 @@ def resolve(obj, layers, gap, keep=(), rounds=4, relax=6, reach=0.06, fold=-0.2)
     return pushed, first, left
 
 
+MIRROR_RINGS = 6  # rings of cloth that follow a seam vertex moved onto the mid-plane
+MIRROR_CLEAR = 0.002  # m: cloth of the kept half that lies across the mid-plane is put this far on its own side
+
+
+def mirror_half(obj, spacing, skirt_ids=()):
+    """`CLOTH[g]["mirror"]`: the body, the rest pose and the draft are mirror-symmetric, one
+    sim run is not. Scores the left (x > 0) and the right copies of the mirrored panels
+    (`garments.half_score`: stretched edges, folded edges, the skirt's hem above the other
+    side's), keeps the better half and replaces the other by its mirror image. Seams between
+    the halves (centre back, the hook) are laid on the mid-plane, `MIRROR_RINGS` rings of
+    cloth following; panels cut in one across the middle are cut at the plane. Returns the
+    stats (kept side, scores, how far the seam was off the plane)."""
+    bm = bmesh.new()
+    bm.from_mesh(obj.data)
+    lay, sd = bm.faces.layers.int.get("panel"), bm.faces.layers.int.get("side")
+    parts = {}
+    for s in (1, -1):
+        stretched = folds = 0
+        lo = None
+        for e in bm.edges:
+            if not any(f[sd] == s for f in e.link_faces):
+                continue
+            if e.calc_length() > 1.5 * spacing:
+                stretched += 1
+            if len(e.link_faces) == 2 and e.link_faces[0].normal.dot(e.link_faces[1].normal) < -0.2:
+                folds += 1
+        for f in bm.faces:
+            if f[sd] == s and f[lay] in skirt_ids:
+                z = min(v.co.z for v in f.verts)
+                lo = z if lo is None else min(lo, z)
+        parts[s] = (stretched, folds, lo)
+    los = [p[2] for p in parts.values() if p[2] is not None]
+    score = {s: gm.half_score(p[0], p[1], 100.0 * (p[2] - min(los)) if p[2] is not None else 0.0) for s, p in parts.items()}
+    good = 1 if score[1] <= score[-1] else -1
+    seam = [v for v in bm.verts if any(f[sd] == good for f in v.link_faces) and any(f[sd] == -good for f in v.link_faces)]
+    bmesh.ops.delete(bm, geom=[f for f in bm.faces if f[sd] == -good], context="FACES")
+    mid = [f for f in bm.faces if f[sd] == 0]
+    if mid:
+        geom = list({v for f in mid for v in f.verts}) + list({e for f in mid for e in f.edges}) + mid
+        bmesh.ops.bisect_plane(bm, geom=geom, plane_co=(0, 0, 0), plane_no=(-good, 0, 0), clear_outer=True, dist=1e-5)
+    bmesh.ops.delete(bm, geom=[v for v in bm.verts if not v.link_faces], context="VERTS")
+    seam = [v for v in seam if v.is_valid]
+    # The seam onto the plane, the cloth round it following (less per ring).
+    off = max((abs(v.co.x) for v in seam), default=0.0)
+    shift = {v: -v.co.x for v in seam}
+    ring, seen = list(seam), set(seam)
+    for k in range(1, MIRROR_RINGS + 1):
+        nxt = {}
+        for v in ring:
+            for e in v.link_edges:
+                o = e.other_vert(v)
+                if o not in seen and abs(o.co.x) > 1e-6:
+                    nxt.setdefault(o, []).append(shift[v])
+        for o, xs in nxt.items():
+            shift[o] = sum(xs) / len(xs)
+            seen.add(o)
+        ring = list(nxt)
+        w = 1.0 - k / (MIRROR_RINGS + 1.0)
+        for o in ring:
+            o.co.x += shift[o] * w
+    for v in seam:
+        v.co.x = 0.0
+    on_plane = {v for v in bm.verts if abs(v.co.x) < 1e-6}
+    crossed = 0
+    for v in bm.verts:
+        if v not in on_plane and v.co.x * good < MIRROR_CLEAR:
+            v.co.x = good * MIRROR_CLEAR
+            crossed += 1
+    side_v = bm.verts.layers.float.get("_side")
+    dup = bmesh.ops.duplicate(bm, geom=list(bm.verts) + list(bm.edges) + list(bm.faces))["geom"]
+    new_f = [x for x in dup if isinstance(x, bmesh.types.BMFace)]
+    for x in dup:
+        if isinstance(x, bmesh.types.BMVert):
+            x.co.x = -x.co.x
+            if side_v:
+                x[side_v] = -x[side_v]
+    for f in new_f:
+        f[sd] = -f[sd]
+    bmesh.ops.reverse_faces(bm, faces=new_f)
+    bmesh.ops.remove_doubles(bm, verts=[v for v in bm.verts if abs(v.co.x) < 1e-6], dist=1e-5)
+    bm.normal_update()
+    bm.to_mesh(obj.data)
+    bm.free()
+    obj.data.update()
+    return {"kept": "l" if good == 1 else "r", "score": [round(score[1], 1), round(score[-1], 1)],
+            "stretched": [parts[1][0], parts[-1][0]], "folds": [parts[1][1], parts[-1][1]],
+            "seam_off_mm": round(1000 * off, 1), "seam_verts": len(seam), "crossed": crossed}
+
+
 def calm_seam(obj, skirt_ids, rings=5, along=10, passes=12):
     """The waist seam made a calm line (#523): the vertices shared by skirt panels (face
     attribute `panel` in `skirt_ids`) and body panels are smoothed along the seam (`along`
@@ -1723,8 +1812,10 @@ def dress(ch, garments=gm.ORDER, report=None, patterns=None, over=(), post_weld=
                         pu.data[pc.base + i].value, pv.data[pc.base + i].value = u, v
                         sd.data[pc.base + i].value = (1.0 if key[1] == "L" else -1.0) if pc.panel.mirror else 0.0
         # from_pydata keeps the face order.
-        for i, (n, _s) in enumerate(finfo):
+        fs = me.attributes.new("side", "INT", "FACE")  # 1: the wearer's left copy (x > 0), -1: right, 0: one panel across
+        for i, (n, s_) in enumerate(finfo):
             fa.data[i].value = names.index(n)
+            fs.data[i].value = (1 if s_ == "L" else -1) if panels[n].mirror else 0
         dt, gaps_sewn = 0.0, []
         if not g.startswith("shirt"):
             # `in_shoes`: stockings are draped without the shoes and run down into them.
@@ -1737,7 +1828,7 @@ def dress(ch, garments=gm.ORDER, report=None, patterns=None, over=(), post_weld=
                 _collision(ch.shoes)
         ev = obj.data
         skirt_ids = {names.index(n) for n, pn in panels.items() if pn.skirt and not pn.tack}
-        hem_z = {}
+        hem_z, waist_z = {}, {}
 
         def hem_stage(tag):
             # lowest point of the skirt panels per side (cm): unequal skirts show here (#523)
@@ -1753,6 +1844,18 @@ def dress(ch, garments=gm.ORDER, report=None, patterns=None, over=(), post_weld=
                             k_ = "l" if c_.x > 0 else "r"
                             lo[k_] = c_.z if lo[k_] is None else min(lo[k_], c_.z)
             hem_z[tag] = [round(100 * (lo[k_] or 0.0), 1) for k_ in ("l", "r")]
+            # the waist seam (vertices shared by skirt and body panels): mean height per side
+            sk_, bo_ = set(), set()
+            for p_ in obj.data.polygons:
+                if lay_[p_.index].value in skirt_ids:
+                    sk_.update(p_.vertices)
+                elif not panels[names[lay_[p_.index].value]].skirt:  # not the turnback inlays
+                    bo_.update(p_.vertices)
+            zs = {"l": [], "r": []}
+            for vi in sk_ & bo_:
+                c_ = obj.data.vertices[vi].co
+                zs["l" if c_.x > 0 else "r"].append(c_.z)
+            waist_z[tag] = [round(100 * sum(zs[k_]) / max(len(zs[k_]), 1), 1) for k_ in ("l", "r")]
 
         hem_stage("sim")
         longest = max(((ev.vertices[e.vertices[0]].co - ev.vertices[e.vertices[1]].co).length
@@ -1801,6 +1904,11 @@ def dress(ch, garments=gm.ORDER, report=None, patterns=None, over=(), post_weld=
             resolved = resolve(obj, [ch.flesh] + under, gm.CLOTH[g].get("margin", 0.004),
                                keep=[v.index for v in obj.data.vertices if pin and any(e.group == pin.index for e in v.groups)])
         hem_stage("resolved")
+        mirrored = None
+        if gm.CLOTH.get(g, {}).get("mirror"):
+            # One sim run tangles one side or the other: the better half, mirrored (#523).
+            mirrored = mirror_half(obj, SPACING.get(g, 3.5) / 100.0, skirt_ids)
+            hem_stage("mirrored")
         if gm.CLOTH.get(g, {}).get("pleats"):
             pleat(obj, panels, names, gm.CLOTH[g]["pleats"], ch=ch, under=under)
         if post_weld is not None:
@@ -1870,6 +1978,7 @@ def dress(ch, garments=gm.ORDER, report=None, patterns=None, over=(), post_weld=
             bm.to_mesh(part.data)
             bm.free()
             part.data.attributes.remove(part.data.attributes["panel"])
+            part.data.attributes.remove(part.data.attributes["side"])
             if not len(part.data.polygons):
                 bpy.data.objects.remove(part)
                 continue
@@ -1925,6 +2034,9 @@ def dress(ch, garments=gm.ORDER, report=None, patterns=None, over=(), post_weld=
                     "gap_mm_at_weld": round(1000 * eased, 1)}
         if hem_z:
             stats[g]["skirt_hem_cm"] = hem_z
+            stats[g]["waist_seam_cm"] = waist_z
+        if mirrored:
+            stats[g]["mirror"] = mirrored
         if resolved:
             # `resolve`: vertices pushed off the layers beneath, folded edges before and after
             stats[g].update(pushed_off=resolved[0], folds=resolved[1], folds_left=resolved[2])

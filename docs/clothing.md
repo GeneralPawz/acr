@@ -1301,9 +1301,36 @@ shoulders.
   skirt's are within 2 %), and it creeps there under gravity between frames 30 and 75. The
   cloth is tangled on the layers beneath at the back waist (not yet shown which; the
   breeches' seat is the suspect). This is also the "back waist bunches" of the third slice.
-- The body's 10 cm jump itself is open: the body panels are about 10 cm short for their
+- The body's 10 cm jump itself (fixed in the sixth slice): the body panels are about 10 cm short for their
   path over the chest and shoulder, so the waist seam sits high and the hem ends at 0.57
   instead of 0.48.
+
+### Longer body, mirrored half (#523, sixth slice)
+
+- **Length:** `garments.COAT_RISE` = 10 cm: the coat's body panels are that much longer than
+  the back length + 2 below the armhole line (the armhole keeps its depth, `SCYE_DROP`) and
+  start half of it below the waist line (`place["lift"]`), so the neck point starts on the
+  shoulder and nothing jumps as the shoulder seams close. EngF18: waist seam z 1.15 -> 1.06
+  (`drape.coat.waist_seam_cm`, mean per side), skirt hems 70.1 / 56.1 -> 50.4 / 49.8 cm
+  after the sim (drafted 48): without the jump the left skirt is no longer flung up, which
+  was "cause 2" above. Sim seam gaps max 42 -> 41 mm, side seam 37 -> 16.
+- **`CLOTH[g]["mirror"]`** (`drape.mirror_half`, after `resolve`, before the trim and the
+  weights; on for `coat`): each half (the `L` and `R` copies of the mirrored panels, face
+  attribute `side`) is scored with `garments.half_score` (edges longer than 1.5 times the
+  spacing + folded edges + 20 per cm its skirt hem is above the other's); the better one is
+  kept and mirrored. Vertices shared by both halves (centre back, the hook) are laid on
+  x = 0 with 6 rings of cloth following; other cloth of the kept half that lies across the
+  middle is put 2 mm on its own side; panels cut in one across the middle are cut at the
+  plane. Stats `drape.coat.mirror`: EngF18 kept `r` (scores 464.5 / 299.0: the left waist
+  seam was still 6.5 cm higher, 112.2 / 105.5 cm), seam up to 18.6 mm off the plane,
+  139 vertices across it. Lapels, cuffs and the cut front edge follow (`tailored` after it).
+- EngF18 audit, slice 3 -> 6: lapel_l poke 55 -> 43, lapel_r 22 -> 15, flesh poke 106 -> 85;
+  worse: coat poke 312 -> 333, coat holes (walk) 3 -> 8, flesh holes (walk) 7 -> 19, coat
+  skirts 44 -> 54, stock 67 -> 80, waistcoat 25 -> 32.
+- Open: dark folded triangles on the chest and shoulders, now on both sides alike (the kept
+  half has 42 folded edges); the mirrored halves overlap at the back vent (both 2 mm off the
+  plane); waistcoat and breeches are not mirrored (they have no skirt tangle; their seams
+  at the centre would need the same treatment and `close` is set for neither).
 
 ## Hems (#523)
 

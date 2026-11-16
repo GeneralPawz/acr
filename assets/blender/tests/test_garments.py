@@ -67,6 +67,24 @@ class Patterns(unittest.TestCase):
         self.assertAlmostEqual(r[-1][1], 4.0)
         self.assertAlmostEqual(gm.polyline_length(r), 7.0, places=6)
 
+    def test_half_score_prefers_the_hanging_half(self):
+        # `drape.mirror_half`: a skirt drawn up 14 cm loses against a few more folds.
+        self.assertLess(gm.half_score(30, 40, 0.0), gm.half_score(10, 5, 14.0))
+        self.assertLess(gm.half_score(3, 2, 0.0), gm.half_score(30, 40, 0.0))
+        self.assertEqual(gm.half_score(1, 2, -3.0), 3)
+        self.assertTrue(gm.CLOTH["coat"]["mirror"])
+
+    def test_coat_body_long_enough_for_the_shoulder(self):
+        # The body is `COAT_RISE` longer than the back length + 2 below the armhole line
+        # and starts half of that below the waist line; the armhole keeps its depth.
+        p = gm.coat()[0]
+        top = gm.MEASURE["nape_to_waist"] + 2.0 + gm.COAT_RISE
+        self.assertAlmostEqual(p["coat_back"].bounds()[3], top, places=6)
+        ah = gm.MEASURE["nape_to_waist"] * 0.5 + gm.SCYE_DROP
+        self.assertAlmostEqual(p["coat_front"].outline[2][1], top - ah, places=6)
+        for n in ("coat_front", "coat_back"):
+            self.assertAlmostEqual(p[n].place["lift"], -gm.COAT_RISE / 2)
+
     def test_drafted_to_measure(self):
         big = dict(gm.MEASURE, chest=gm.MEASURE["chest"] + 12.0)
         a = gm.coat()[0]["coat_front"].bounds()[2]
