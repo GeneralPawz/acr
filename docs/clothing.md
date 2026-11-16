@@ -1286,6 +1286,25 @@ shoulders.
   relaxing; torn bits remain at the side-back of the waist seam; the belt's front edge is
   still kinked across its width (per-row slope); lapels are still fitted to the draped trace.
 
+### Unequal back skirts: half fixed (#523, fifth slice, open)
+
+- `stats.json` -> `drape.coat.skirt_hem_cm`: the lowest point of the skirt panels per side
+  (`[left, right]`, cm) after the sim, the easing, the weld and `resolve`. The difference is
+  there after the sim; nothing later changes it.
+- **Cause 1 (fixed):** the coat's body jumps about 10 cm up in the first 10 frames as the
+  shoulder and armhole seams close (the waist seam ends at z = 1.15, not 1.04). Weightless
+  for the whole sewing phase, the skirts flew on up to the horizontal. `CLOTH["coat"]
+  ["weightless"]` = 12 (`simulate`): gravity fades in from frame 12. EngF18 hems
+  80.5 / 56.8 -> 70.1 / 56.1 cm, folds 396 -> 242, worst seam 49 -> 42 mm.
+- **Cause 2 (open):** the top 15 cm of the left back skirt is drawn up into the waist seam
+  (cloth cut at z 0.89-1.04 ends at 1.11-1.17, edges stretched up to 2.2 times; the right
+  skirt's are within 2 %), and it creeps there under gravity between frames 30 and 75. The
+  cloth is tangled on the layers beneath at the back waist (not yet shown which; the
+  breeches' seat is the suspect). This is also the "back waist bunches" of the third slice.
+- The body's 10 cm jump itself is open: the body panels are about 10 cm short for their
+  path over the chest and shoulder, so the waist seam sits high and the hem ends at 0.57
+  instead of 0.48.
+
 ## Hems (#523)
 
 `drape.hems(ch)` runs in `Character.morphs` (every family; `drape.HEMS = True`) over each

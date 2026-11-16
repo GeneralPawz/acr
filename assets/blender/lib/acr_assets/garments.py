@@ -52,6 +52,9 @@ CLOTH = {
              # the sewing springs stay strong while the cloth settles, and what the sim leaves
              # open is closed over `ease` rings of cloth before the weld (`ease_closed`, #523)
              "sew_hold": True, "ease": 16,
+             # gravity from frame 12 of the sewing phase: the skirts hang while the seams close
+             # (weightless they were flung up and one stayed folded at mid-thigh, `simulate`)
+             "weightless": 12,
              # the skirts' top takes the body's weights at the waist seam (`drape.finish`)
              "skirt_follow": True},
     "waistcoat": {"thickness": 0.0020, "mass": 0.30, "tension": 15.0, "bending": 0.8, "shrink": 0.05, "margin": 0.004},

@@ -710,7 +710,11 @@ def simulate(obj, settings, sew=(), frames=None):
     mod.point_cache.frame_end = frames
     base = 'modifiers["acr_cloth"].settings.'
     s1 = SEW_FRAMES
-    _key(obj, base + "effector_weights.gravity", [(1, 0.0), (s1, 0.0), (s1 + 8, 1.0)])
+    # `weightless`: frames without gravity (default the whole sewing phase). The coat's body
+    # jumps about 10 cm up as its shoulder and armhole seams close (10 frames); weightless
+    # for all 45, its skirts flew on up to the horizontal and one fell back folded (#523).
+    g0 = min(settings.get("weightless", s1), s1)
+    _key(obj, base + "effector_weights.gravity", [(1, 0.0), (g0, 0.0), (g0 + 8, 1.0)])
     # `sew_hold`: the seams stay pulled shut while the cloth settles (a fitted coat's side and
     # armhole seams opened again under gravity at the weaker force).
     _key(obj, base + "sewing_force_max", [(1, 5.0), (s1 // 3, SEW_FORCE), (s1, SEW_FORCE),
@@ -1732,6 +1736,25 @@ def dress(ch, garments=gm.ORDER, report=None, patterns=None, over=(), post_weld=
             if bare:
                 _collision(ch.shoes)
         ev = obj.data
+        skirt_ids = {names.index(n) for n, pn in panels.items() if pn.skirt and not pn.tack}
+        hem_z = {}
+
+        def hem_stage(tag):
+            # lowest point of the skirt panels per side (cm): unequal skirts show here (#523)
+            if not skirt_ids or not gm.CLOTH.get(g, {}).get("ease"):
+                return
+            lay_ = obj.data.attributes["panel"].data
+            lo = {"l": None, "r": None}
+            for p_ in obj.data.polygons:
+                if lay_[p_.index].value in skirt_ids:
+                    for vi in p_.vertices:
+                        c_ = obj.data.vertices[vi].co
+                        if abs(c_.x) > 0.02:
+                            k_ = "l" if c_.x > 0 else "r"
+                            lo[k_] = c_.z if lo[k_] is None else min(lo[k_], c_.z)
+            hem_z[tag] = [round(100 * (lo[k_] or 0.0), 1) for k_ in ("l", "r")]
+
+        hem_stage("sim")
         longest = max(((ev.vertices[e.vertices[0]].co - ev.vertices[e.vertices[1]].co).length
                        for e in ev.edges if not e.is_loose), default=0.0)
         per_seam, worst_at = {}, (0.0, None)
@@ -1752,7 +1775,9 @@ def dress(ch, garments=gm.ORDER, report=None, patterns=None, over=(), post_weld=
         eased = 0.0
         if gm.CLOTH.get(g, {}).get("ease"):
             eased = ease_seams(obj, sew, limits, gm.CLOTH[g]["ease"], set(pins))
+        hem_stage("eased")
         weld(obj, sew, limit=base, limits=limits, fixed=set(pins))
+        hem_stage("welded")
         if not g.startswith("shirt") and bare:
             # Cut level inside the shoes: no ragged edge over them.
             zc = max((ch.shoes.matrix_world @ v.co).z for v in ch.shoes.data.vertices) - float(bare_cut)
@@ -1775,6 +1800,7 @@ def dress(ch, garments=gm.ORDER, report=None, patterns=None, over=(), post_weld=
             calm_seam(obj, {names.index(n) for n, pn in panels.items() if pn.skirt and not pn.tack})
             resolved = resolve(obj, [ch.flesh] + under, gm.CLOTH[g].get("margin", 0.004),
                                keep=[v.index for v in obj.data.vertices if pin and any(e.group == pin.index for e in v.groups)])
+        hem_stage("resolved")
         if gm.CLOTH.get(g, {}).get("pleats"):
             pleat(obj, panels, names, gm.CLOTH[g]["pleats"], ch=ch, under=under)
         if post_weld is not None:
@@ -1897,6 +1923,8 @@ def dress(ch, garments=gm.ORDER, report=None, patterns=None, over=(), post_weld=
                     "worst_gap_at_cm": worst_at[1],
                     # the widest pair left for the weld after `ease_seams` (0: not eased)
                     "gap_mm_at_weld": round(1000 * eased, 1)}
+        if hem_z:
+            stats[g]["skirt_hem_cm"] = hem_z
         if resolved:
             # `resolve`: vertices pushed off the layers beneath, folded edges before and after
             stats[g].update(pushed_off=resolved[0], folds=resolved[1], folds_left=resolved[2])
