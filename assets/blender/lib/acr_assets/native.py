@@ -618,6 +618,124 @@ def _apron(ch, name, z1, w0, w1, over, back=False, lean=0.02, clear=0.004, rows=
     return _authored(ch, name, "breechcloth", sv, sf, groups * 2, "_apron")
 
 
+def _shirt(ch, name="shirt", key="shirt", hem=0.76, offset=0.012, thickness=0.003, n=36, step=0.03, cuff=0.035,
+           sleeve_n=14, sleeve_ease=0.002):
+    """A shirt cut as it was sewn (#523): a body tube from the `hem` to the shoulders, a yoke
+    closing it up to a round neck opening, and two sleeve tubes ending `cuff` m above the
+    wrist, `offset` m off the skin (the body over the legwear already there), loosened over
+    the hollows, the skirt hanging from the hips (`garments.hang`), `thickness` thick with
+    closed rims at hem, cuffs and neck. Returns the object and the hem's outer ring with its
+    weights [(point, groups)] (for a cut fringe)."""
+    from . import garments as gm
+
+    P = ch.prefix
+    seg = am.segments(ch.arm)
+    skin = _trees([ch.flesh])
+    under = _trees([ch.flesh] + [o for o in ch.layers["clothes"] if o.type == "MESH" and o is not getattr(ch, "shoes", None)])
+    hips, neck = seg[P + "hips"][0], seg[P + "neck"][0]
+    sh, el = seg[P + "upperarm_l"]
+    wr = seg[P + "forearm_l"][1]
+    z_top = sh.z + 0.01
+    rows = max(int(math.ceil((z_top - hem) / step)), 4)
+    zs = [hem + (z_top - hem) * j / rows for j in range(rows + 1)]
+    th = [2 * math.pi * i / n for i in range(n)]
+
+    def centre(z):
+        return hips.lerp(neck, min(max((z - hips.z) / max(neck.z - hips.z, 1e-6), 0.0), 1.0))
+
+    R = []
+    for z in zs:
+        c = centre(z)
+        c = Vector((0.0, c.y, z))
+        ring = []
+        for t in th:
+            d = Vector((math.cos(t), math.sin(t), 0.0))
+            if z >= 1.0:
+                r = _from_inside(skin, c, d, 0.30)
+            else:
+                hit = _from_outside(under, c + d * 0.32, -d, 0.32)
+                r = (hit - c).length if hit is not None else None
+            if r is not None and abs(d.x) > 1e-3:
+                r = min(r, (sh.x + 0.015) / abs(d.x))  # the shoulder cap, not the arm
+            ring.append(r)
+        ring = gm.fill_ring(ring, 0.14)
+        R.append([0.5 * (ring[i] + ring[(n // 2 - i) % n]) for i in range(n)])  # left = right
+    hip_row = min(range(rows + 1), key=lambda j: abs(zs[j] - 0.97))
+    for i in range(n):
+        col = gm.hang(gm.loosen([R[j][i] for j in range(rows + 1)], passes=2), hip_row)
+        for j in range(rows + 1):
+            R[j][i] = col[j]
+    R = [gm.loosen(ring, passes=2, closed=True) for ring in R]
+    verts = []
+    for j, z in enumerate(zs):
+        c = centre(z)
+        verts += [((R[j][i] + offset) * math.cos(t), c.y + (R[j][i] + offset) * math.sin(t), z) for i, t in enumerate(th)]
+    # The yoke: from the shoulder ring in and up to the neck opening, lying on the shoulders.
+    zn = neck.z + 0.02
+    nc = Vector((0.0, neck.y, zn))
+    nr = gm.fill_ring([_from_inside(skin, nc, Vector((math.cos(t), math.sin(t), 0.0)), 0.12) for t in th], 0.06)
+    nr = [min(r, 0.085) + 0.022 for r in gm.loosen(nr, passes=1, closed=True)]
+    steps = 5
+    top = verts[rows * n:(rows + 1) * n]
+    for k in range(1, steps + 1):
+        f = k / steps
+        for i, t in enumerate(th):
+            a = Vector(top[i])
+            b = Vector((nr[i] * math.cos(t), neck.y + nr[i] * math.sin(t), zn))
+            p = a.lerp(b, f)
+            p.z = a.z + (b.z - a.z) * (1.0 - (1.0 - f) ** 1.6)  # a rounded shoulder
+            hit = _from_outside(skin, Vector((p.x, p.y, neck.z + 0.05)), Vector((0.0, 0.0, -1.0)), 0.35)
+            if hit is not None:
+                p.z = max(p.z, hit.z + offset)
+            verts.append(tuple(p))
+    tr = rows + steps
+    faces = [(j * n + i, j * n + (i + 1) % n, (j + 1) * n + (i + 1) % n, (j + 1) * n + i) for j in range(tr) for i in range(n)]
+    hem_ring = [verts[i] for i in range(n)]
+    wpts = list(verts)
+    # The left sleeve: rings square to the arm from inside the shoulder to above the wrist.
+    a1, a2 = (el - sh).normalized(), (wr - el).normalized()
+    l1, l2 = (el - sh).length, (wr - el).length
+    s0, s1 = 0.035, l1 + l2 - cuff
+    m = sleeve_n
+    sr = max(int(math.ceil((s1 - s0) / 0.03)), 4)
+    ph = [2 * math.pi * i / m for i in range(m)]
+    frames, SR = [], []
+    for j in range(sr + 1):
+        d = s0 + (s1 - s0) * j / sr
+        c = sh + a1 * d if d <= l1 else el + a2 * (d - l1)
+        ax = a1.lerp(a2, min(max((d - l1 + 0.03) / 0.06, 0.0), 1.0)).normalized()
+        u = ax.cross(Vector((0.0, 1.0, 0.0))).normalized()
+        v = ax.cross(u).normalized()
+        frames.append((c, u, v))
+        ring = [_from_inside(skin, c, u * math.cos(p) + v * math.sin(p), 0.09) for p in ph]
+        SR.append([min(r, 0.062) for r in gm.fill_ring(ring, 0.05)])
+    for i in range(m):
+        col = gm.loosen([SR[j][i] for j in range(sr + 1)], passes=2)
+        for j in range(sr + 1):
+            SR[j][i] = col[j]
+    SR = [gm.loosen(ring, passes=1, closed=True) for ring in SR]
+    base = len(verts)
+    sl, slw = [], []
+    for j, (c, u, v) in enumerate(frames):
+        for i, p in enumerate(ph):
+            d = u * math.cos(p) + v * math.sin(p)
+            sl.append(tuple(c + d * (SR[j][i] + offset + sleeve_ease)))
+            slw.append(tuple(c + d * max(SR[j][i] - 0.002, 0.0)))  # weights from the arm it lies on
+    sf = [(j * m + i, j * m + (i + 1) % m, (j + 1) * m + (i + 1) % m, (j + 1) * m + i) for j in range(sr) for i in range(m)]
+    verts += sl
+    wpts += slw
+    faces += [tuple(base + i for i in f) for f in sf]
+    base = len(verts)
+    verts += [(-x, y, z) for x, y, z in sl]
+    wpts += [(-x, y, z) for x, y, z in slw]
+    faces += [tuple(base + i for i in reversed(f)) for f in sf]
+    groups = _skin_groups(ch, wpts)
+    sv, sfc = _solid(verts, faces, thickness)
+    obj = _authored(ch, name, key, sv, sfc, groups * 2, "_shirt", symmetric=True)
+    k = len(verts)
+    return obj, [(Vector(sv[k + i]), groups[i]) for i in range(n)]
+
+
 def dress(ch, s):
     """The garments of SPEC `s`: authored legwear (#523), shells and modelled panels (the
     clothes layer)."""
@@ -645,8 +763,7 @@ def dress(ch, s):
         for side in (1.0, -1.0):
             _seam_flap(ch, side, line)
     if "shirt" in d:  # `trade_shirt`: drafted and draped over the rest (below)
-        ch.shell("shirt", "shirt", lambda c, n, h, p: (h in TORSO and 0.80 < c.z < 1.50) or h in ARMS
-                 or (h in {"thigh_l", "thigh_r"} and c.z > 0.74), 0.013)
+        _shirt(ch)  # authored (#523): body, yoke and sleeves with a clean hem, cuffs and neck
     belt_off = 0.024 if "shirt" in d else 0.012
     if "breechcloth" in d and "breechcloth" in s["drape"]:
         # One drafted strip between the legs and over the belt, its ends the flaps (#307).

@@ -120,11 +120,22 @@ class NativeLegwear(unittest.TestCase):
         top = gm.flap_follow(0.05, 1.0, 0.93)
         self.assertEqual(top, {"hips": 1.0, "thigh_l": 0.0, "thigh_r": 0.0})
         left, right, mid = (gm.flap_follow(x, 0.60, 0.93) for x in (0.12, -0.12, 0.0))
-        self.assertAlmostEqual(left["thigh_l"], 0.65)
-        self.assertAlmostEqual(right["thigh_r"], 0.65)
+        self.assertAlmostEqual(left["thigh_l"], 1.0)
+        self.assertAlmostEqual(right["thigh_r"], 1.0)
         self.assertAlmostEqual(mid["thigh_l"], mid["thigh_r"])
+        # Across the thigh's width the cloth is all on that thigh (#523: the stride).
+        self.assertAlmostEqual(gm.flap_follow(0.07, 0.70, 0.93)["thigh_l"], 1.0)
         for w in (left, right, mid, gm.flap_follow(0.01, 0.85, 0.93)):
             self.assertAlmostEqual(sum(w.values()), 1.0)
+
+    def test_fill_ring_bridges_gaps(self):
+        self.assertEqual(gm.fill_ring([1.0, None, None, 4.0]), [1.0, 2.0, 3.0, 4.0])
+        self.assertEqual(gm.fill_ring([None, 2.0, None, 2.0]), [2.0, 2.0, 2.0, 2.0])
+        self.assertEqual(gm.fill_ring([None, None], default=0.3), [0.3, 0.3])
+
+    def test_hang_keeps_the_skirt_as_wide_as_the_hips(self):
+        self.assertEqual(gm.hang([1.0, 2.0, 3.0, 2.5, 1.0], 2), [3.0, 3.0, 3.0, 2.5, 1.0])
+        self.assertEqual(gm.hang([3.0, 2.0], 5), [3.0, 2.0])
 
 
 if __name__ == "__main__":

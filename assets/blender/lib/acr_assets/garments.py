@@ -1042,15 +1042,43 @@ def plumb(ys, out=1.0):
     return [first if y is None else y for y in res]
 
 
-def flap_follow(x, z, pivot_z, reach=0.14, most=0.65, blend=0.09):
+def flap_follow(x, z, pivot_z, reach=0.12, most=1.0, blend=0.06):
     """Bone shares of a breechcloth flap vertex at (x across, z up): the hips above the hip
-    joint (`pivot_z`), `most` of it on the thighs from `reach` m below, each half on its own
-    thigh (left = +x), blended over +-`blend` m at the middle."""
+    joint (`pivot_z`); from `reach` m below it the cloth in front of a thigh lies on that
+    thigh (`most` of it, left = +x) across the thigh's whole width, the two halves blended
+    over +-`blend` m at the middle, so a forward thigh carries the flap instead of coming
+    through it."""
     t = min(max((pivot_z - z) / reach, 0.0), 1.0)
     k = most * t * t * (3.0 - 2.0 * t)
     s = min(max(0.5 + 0.5 * x / blend, 0.0), 1.0)
     s = s * s * (3.0 - 2.0 * s)
     return {"hips": 1.0 - k, "thigh_l": k * s, "thigh_r": k * (1.0 - s)}
+
+
+def fill_ring(r, default=0.1):
+    """Radii round a closed ring with its gaps (None: the ray met nothing) filled from the
+    nearest known neighbours on both sides, linearly; `default` when none is known."""
+    n = len(r)
+    known = [i for i, x in enumerate(r) if x is not None]
+    if not known:
+        return [default] * n
+    out = list(r)
+    for i in range(n):
+        if out[i] is None:
+            a = next(k for k in range(1, n + 1) if r[(i - k) % n] is not None)
+            b = next(k for k in range(1, n + 1) if r[(i + k) % n] is not None)
+            out[i] = (r[(i - a) % n] * b + r[(i + b) % n] * a) / (a + b)
+    return out
+
+
+def hang(col, from_row):
+    """A column of radii (bottom to top) hanging free below row `from_row`: no row below it
+    is narrower than the one above, so a shirt's skirt falls from the hips instead of
+    following the thighs in."""
+    out = list(col)
+    for j in range(min(from_row, len(out) - 1) - 1, -1, -1):
+        out[j] = max(out[j], out[j + 1])
+    return out
 
 
 def side_leggings(m=MEASURE, garment="nat_leggings", key="leggings", ease=6.0, top=0.4, garter="garter"):

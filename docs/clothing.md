@@ -1408,12 +1408,40 @@ with a fixed offset:
 The draped variants (SPEC `drape`, eight Woodlands units) and Pueblo's sash ends
 (`native._flap`) are unchanged. DelVog, audit before -> after: ragged 21-23 mm -> 0 (legging
 flaps), open seams 24 mm -> 0, legging skin holes 2 -> 0, flesh poke 52 -> 16 (stand), slivers
-0.24-0.37 -> 0.003-0.17. The audit's poke counts of the new pieces went up (leggings 31 ->
-874, 48 % of the covered vertices): not explained yet. Half the vertices of a thick piece are
-its inner wall, and the flaps hang over the belt although `LAYER_RANK` puts belts (7) above
-the breechcloth (2); `model_layers` was not run. Open: a forward thigh still comes through
-the front flap in the stride, the seam panel's rim renders pale, and the legging tops of a
-shirted unit lie under the ragged shirt shell.
+0.24-0.37 -> 0.003-0.17.
+
+**Shirts** (`native._shirt`; `shirt` in Woodlands and Pueblo dress, the Plains `war_shirt`): no
+longer a skin shell (its outline had slits along the sleeves and a dozen small loops at the
+neck) but a body tube from the hem to the shoulders (36 round, a ring every 3 cm, cast from
+the spine outwards, below 1.0 m from outside over the legwear; the skirt hangs from the hips,
+`garments.hang`), a yoke of five rings in and up to a round neck opening, laid on the
+shoulders from above, and two sleeve tubes square to the arm ending 3.5 cm above the wrist;
+3-4 mm thick with closed rims. The war shirt's lower edge is cut into a fringe: strands
+(`plains._strands`) hanging from the clean hem ring. Audit, shell -> authored: DelVog `shirt`
+ragged 25.5 mm -> 0, open seam 24.3 mm -> 0, skin holes 2/3 -> 0; SiuKri `war_shirt` ragged
+12.8 mm -> 0, open seam 24.8 mm -> 0.
+
+**Flaps in the stride:** `garments.flap_follow` now puts the cloth in front of a thigh fully
+on that thigh from 12 cm below the hip joint (was 65 %), the halves blended over +-6 cm at
+the middle.
+
+**The audit and thick pieces:** `clothaudit.inner_wall` leaves the inner wall of a garment
+(vertices whose normal points at the nearest bone) out of the poke count: along the shared
+inward normal a legging's inner wall lies "outside" the garter's. DelVog leggings 874 -> 501
+on the same glb; what is left is real layer order against `LAYER_RANK`: the legging over the
+moccasin's cuff (rank 2 over 1), the shirt (3) under the legging tops, the flaps (2) over
+the belt (7). On the build side `LAYER_RANK` decides which layer `drape.settle` pushes under
+which, and feeds the audit. The game reads its own copy (`acr_render::layers::layer_rank`,
+kept equal by `test_layer_ranks_match_the_game`): `model.rs` gives every material a depth
+bias of `LAYER_BIAS` (1 mm) x rank, so the belt draws 5 mm nearer the camera than a
+breechcloth flap; the flap's outer side lies 8 mm outside the belt (4 mm clear, 4 mm
+thick), which leaves 3 mm. `model_layers` uses the same ranks for its poking and crossing
+counts.
+
+Open: the matchcoat and the shaman's cloak are still shells (ragged 10 mm, open seam 25 mm);
+the shirt's shoulders are square (the yoke starts at the full shoulder width); the two
+halves of a flap shear at the middle in the stride and the Plains leg fringe comes through
+the back flap; the seam panel's rim renders pale; two slits at the seat of the back flap.
 
 ## Hems (#523)
 
